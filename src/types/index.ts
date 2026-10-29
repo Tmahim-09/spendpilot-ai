@@ -131,10 +131,46 @@ export interface SearchProductsResponsePayload {
   count: number;
   products: NormalizedProduct[];
   cached?: boolean;
+  isUnrelated?: boolean;
+  playfulMessage?: string;
+  suggestedProducts?: string[];
+  timings?: {
+    durationMs: number;
+    requestId?: string;
+  };
   error?: string;
 }
 
 export type AiProcessingStatus = "complete" | "partial" | "unavailable";
+
+/**
+ * Request payload for POST /api/shopping/recommend (Asynchronous Gemini AI ranking)
+ */
+export interface ShoppingRecommendRequestPayload {
+  query: string;
+  products: NormalizedProduct[];
+  budget?: number | null;
+  currency?: CurrencyCode;
+  intent?: ParsedShoppingIntent;
+}
+
+/**
+ * Response payload for POST /api/shopping/recommend (Asynchronous Gemini AI ranking)
+ */
+export interface ShoppingRecommendResponsePayload {
+  success: boolean;
+  aiStatus: AiProcessingStatus;
+  aiMessage?: string | null;
+  topRecommendations: NormalizedProduct[];
+  otherMatches: NormalizedProduct[];
+  allProducts: NormalizedProduct[];
+  comparisonOverview?: string | null;
+  timings?: {
+    geminiDurationMs: number;
+    requestId?: string;
+  };
+  error?: string;
+}
 
 /**
  * Response payload for POST /api/shopping/plan (Gemini + Channel3 Orchestration)

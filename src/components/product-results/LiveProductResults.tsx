@@ -2,7 +2,7 @@
 
 import React from "react";
 import { ProductCard } from "./ProductCard";
-import type { NormalizedProduct, CurrencyCode, ShoppingPlanResponsePayload } from "@/types";
+import type { NormalizedProduct, CurrencyCode, AiProcessingStatus } from "@/types";
 import {
   ShieldAlert,
   RefreshCw,
@@ -10,8 +10,8 @@ import {
   Sparkles,
   Check,
   AlertCircle,
-  HelpCircle,
-  Cpu,
+  Search,
+  Bot,
   Layers,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
@@ -20,9 +20,18 @@ interface LiveProductResultsProps {
   query: string | null;
   budget: number | null;
   currency: CurrencyCode;
-  plan: ShoppingPlanResponsePayload | null;
   products: NormalizedProduct[];
-  isLoading: boolean;
+  topRecommendations?: NormalizedProduct[];
+  otherMatches?: NormalizedProduct[];
+  comparisonOverview?: string | null;
+  isSearchingProducts: boolean;
+  isRankingAi: boolean;
+  aiStatus: AiProcessingStatus;
+  aiMessage?: string | null;
+  playfulNotice?: {
+    message: string;
+    suggestedProducts: string[];
+  } | null;
   error: string | null;
   onRetry?: () => void;
   onSelectPrompt?: (promptText: string) => void;
@@ -33,87 +42,121 @@ export function LiveProductResults({
   query,
   budget,
   currency,
-  plan,
   products,
-  isLoading,
+  topRecommendations = [],
+  otherMatches = [],
+  comparisonOverview = null,
+  isSearchingProducts,
+  isRankingAi,
+  aiStatus,
+  aiMessage = null,
+  playfulNotice = null,
   error,
   onRetry,
   onSelectPrompt,
   cached = false,
 }: LiveProductResultsProps) {
-  // Skeleton loader cards with multi-step AI progress indicator
-  if (isLoading) {
+  // State 1: Clearly Unrelated Prompt (Zero API calls made, instant witty response)
+  if (playfulNotice) {
     return (
-      <section id="search-results" className="py-12 sm:py-16 border-b border-[#242424] bg-[#090909]">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="mb-8 rounded-2xl border border-[#242424] bg-[#101010] p-6 text-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-[#1f1f1f]">
-              <div className="flex items-center gap-2">
-                <span className="flex h-2.5 w-2.5 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#FF6A00] opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#FF6A00]" />
-                </span>
-                <span className="text-xs font-semibold uppercase tracking-wider text-[#FF6A00]">
-                  SpendPilot AI Engine Active
-                </span>
+      <section
+        id="search-results"
+        aria-label="Assistant Response"
+        className="py-10 sm:py-14 border-b border-[#242424] bg-[#090909]"
+      >
+        <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
+          <div className="rounded-2xl border border-[#FF6A00]/30 bg-[#12100e] p-6 sm:p-8 shadow-xl">
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#FF6A00]/40 bg-[#FF6A00]/15 text-[#FF8126]">
+                <Bot className="h-6 w-6" aria-hidden="true" />
               </div>
-              <span className="text-xs text-[#737373]">
-                Grounding with Gemini 3.8 &bull; Searching Channel3
-              </span>
+              <div className="space-y-3 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-[#FF8126]">
+                    SpendPilot Shopping Assistant
+                  </span>
+                  <span className="text-[10px] text-[#737373] bg-[#1a1714] px-2 py-0.5 rounded border border-[#2d241c]">
+                    Commerce Mode
+                  </span>
+                </div>
+
+                <p className="text-base sm:text-lg font-medium text-[#F5F5F5] leading-snug">
+                  &ldquo;{playfulNotice.message}&rdquo;
+                </p>
+
+                {playfulNotice.suggestedProducts.length > 0 && (
+                  <div className="pt-3 border-t border-[#231e18]">
+                    <span className="text-xs text-[#A3A3A3] block mb-2 font-medium">
+                      Try asking for real products within budget:
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      {playfulNotice.suggestedProducts.map((prompt) => (
+                        <button
+                          key={prompt}
+                          type="button"
+                          onClick={() => onSelectPrompt?.(prompt)}
+                          className="rounded-lg border border-[#332b22] bg-[#1a1612] px-3 py-1.5 text-xs text-[#D4D4D4] hover:border-[#FF6A00]/50 hover:text-[#FF8126] transition-colors"
+                        >
+                          &ldquo;{prompt}&rdquo;
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="flex items-center gap-2.5 rounded-lg bg-[#141414] border border-[#222222] p-3 text-xs">
-                <Cpu className="h-4 w-4 text-[#FF8126] shrink-0 animate-pulse" />
-                <div>
-                  <span className="font-semibold text-[#F5F5F5] block">1. Interpreting Intent</span>
-                  <span className="text-[11px] text-[#737373]">Extracting requirements & constraints</span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2.5 rounded-lg bg-[#141414] border border-[#222222] p-3 text-xs">
-                <ShoppingBag className="h-4 w-4 text-[#69A8FF] shrink-0 animate-pulse" />
-                <div>
-                  <span className="font-semibold text-[#F5F5F5] block">2. Discovering Channel3 Offers</span>
-                  <span className="text-[11px] text-[#737373]">Querying live retailer inventory</span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2.5 rounded-lg bg-[#141414] border border-[#222222] p-3 text-xs">
-                <Sparkles className="h-4 w-4 text-[#35C979] shrink-0 animate-pulse" />
-                <div>
-                  <span className="font-semibold text-[#F5F5F5] block">3. Grounded Candidate Ranking</span>
-                  <span className="text-[11px] text-[#737373]">Evaluating specs, fit & trade-offs</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {[1, 2, 3, 4].map((n) => (
-              <div
-                key={n}
-                className="flex flex-col justify-between rounded-xl border border-[#222222] bg-[#101010] p-5 animate-pulse"
-              >
-                <div>
-                  <div className="h-3 w-20 bg-[#1e1e1e] rounded mb-3" />
-                  <div className="h-44 w-full bg-[#141414] rounded-lg mb-4" />
-                  <div className="h-4 w-4/5 bg-[#1e1e1e] rounded mb-2" />
-                  <div className="h-4 w-2/5 bg-[#1e1e1e] rounded mb-4" />
-                  <div className="h-6 w-24 bg-[#262626] rounded mb-2" />
-                </div>
-                <div className="mt-6 pt-3 border-t border-[#1c1c1c]">
-                  <div className="h-8 w-full bg-[#1e1e1e] rounded-lg" />
-                </div>
-              </div>
-            ))}
           </div>
         </div>
       </section>
     );
   }
 
-  // Error state
+  // State 2: Distinctive Single Animated Search-in-Progress (Replaces the 4 repetitive skeletons)
+  if (isSearchingProducts) {
+    return (
+      <section
+        id="search-results"
+        aria-label="Searching catalog"
+        className="py-14 sm:py-20 border-b border-[#242424] bg-[#090909]"
+      >
+        <div className="mx-auto max-w-xl px-4 sm:px-6 lg:px-8 text-center">
+          <div className="rounded-2xl border border-[#242424] bg-[#0e0e0e] p-8 sm:p-12 shadow-2xl relative overflow-hidden">
+            {/* Subtle background radar pulse */}
+            <div className="relative mx-auto mb-6 flex h-20 w-20 items-center justify-center">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#FF6A00]/15 motion-reduce:animate-none" />
+              <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-[#FF6A00]/40 bg-[#161310] text-[#FF8126] shadow-lg shadow-[#FF6A00]/10">
+                <Search className="h-7 w-7 animate-pulse motion-reduce:animate-none" aria-hidden="true" />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/30 bg-[#FF6A00]/10 px-3 py-0.5 text-xs font-semibold text-[#FF8126]">
+                <Sparkles className="h-3 w-3" />
+                Live Channel3 Discovery
+              </span>
+              <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#F5F5F5]">
+                Scanning the product catalog...
+              </h2>
+              <p className="text-xs sm:text-sm text-[#888888] max-w-md mx-auto">
+                Discovering authentic merchant offers and pricing for &ldquo;{query}&rdquo;
+              </p>
+            </div>
+
+            {/* Restrained animated progress shimmer */}
+            <div className="mt-8 h-1 w-full overflow-hidden rounded-full bg-[#1c1c1c]">
+              <div className="h-full w-1/2 rounded-full bg-gradient-to-r from-[#FF6A00]/20 via-[#FF6A00] to-[#FF6A00]/20 animate-pulse motion-reduce:animate-none mx-auto" />
+            </div>
+
+            <div className="mt-4 text-[11px] text-[#737373]">
+              Direct retailer indexing &bull; Real-time price verification
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // State 3: Search error state
   if (error) {
     return (
       <section id="search-results" className="py-12 sm:py-16 border-b border-[#242424] bg-[#090909]">
@@ -123,7 +166,7 @@ export function LiveProductResults({
               <ShieldAlert className="h-5 w-5 text-[#F05B5B] shrink-0 mt-0.5" aria-hidden="true" />
               <div className="flex-1 space-y-2">
                 <h3 className="font-semibold text-[#F5F5F5] text-base">
-                  Shopping Intelligence Unavailable
+                  Product Search Unavailable
                 </h3>
                 <p className="text-xs text-[#D4D4D4] leading-relaxed">
                   {error}
@@ -135,7 +178,7 @@ export function LiveProductResults({
                     className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-[#F05B5B] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#ff7070] transition-colors"
                   >
                     <RefreshCw className="h-3 w-3" />
-                    <span>Retry Request</span>
+                    <span>Retry Search</span>
                   </button>
                 )}
               </div>
@@ -146,75 +189,13 @@ export function LiveProductResults({
     );
   }
 
-  // No active search conducted yet
+  // State 4: No active search yet
   if (!query) {
     return null;
   }
 
-  // Intent clarification or non-shopping query banner
-  const intent = plan?.intent;
-  if (intent && (intent.needsClarification || !intent.isShoppingRequest)) {
-    return (
-      <section id="search-results" className="py-12 sm:py-16 border-b border-[#242424] bg-[#090909]">
-        <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-          <div className="rounded-2xl border border-[#F5B942]/30 bg-[#14120e] p-6 sm:p-8">
-            <div className="flex items-start gap-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#F5B942]/40 bg-[#F5B942]/10 text-[#F5B942]">
-                <HelpCircle className="h-5 w-5" aria-hidden="true" />
-              </div>
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-[#F5B942]">
-                    Clarification Needed
-                  </span>
-                  <h3 className="text-lg font-bold text-[#F5F5F5]">
-                    Tell SpendPilot what you&apos;d like to purchase
-                  </h3>
-                </div>
-
-                <p className="text-sm text-[#D4D4D4] leading-relaxed">
-                  {intent.clarificationMessage ||
-                    plan?.aiMessage ||
-                    "SpendPilot AI helps you discover, compare, and verify real consumer products within your budget limits."}
-                </p>
-
-                <div className="pt-3 border-t border-[#24221c]">
-                  <span className="text-xs font-medium text-[#A3A3A3] block mb-2">
-                    Try starting with an example:
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      "Reliable wireless mouse for university under $40",
-                      "Mechanical keyboard with quiet switches under $80",
-                      "Adjustable aluminum laptop stand under $35",
-                      "Noise cancelling wireless headphones under $100",
-                    ].map((example) => (
-                      <button
-                        key={example}
-                        type="button"
-                        onClick={() => onSelectPrompt?.(example)}
-                        className="rounded-lg border border-[#2b2923] bg-[#1a1814] px-3 py-1.5 text-xs text-[#D4D4D4] hover:border-[#FF6A00]/50 hover:text-[#FF8126] transition-colors"
-                      >
-                        &ldquo;{example}&rdquo;
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  // Derive products and recommendations
-  const topRecommendations = plan?.topRecommendations || [];
-  const otherMatches = plan?.otherMatches || (topRecommendations.length === 0 ? products : []);
-  const allResultsCount = topRecommendations.length + otherMatches.length;
-
-  // Zero results matching
-  if (allResultsCount === 0) {
+  // State 5: Zero results matching
+  if (products.length === 0) {
     return (
       <section id="search-results" className="py-12 sm:py-16 border-b border-[#242424] bg-[#090909]">
         <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 text-center">
@@ -244,42 +225,39 @@ export function LiveProductResults({
     );
   }
 
-  const aiStatus = plan?.aiStatus || "complete";
+  // State 6: Genuine Products Rendered (Instant Channel3 Discovery + Asynchronous AI Ranking)
+  const hasRecommendations = topRecommendations.length > 0;
+  const secondaryProducts = otherMatches.length > 0 ? otherMatches : (hasRecommendations ? [] : products);
 
   return (
     <section id="search-results" className="py-12 sm:py-16 border-b border-[#242424] bg-[#080808]">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        {/* Fallback Notice when Gemini was unavailable */}
-        {aiStatus === "partial" && plan?.aiMessage && (
-          <div className="mb-6 rounded-xl border border-[#F5B942]/30 bg-[#F5B942]/10 p-4 text-xs text-[#D4D4D4] flex items-center gap-3">
-            <AlertCircle className="h-4 w-4 text-[#F5B942] shrink-0" />
-            <span>
-              <strong>Direct Catalog Search Active:</strong> {plan.aiMessage} Real product offers and merchant links are fully available below.
-            </span>
-          </div>
-        )}
-
-        {/* AI Shopping Plan Summary Card */}
-        <div className="mb-10 rounded-2xl border border-[#262626] bg-[#0e0e0e] p-5 sm:p-7 shadow-xl">
-          {/* Top Status Row */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[#1f1f1f]">
+        {/* Results Header with Live Lifecycle Indicator */}
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between mb-8 pb-4 border-b border-[#222222] gap-4">
+          <div className="space-y-2">
+            {/* Real Lifecycle Badges */}
             <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-3 py-1 text-xs font-semibold text-[#FF8126]">
-                <Sparkles className="h-3.5 w-3.5" />
-                Gemini AI Shopping Plan
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[#35C979]/40 bg-[#35C979]/10 px-2.5 py-0.5 text-xs font-semibold text-[#35C979]">
+                <Check className="h-3 w-3" />
+                Live Channel3 Results
               </span>
 
-              {aiStatus === "complete" ? (
-                <span className="inline-flex items-center gap-1 rounded-full border border-[#35C979]/40 bg-[#35C979]/10 px-2.5 py-0.5 text-[11px] font-medium text-[#35C979]">
-                  <Check className="h-3 w-3" />
-                  Grounded &amp; Ranked
+              {/* Meaningful Asynchronous AI State */}
+              {isRankingAi ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-2.5 py-0.5 text-xs font-semibold text-[#FF8126]">
+                  <Sparkles className="h-3 w-3 animate-spin text-[#FF6A00] motion-reduce:animate-none" />
+                  <span>Comparing your best matches...</span>
                 </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 rounded-full border border-[#F5B942]/40 bg-[#F5B942]/10 px-2.5 py-0.5 text-[11px] font-medium text-[#F5B942]">
-                  <AlertCircle className="h-3 w-3" />
-                  Channel3 Catalog Match
+              ) : aiStatus === "complete" ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-2.5 py-0.5 text-xs font-semibold text-[#FF8126]">
+                  <Sparkles className="h-3 w-3 text-[#FF6A00]" />
+                  <span>AI Ranked &amp; Compared</span>
                 </span>
-              )}
+              ) : aiStatus === "unavailable" ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-[#2b2b2b] bg-[#141414] px-2.5 py-0.5 text-[11px] text-[#888888]">
+                  <span>Catalog View</span>
+                </span>
+              ) : null}
 
               {cached && (
                 <span className="text-[10px] text-[#737373] font-mono bg-[#141414] px-2 py-0.5 rounded border border-[#222222]">
@@ -288,97 +266,65 @@ export function LiveProductResults({
               )}
             </div>
 
-            {intent?.category && (
-              <span className="text-xs text-[#888888] font-medium">
-                Category: <strong className="text-[#D4D4D4]">{intent.category}</strong>
-              </span>
-            )}
-          </div>
-
-          {/* Heading & AI Comparison Overview */}
-          <div className="mt-4 space-y-2">
             <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#F5F5F5]">
-              {intent?.summary || `Shopping recommendations for "${query}"`}
+              Results for &ldquo;{query}&rdquo;
             </h2>
 
-            {plan?.comparisonOverview && (
-              <p className="text-xs sm:text-sm text-[#A3A3A3] leading-relaxed max-w-4xl">
-                {plan.comparisonOverview}
-              </p>
-            )}
+            <p className="text-xs text-[#A3A3A3]">
+              Found {products.length} verified products
+              {budget ? (
+                <>
+                  {" "}with starting prices under{" "}
+                  <strong className="text-[#35C979] tabular-nums">
+                    {formatCurrency(budget * 100, currency)}
+                  </strong>
+                </>
+              ) : ""}
+            </p>
           </div>
 
-          {/* Extracted Constraints & Requirements Pills */}
-          {intent && (
-            <div className="mt-5 pt-4 border-t border-[#1a1a1a] flex flex-wrap items-center gap-2 text-xs">
-              {intent.totalBudget !== null && (
-                <span className="inline-flex items-center gap-1 rounded-md bg-[#161616] border border-[#282828] px-2.5 py-1 text-[#D4D4D4]">
-                  <span className="text-[#737373]">Budget Cap:</span>
-                  <strong className="text-[#35C979] font-mono">
-                    {formatCurrency(intent.totalBudget * 100, intent.currency)}
-                  </strong>
-                </span>
-              )}
-
-              {intent.maxItemPrice !== null && (
-                <span className="inline-flex items-center gap-1 rounded-md bg-[#161616] border border-[#282828] px-2.5 py-1 text-[#D4D4D4]">
-                  <span className="text-[#737373]">Item Cap:</span>
-                  <strong className="text-[#35C979] font-mono">
-                    {formatCurrency(intent.maxItemPrice * 100, intent.currency)}
-                  </strong>
-                </span>
-              )}
-
-              {intent.mustHave.map((item, i) => (
-                <span
-                  key={i}
-                  className="inline-flex items-center gap-1 rounded-md bg-[#141814] border border-[#35C979]/30 px-2.5 py-1 text-[#35C979]"
-                >
-                  <Check className="h-3 w-3" />
-                  <span>Must have: {item}</span>
-                </span>
-              ))}
-
-              {intent.preferences.map((item, i) => (
-                <span
-                  key={i}
-                  className="inline-flex items-center gap-1 rounded-md bg-[#181614] border border-[#FF6A00]/30 px-2.5 py-1 text-[#FF8126]"
-                >
-                  <span>Prefers: {item}</span>
-                </span>
-              ))}
-
-              {intent.excluded.map((item, i) => (
-                <span
-                  key={i}
-                  className="inline-flex items-center gap-1 rounded-md bg-[#1c1414] border border-[#F05B5B]/30 px-2.5 py-1 text-[#F05B5B]"
-                >
-                  <span>Excludes: {item}</span>
-                </span>
-              ))}
-            </div>
-          )}
+          <div className="shrink-0 text-left sm:text-right">
+            <span className="text-[11px] text-[#737373] block">
+              Direct Retailer Referral Flow
+            </span>
+            <span className="text-xs font-medium text-[#D4D4D4]">
+              Authentic destination links &bull; No middleman fees
+            </span>
+          </div>
         </div>
 
-        {/* Section 1: Top AI Recommendations */}
-        {topRecommendations.length > 0 && (
-          <div className="mb-12">
-            <div className="flex items-center justify-between mb-6 pb-3 border-b border-[#222222]">
-              <div className="space-y-0.5">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-[#FF8126]" />
-                  <h3 className="text-lg sm:text-xl font-bold text-[#F5F5F5]">
-                    Top AI Recommendations
-                  </h3>
-                </div>
-                <p className="text-xs text-[#888888]">
-                  Ranked by Gemini against your intent, budget cap, and preferences.
-                </p>
-              </div>
+        {/* Small non-blocking AI status message if Gemini was unavailable */}
+        {aiStatus === "unavailable" && aiMessage && (
+          <div className="mb-6 rounded-xl border border-[#282828] bg-[#121212] p-3 text-xs text-[#A3A3A3] flex items-center gap-2.5">
+            <AlertCircle className="h-4 w-4 text-[#F5B942] shrink-0" />
+            <span>{aiMessage}</span>
+          </div>
+        )}
 
-              <span className="text-xs text-[#737373] hidden sm:block">
-                Grounded in verified Channel3 specifications
-              </span>
+        {/* AI Comparison Overview Banner (if provided by Gemini) */}
+        {comparisonOverview && (
+          <div className="mb-8 rounded-xl border border-[#FF6A00]/25 bg-[#12100e] p-4 text-xs text-[#D4D4D4] leading-relaxed flex items-start gap-3">
+            <Sparkles className="h-4 w-4 text-[#FF8126] shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold text-[#FF8126] block mb-0.5">SpendPilot Comparison:</span>
+              <p>{comparisonOverview}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Top AI Recommendations Section */}
+        {hasRecommendations && (
+          <div className="mb-12">
+            <div className="flex items-center justify-between mb-5 pb-2.5 border-b border-[#222222]">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-[#FF8126]" />
+                <h3 className="text-lg font-bold text-[#F5F5F5]">
+                  Top AI Picks
+                </h3>
+                <span className="text-xs text-[#888888] hidden sm:inline">
+                  &bull; Ranked by intent fit, verified specs, and budget value
+                </span>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -392,33 +338,25 @@ export function LiveProductResults({
           </div>
         )}
 
-        {/* Section 2: Other Matching Catalog Options */}
-        {otherMatches.length > 0 && (
+        {/* Other Matching Catalog Options / Standard Grid */}
+        {secondaryProducts.length > 0 && (
           <div>
-            <div className="flex items-center justify-between mb-6 pb-3 border-b border-[#222222]">
-              <div className="space-y-0.5">
+            {hasRecommendations && (
+              <div className="flex items-center justify-between mb-5 pb-2.5 border-b border-[#222222]">
                 <div className="flex items-center gap-2">
-                  <Layers className="h-4 w-4 text-[#A3A3A3]" />
-                  <h3 className="text-lg sm:text-xl font-bold text-[#F5F5F5]">
-                    {topRecommendations.length > 0
-                      ? "Other Matching Catalog Options"
-                      : "Verified Channel3 Products"}
+                  <Layers className="h-4 w-4 text-[#888888]" />
+                  <h3 className="text-base sm:text-lg font-bold text-[#F5F5F5]">
+                    Other Matching Options
                   </h3>
                 </div>
-                <p className="text-xs text-[#888888]">
-                  {topRecommendations.length > 0
-                    ? `Showing ${otherMatches.length} additional authentic catalog items.`
-                    : `Found ${otherMatches.length} products matching your criteria.`}
-                </p>
+                <span className="text-xs text-[#737373]">
+                  {secondaryProducts.length} additional authentic catalog items
+                </span>
               </div>
-
-              <span className="text-xs text-[#737373] hidden sm:block">
-                Direct Retailer Referral Flow
-              </span>
-            </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-              {otherMatches.map((product) => (
+              {secondaryProducts.map((product) => (
                 <ProductCard
                   key={product.sourceProductId || product.title}
                   product={product}
@@ -429,7 +367,7 @@ export function LiveProductResults({
         )}
 
         {/* Transparent Policy & Merchant Notice */}
-        <div className="mt-12 rounded-xl border border-[#222222] bg-[#0e0e0e] p-4 text-xs text-[#888888] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="mt-10 rounded-xl border border-[#222222] bg-[#0e0e0e] p-4 text-xs text-[#888888] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <ShieldAlert className="h-4 w-4 text-[#F5B942] shrink-0" />
             <span>

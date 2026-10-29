@@ -58,10 +58,10 @@ export function ProductCard({ product }: ProductCardProps) {
               <Award className="h-3 w-3 shrink-0" />
               <span>
                 {isTopPick
-                  ? "Rank #1 Top Recommendation"
+                  ? "AI Pick • Rank #1"
                   : product.rank === 2
-                  ? "Rank #2 Runner-Up"
-                  : `Rank #${product.rank} Best Match`}
+                  ? "AI Pick • Rank #2"
+                  : `AI Pick • Rank #${product.rank}`}
               </span>
             </span>
 

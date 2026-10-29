@@ -1,5 +1,5 @@
-import { Type } from "@google/genai";
-import { generateContentWithRetry } from "./gemini-client.ts";
+import { Type, ThinkingLevel } from "@google/genai";
+import { executeGeminiWithDeadline } from "./gemini-client.ts";
 import type { NormalizedProduct, ParsedShoppingIntent } from "../../types/index.ts";
 import { formatCurrency } from "../utils.ts";
 
@@ -50,7 +50,10 @@ const rankingSchema = {
 };
 
 export interface RankProductsOptions {
-  intent: ParsedShoppingIntent;
+  query?: string;
+  budget?: number | null;
+  currency?: string;
+  intent?: ParsedShoppingIntent;
   products: NormalizedProduct[];
 }
 
@@ -66,6 +69,9 @@ export interface RankedResult {
  * Strictly verifies product IDs to prevent hallucinated products or fabricated facts.
  */
 export async function rankAndExplainProducts({
+  query,
+  budget,
+  currency = "USD",
   intent,
   products,
 }: RankProductsOptions): Promise<RankedResult> {
@@ -86,7 +92,7 @@ export async function rankAndExplainProducts({
     }
   });
 
-  // Prepare a compact, safe representation of candidates (no secret headers, no bloated metadata)
+  // Prepare a compact, safe representation of candidates (max 8 items, no bloated metadata)
   const candidateSummaries = products.slice(0, 8).map((p) => ({
     productId: p.sourceProductId,
     title: p.title,
@@ -107,42 +113,54 @@ Rules:
 3. Be transparent: If a specification like battery life, weight, or warranty is not in the data, do not invent it. Note it as unverified in keyTradeOffs.
 4. Tone: Concise, professional, objective. Avoid promotional hype like "best ever" or "unbeatable".`;
 
-  const userPrompt = `User Shopping Intent:
-- Summary: ${intent.summary}
-- Target Budget: ${intent.totalBudget ? `${intent.currency} ${intent.totalBudget}` : "No strict budget set"}
-- Must-Have Requirements: ${intent.mustHave.length > 0 ? intent.mustHave.join(", ") : "None specified"}
-- Preferences: ${intent.preferences.length > 0 ? intent.preferences.join(", ") : "None specified"}
-- Excluded Features: ${intent.excluded.length > 0 ? intent.excluded.join(", ") : "None"}
+  const effectiveBudget = budget ?? intent?.totalBudget ?? null;
+  const effectiveCurrency = currency || intent?.currency || "USD";
+  const intentSummary = intent?.summary || `Shopping request: "${query || "products"}"`;
+
+  const userPrompt = `User Shopping Request:
+- Goal: ${intentSummary}
+- Target Budget: ${effectiveBudget ? `${effectiveCurrency} ${effectiveBudget}` : "No strict budget set"}
+${intent?.mustHave && intent.mustHave.length > 0 ? `- Must-Have Requirements: ${intent.mustHave.join(", ")}` : ""}
+${intent?.preferences && intent.preferences.length > 0 ? `- Preferences: ${intent.preferences.join(", ")}` : ""}
+${intent?.excluded && intent.excluded.length > 0 ? `- Excluded Features: ${intent.excluded.join(", ")}` : ""}
 
 Candidate Products from Channel3:
 ${JSON.stringify(candidateSummaries, null, 2)}
 
 Rank up to 3 best products, explain why each matches, and summarize trade-offs.`;
 
-  const parsedResponse = await generateContentWithRetry(async (ai, model) => {
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-      config: {
-        systemInstruction,
-        temperature: 0.2,
-        responseMimeType: "application/json",
-        responseSchema: rankingSchema,
-      },
-    });
+  const parsedResponse = await executeGeminiWithDeadline(
+    async (ai, model, signal) => {
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+        config: {
+          abortSignal: signal,
+          systemInstruction,
+          temperature: 0.2,
+          responseMimeType: "application/json",
+          responseSchema: rankingSchema,
+          thinkingConfig:
+            model === "gemini-3.8-flash"
+              ? { thinkingLevel: ThinkingLevel.LOW }
+              : undefined,
+        },
+      });
 
-    const text = response.text?.trim() || "{}";
-    return JSON.parse(text) as {
-      comparisonOverview?: string;
-      recommendations?: Array<{
-        productId: string;
-        rank: number;
-        recommendationReason: string;
-        keyTradeOffs?: string;
-        fitScore?: number;
-      }>;
-    };
-  });
+      const text = response.text?.trim() || "{}";
+      return JSON.parse(text) as {
+        comparisonOverview?: string;
+        recommendations?: Array<{
+          productId: string;
+          rank: number;
+          recommendationReason: string;
+          keyTradeOffs?: string;
+          fitScore?: number;
+        }>;
+      };
+    },
+    { timeoutMs: 10000, maxRetries: 1 }
+  );
 
   return matchAndValidateRankings(
     parsedResponse.recommendations,
