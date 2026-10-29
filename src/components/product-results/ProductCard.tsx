@@ -2,7 +2,17 @@
 
 import React, { useState } from "react";
 import Image from "next/image";
-import { ExternalLink, Tag, Check, ChevronDown, ChevronUp, Sparkles, ShoppingBag } from "lucide-react";
+import {
+  ExternalLink,
+  Tag,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Sparkles,
+  ShoppingBag,
+  AlertCircle,
+  Award,
+} from "lucide-react";
 import type { NormalizedProduct } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 
@@ -16,13 +26,55 @@ export function ProductCard({ product }: ProductCardProps) {
   const [imgError, setImgError] = useState(false);
 
   const hasMultipleOffers = product.offers && product.offers.length > 1;
-  const startingPrice = product.priceMinor !== null ? formatCurrency(product.priceMinor, product.currency || "USD") : null;
-  const compareAtPrice = product.compareAtPriceMinor ? formatCurrency(product.compareAtPriceMinor, product.currency || "USD") : null;
+  const startingPrice =
+    product.priceMinor !== null ? formatCurrency(product.priceMinor, product.currency || "USD") : null;
+  const compareAtPrice =
+    product.compareAtPriceMinor ? formatCurrency(product.compareAtPriceMinor, product.currency || "USD") : null;
+
+  const isRanked = typeof product.rank === "number";
+  const isTopPick = product.rank === 1;
 
   return (
-    <article className="flex flex-col justify-between rounded-xl border border-[#262626] bg-[#101010] p-4 sm:p-5 transition-all hover:border-[#383838] hover:bg-[#121212] shadow-lg">
+    <article
+      className={`flex flex-col justify-between rounded-xl border p-4 sm:p-5 transition-all shadow-lg ${
+        isTopPick
+          ? "border-[#FF6A00]/40 bg-[#12100e] hover:border-[#FF6A00]/70 hover:bg-[#14120f] shadow-[0_0_20px_rgba(255,106,0,0.06)] ring-1 ring-[#FF6A00]/20"
+          : "border-[#262626] bg-[#101010] hover:border-[#383838] hover:bg-[#121212]"
+      }`}
+    >
       <div>
-        {/* Top bar: Brand & Stock Status */}
+        {/* Top AI Rank & Fit Badge (if ranked by Gemini) */}
+        {isRanked && (
+          <div className="mb-3 flex items-center justify-between gap-2 pb-2.5 border-b border-[#222222]">
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                isTopPick
+                  ? "border border-[#FF6A00]/40 bg-[#FF6A00]/15 text-[#FF8126]"
+                  : product.rank === 2
+                  ? "border border-[#4B90FF]/40 bg-[#4B90FF]/15 text-[#7BB0FF]"
+                  : "border border-[#35C979]/40 bg-[#35C979]/15 text-[#54DC94]"
+              }`}
+            >
+              <Award className="h-3 w-3 shrink-0" />
+              <span>
+                {isTopPick
+                  ? "Rank #1 Top Recommendation"
+                  : product.rank === 2
+                  ? "Rank #2 Runner-Up"
+                  : `Rank #${product.rank} Best Match`}
+              </span>
+            </span>
+
+            {typeof product.fitScore === "number" && (
+              <span className="inline-flex items-center gap-1 rounded bg-[#181818] border border-[#2b2b2b] px-2 py-0.5 text-[11px] font-mono font-medium text-[#35C979] tabular-nums">
+                <Sparkles className="h-2.5 w-2.5 text-[#35C979]" />
+                {product.fitScore}% Fit
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Brand & Stock Status */}
         <div className="flex items-center justify-between text-xs mb-3 pb-2.5 border-b border-[#202020]">
           <span className="font-medium text-[#A3A3A3] flex items-center gap-1.5 truncate max-w-[60%]">
             <Tag className="h-3 w-3 text-[#FF6A00] shrink-0" aria-hidden="true" />
@@ -88,8 +140,27 @@ export function ProductCard({ product }: ProductCardProps) {
           </span>
         </div>
 
+        {/* Gemini AI Recommendation Explanation & Trade-Offs */}
+        {product.explanation && (
+          <div className="mt-3.5 rounded-lg border border-[#2b2b2b] bg-[#141414] p-3 text-xs">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#FF8126] mb-1">
+              <Sparkles className="h-3 w-3 shrink-0" />
+              <span>Why SpendPilot Recommends This</span>
+            </div>
+            <p className="text-[#D4D4D4] leading-relaxed text-xs">
+              {product.explanation}
+            </p>
+            {product.keyTradeOffs && (
+              <div className="mt-2 pt-2 border-t border-[#222222] flex items-start gap-1.5 text-[11px] text-[#F5B942]">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span className="leading-snug">{product.keyTradeOffs}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Offers count & primary merchant */}
-        <div className="mt-2 flex items-center justify-between text-xs text-[#A3A3A3]">
+        <div className="mt-3 flex items-center justify-between text-xs text-[#A3A3A3]">
           <span>
             {product.offersCount && product.offersCount > 1
               ? `${product.offersCount} retailer offers`
@@ -208,4 +279,3 @@ export function ProductCard({ product }: ProductCardProps) {
     </article>
   );
 }
-

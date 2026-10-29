@@ -9,12 +9,13 @@ import { ProductPreview } from "@/components/sections/ProductPreview";
 import { SpendingControls } from "@/components/sections/SpendingControls";
 import { TrustSection } from "@/components/sections/TrustSection";
 import { SiteFooter } from "@/components/layout/SiteFooter";
-import type { NormalizedProduct, CurrencyCode, SearchProductsResponsePayload } from "@/types";
+import type { NormalizedProduct, CurrencyCode, ShoppingPlanResponsePayload } from "@/types";
 
 export default function Home() {
   const [query, setQuery] = useState<string | null>(null);
   const [budget, setBudget] = useState<number | null>(null);
   const [currency, setCurrency] = useState<CurrencyCode>("USD");
+  const [plan, setPlan] = useState<ShoppingPlanResponsePayload | null>(null);
   const [products, setProducts] = useState<NormalizedProduct[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +43,7 @@ export default function Home() {
     }, 100);
 
     try {
-      const res = await fetch("/api/products/search", {
+      const res = await fetch("/api/shopping/plan", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -54,19 +55,22 @@ export default function Home() {
         }),
       });
 
-      const data = (await res.json()) as SearchProductsResponsePayload;
+      const data = (await res.json()) as ShoppingPlanResponsePayload;
 
       if (!res.ok || !data.success) {
-        setError(data.error || "Unable to search Channel3 products at this time.");
+        setError(data.error || "Unable to interpret shopping request or search products at this time.");
+        setPlan(null);
         setProducts([]);
         return;
       }
 
-      setProducts(data.products || []);
+      setPlan(data);
+      setProducts(data.allProducts || []);
       setCached(Boolean(data.cached));
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Network error during product search.";
+      const msg = err instanceof Error ? err.message : "Network error during shopping plan generation.";
       setError(msg);
+      setPlan(null);
       setProducts([]);
     } finally {
       setIsLoading(false);
@@ -77,6 +81,10 @@ export default function Home() {
     if (query) {
       handleSearch(query, budget, currency);
     }
+  };
+
+  const handleSelectPrompt = (suggestedPrompt: string) => {
+    handleSearch(suggestedPrompt, budget, currency);
   };
 
   return (
@@ -95,16 +103,18 @@ export default function Home() {
           initialCurrency={currency}
         />
 
-        {/* Live Channel3 Results (displayed when search is in flight or completed) */}
+        {/* Live Shopping Plan & Channel3 Results */}
         {hasSearched ? (
           <LiveProductResults
             query={query}
             budget={budget}
             currency={currency}
+            plan={plan}
             products={products}
             isLoading={isLoading}
             error={error}
             onRetry={handleRetry}
+            onSelectPrompt={handleSelectPrompt}
             cached={cached}
           />
         ) : null}
@@ -112,7 +122,7 @@ export default function Home() {
         {/* How It Works: 3-step explanation */}
         <HowItWorks />
 
-        {/* Product Preview: Source-backed product demonstration (Initial sample preview) */}
+        {/* Product Preview: Source-backed product demonstration */}
         <ProductPreview />
 
         {/* Spending Controls: Purchase Policy Engine explanation & simulator */}

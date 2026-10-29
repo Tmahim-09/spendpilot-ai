@@ -15,6 +15,24 @@ export interface ShoppingIntent {
 }
 
 /**
+ * Parsed Shopping Intent from Gemini Natural Language Interpretation (Phase 3)
+ */
+export interface ParsedShoppingIntent {
+  isShoppingRequest: boolean;
+  searchQuery: string;
+  category: string;
+  totalBudget: number | null;
+  maxItemPrice: number | null;
+  currency: CurrencyCode;
+  mustHave: string[];
+  preferences: string[];
+  excluded: string[];
+  summary: string;
+  needsClarification: boolean;
+  clarificationMessage?: string | null;
+}
+
+/**
  * An individual retailer offer associated with a product
  */
 export interface ProductOfferItem {
@@ -50,6 +68,8 @@ export interface NormalizedProduct {
   sourceFacts: string[];
   explanation?: string;
   fitScore?: number;
+  rank?: number;
+  keyTradeOffs?: string;
 }
 
 /**
@@ -92,7 +112,7 @@ export interface ExamplePromptItem {
 }
 
 /**
- * Request payload for POST /api/products/search
+ * Request payload for POST /api/products/search & /api/shopping/plan
  */
 export interface SearchProductsRequestPayload {
   query: string;
@@ -101,7 +121,7 @@ export interface SearchProductsRequestPayload {
 }
 
 /**
- * Response payload for POST /api/products/search
+ * Response payload for POST /api/products/search (Direct Channel3 search)
  */
 export interface SearchProductsResponsePayload {
   success: boolean;
@@ -110,6 +130,28 @@ export interface SearchProductsResponsePayload {
   currency: CurrencyCode;
   count: number;
   products: NormalizedProduct[];
+  cached?: boolean;
+  error?: string;
+}
+
+export type AiProcessingStatus = "complete" | "partial" | "unavailable";
+
+/**
+ * Response payload for POST /api/shopping/plan (Gemini + Channel3 Orchestration)
+ */
+export interface ShoppingPlanResponsePayload {
+  success: boolean;
+  aiStatus: AiProcessingStatus;
+  aiMessage?: string | null;
+  intent: ParsedShoppingIntent | null;
+  topRecommendations: NormalizedProduct[];
+  otherMatches: NormalizedProduct[];
+  allProducts: NormalizedProduct[];
+  comparisonOverview?: string | null;
+  query: string;
+  budgetApplied?: number | null;
+  currency: CurrencyCode;
+  count: number;
   cached?: boolean;
   error?: string;
 }

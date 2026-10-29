@@ -92,3 +92,4 @@ export function validateSearchPayload(body: unknown): ValidationResult {
     },
   };
 }
+
