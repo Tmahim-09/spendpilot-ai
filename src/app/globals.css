@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --bg-primary: #080808;
+  --bg-secondary: #101010;
+  --bg-elevated: #171717;
+  --bg-card: #141414;
+  --border-subtle: #242424;
+  --border-base: #303030;
+  --border-active: #404040;
+  --text-offwhite: #F5F5F5;
+  --text-light: #D4D4D4;
+  --text-primary-gray: #A3A3A3;
+  --text-muted: #737373;
+  --accent-orange: #FF6A00;
+  --accent-orange-hover: #FF8126;
+  --status-success: #35C979;
+  --status-warning: #F5B942;
+  --status-error: #F05B5B;
+  --status-info: #69A8FF;
+}
+
+@theme inline {
+  --color-bg-primary: var(--bg-primary);
+  --color-bg-secondary: var(--bg-secondary);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-card: var(--bg-card);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-base: var(--border-base);
+  --color-border-active: var(--border-active);
+  --color-text-offwhite: var(--text-offwhite);
+  --color-text-light: var(--text-light);
+  --color-text-primary-gray: var(--text-primary-gray);
+  --color-text-muted: var(--text-muted);
+  --color-accent-orange: var(--accent-orange);
+  --color-accent-orange-hover: var(--accent-orange-hover);
+  --color-status-success: var(--status-success);
+  --color-status-warning: var(--status-warning);
+  --color-status-error: var(--status-error);
+  --color-status-info: var(--status-info);
+
+  --font-sans: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: var(--font-geist-mono), monospace;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-light);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Custom focus ring utility for accessibility */
+*:focus-visible {
+  outline: 2px solid var(--accent-orange);
+  outline-offset: 2px;
+}
+
+/* Tabular figures for pricing and currency totals */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0d0d0d;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #262626;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #363636;
+}
