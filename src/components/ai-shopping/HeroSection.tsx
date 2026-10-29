@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 import { ShoppingPrompt } from "./ShoppingPrompt";
 import { ShieldCheck, CheckCircle2 } from "lucide-react";
 
@@ -16,9 +17,30 @@ export function HeroSection() {
       <div className="relative mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
         {/* Eyebrow & Headline container */}
         <div className="flex flex-col items-center text-center mb-8 sm:mb-10">
+          {/* Brandmark Icon */}
+          <div className="relative mb-5 flex items-center justify-center">
+            <div className="relative h-16 w-16 sm:h-20 sm:w-20 overflow-hidden rounded-2xl border border-[#303030] bg-[#0c0c0c] p-2 shadow-2xl shadow-[#FF6A00]/25 transition-all hover:border-[#FF6A00]/60 hover:shadow-[#FF6A00]/35">
+              <Image
+                src="/logo/SpendPilotLOGO.png"
+                alt="SpendPilot AI brandmark"
+                width={80}
+                height={80}
+                className="h-full w-full object-contain"
+                priority
+              />
+            </div>
+          </div>
+
           {/* Eyebrow */}
           <div className="inline-flex items-center gap-2 rounded-full border border-[#303030] bg-[#101010] px-3.5 py-1 text-xs font-medium text-[#D4D4D4] mb-4 shadow-sm">
-            <span className="h-2 w-2 rounded-full bg-[#FF6A00]" />
+            <Image
+              src="/logo/SpendPilotLOGO.png"
+              alt=""
+              width={16}
+              height={16}
+              className="h-4 w-4 object-contain"
+              aria-hidden="true"
+            />
             <span>AI shopping, with your budget in control</span>
           </div>
 

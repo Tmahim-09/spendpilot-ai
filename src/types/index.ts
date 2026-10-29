@@ -71,3 +71,4 @@ export interface ExamplePromptItem {
   currency: CurrencyCode;
   category: string;
 }
+

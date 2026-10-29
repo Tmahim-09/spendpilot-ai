@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { ArrowRight, Sparkles, ShieldCheck, AlertCircle, Info, CheckCircle2 } from "lucide-react";
+import Image from "next/image";
+import { ArrowRight, Sparkles, ShieldCheck, AlertCircle, Info } from "lucide-react";
 import { BudgetInput } from "./BudgetInput";
 import { ExamplePrompts } from "./ExamplePrompts";
 import type { CurrencyCode } from "@/types";
@@ -193,7 +194,15 @@ export function ShoppingPrompt({
             className="mt-5 rounded-xl border border-[#303030] bg-[#141414] p-4 text-sm text-[#D4D4D4] animate-fadeIn"
           >
             <div className="flex items-start gap-3">
-              <CheckCircle2 className="h-5 w-5 shrink-0 text-[#35C979] mt-0.5" aria-hidden="true" />
+              <div className="relative h-6 w-6 shrink-0 overflow-hidden rounded-md border border-[#303030] bg-[#0c0c0c] p-0.5 mt-0.5 shadow-sm shadow-[#FF6A00]/20">
+                <Image
+                  src="/logo/SpendPilotLOGO.png"
+                  alt="SpendPilot"
+                  width={24}
+                  height={24}
+                  className="h-full w-full object-contain"
+                />
+              </div>
               <div className="flex-1 space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-[#F5F5F5]">
@@ -241,3 +250,4 @@ export function ShoppingPrompt({
     </div>
   );
 }
+

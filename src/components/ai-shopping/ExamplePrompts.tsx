@@ -75,3 +75,4 @@ export function ExamplePrompts({ onSelectPrompt, className = "" }: ExamplePrompt
     </div>
   );
 }
+

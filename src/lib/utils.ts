@@ -18,3 +18,4 @@ export function formatCurrency(centsOrMinor: number, currency: Currency = "USD")
   const amount = (centsOrMinor / 100).toFixed(2);
   return `${symbol}${amount}`;
 }
+

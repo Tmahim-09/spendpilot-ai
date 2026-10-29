@@ -26,13 +26,13 @@ export function SiteHeader() {
             className="flex items-center gap-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF6A00] rounded-md"
             aria-label="SpendPilot AI Home"
           >
-            <div className="relative h-9 w-9 overflow-hidden rounded-lg border border-[#303030] bg-[#101010]">
+            <div className="relative h-9 w-9 overflow-hidden rounded-lg border border-[#303030] bg-[#0c0c0c] p-0.5 shadow-sm shadow-[#FF6A00]/20">
               <Image
-                src="/logo/SpendPilotLOGO.jpeg"
+                src="/logo/SpendPilotLOGO.png"
                 alt="SpendPilot AI logo"
                 width={36}
                 height={36}
-                className="h-full w-full object-cover"
+                className="h-full w-full object-contain"
                 priority
               />
             </div>
@@ -153,3 +153,4 @@ export function SiteHeader() {
     </header>
   );
 }
+

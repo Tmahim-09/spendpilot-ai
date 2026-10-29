@@ -14,13 +14,13 @@ export function SiteFooter() {
           {/* Brand & Mission */}
           <div className="md:col-span-2 space-y-3">
             <div className="flex items-center gap-3">
-              <div className="relative h-8 w-8 overflow-hidden rounded-lg border border-[#303030] bg-[#101010]">
+              <div className="relative h-8 w-8 overflow-hidden rounded-lg border border-[#303030] bg-[#0c0c0c] p-0.5 shadow-sm shadow-[#FF6A00]/20">
                 <Image
-                  src="/logo/SpendPilotLOGO.jpeg"
+                  src="/logo/SpendPilotLOGO.png"
                   alt="SpendPilot AI logo"
                   width={32}
                   height={32}
-                  className="h-full w-full object-cover"
+                  className="h-full w-full object-contain"
                 />
               </div>
               <span className="text-base font-semibold text-[#F5F5F5]">
