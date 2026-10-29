@@ -228,6 +228,34 @@ export interface ShoppingRecommendRequestPayload {
   priorityOverride?: string;
 }
 
+export type GeminiErrorCategory =
+  | "rate_limited"
+  | "transient_error"
+  | "auth_error"
+  | "invalid_request"
+  | "model_not_found"
+  | "timeout"
+  | "validation_error"
+  | "unknown";
+
+export interface ModelAttemptDiagnostic {
+  requestId: string;
+  model: string;
+  attemptNumber: number;
+  durationMs: number;
+  outcome:
+    | "success"
+    | "rate_limited"
+    | "transient_error"
+    | "auth_error"
+    | "invalid_request"
+    | "model_not_found"
+    | "timeout"
+    | "validation_failed";
+  category: GeminiErrorCategory;
+  errorSummary?: string;
+}
+
 /**
  * Response payload for POST /api/shopping/recommend (Asynchronous Gemini AI ranking & comparison)
  */
@@ -241,6 +269,8 @@ export interface ShoppingRecommendResponsePayload {
   otherMatches: NormalizedProduct[];
   allProducts: NormalizedProduct[];
   comparisonOverview?: string | null;
+  modelUsed?: string;
+  usedFallback?: boolean;
   timings?: {
     geminiDurationMs: number;
     requestId?: string;

@@ -1,8 +1,13 @@
-import { Type, ThinkingLevel } from "@google/genai";
-import { executeGeminiWithDeadline } from "./gemini-client.ts";
+import { Type } from "@google/genai";
+import { executeWithModelFailover, buildModelGenerationConfig } from "./gemini-router.ts";
 import { extractEvidenceFacts } from "./evidence-extractor.ts";
 import { validateAndCleanComparison, type ComparisonValidationResult } from "./comparison-validator.ts";
-import type { NormalizedProduct, AiComparisonResult, EvidenceFact } from "../../types/index.ts";
+import type {
+  NormalizedProduct,
+  AiComparisonResult,
+  EvidenceFact,
+  ModelAttemptDiagnostic,
+} from "../../types/index.ts";
 
 const comparisonSchema = {
   type: Type.OBJECT,
@@ -123,6 +128,7 @@ export interface RunAiComparisonOptions {
   budget?: number | null;
   currency?: string;
   priorityOverride?: string;
+  requestId?: string;
 }
 
 export interface RunAiComparisonResult {
@@ -132,6 +138,9 @@ export interface RunAiComparisonResult {
   otherMatches: NormalizedProduct[];
   allProducts: NormalizedProduct[];
   validation: ComparisonValidationResult;
+  modelUsed?: string;
+  usedFallback?: boolean;
+  attempts?: ModelAttemptDiagnostic[];
 }
 
 /**
@@ -143,6 +152,7 @@ export async function runAiComparison({
   budget,
   currency = "USD",
   priorityOverride,
+  requestId,
 }: RunAiComparisonOptions): Promise<RunAiComparisonResult> {
   if (!products || products.length === 0) {
     return {
@@ -224,32 +234,37 @@ ${JSON.stringify(candidateSummariesForPrompt, null, 2)}
 
 Provide a structured, side-by-side comparison evaluating these candidate products against the user's requirements.`;
 
-  const parsedJson = await executeGeminiWithDeadline(
-    async (ai, model, signal) => {
+  const failoverResult = await executeWithModelFailover<Record<string, unknown>>({
+    requestId,
+    totalTimeoutMs: 18000,
+    executeFn: async (ai, model, signal) => {
+      const config = buildModelGenerationConfig(model, {
+        abortSignal: signal,
+        systemInstruction,
+        temperature: 0.2,
+        responseMimeType: "application/json",
+        responseSchema: comparisonSchema,
+      });
+
       const response = await ai.models.generateContent({
         model,
         contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        config: {
-          abortSignal: signal,
-          systemInstruction,
-          temperature: 0.2,
-          responseMimeType: "application/json",
-          responseSchema: comparisonSchema,
-          thinkingConfig:
-            model === "gemini-3.8-flash"
-              ? { thinkingLevel: ThinkingLevel.LOW }
-              : undefined,
-        },
+        config,
       });
 
       const text = response.text?.trim() || "{}";
       return JSON.parse(text) as Record<string, unknown>;
     },
-    { timeoutMs: 14000, maxRetries: 0 }
-  );
+    validateFn: (data) => {
+      if (!data || typeof data !== "object") {
+        return { valid: false, reason: "Model output is not a JSON object" };
+      }
+      return { valid: true };
+    },
+  });
 
   // Validate the comparison server-side
-  const validation = validateAndCleanComparison(parsedJson, shortlist, evidenceFacts, query);
+  const validation = validateAndCleanComparison(failoverResult.data, shortlist, evidenceFacts, query);
 
   // Combine top recommendations with remaining candidate products (from outside the shortlist)
   const remainingProducts = products.slice(6);
@@ -263,5 +278,8 @@ Provide a structured, side-by-side comparison evaluating these candidate product
     otherMatches,
     allProducts,
     validation,
+    modelUsed: failoverResult.modelUsed,
+    usedFallback: failoverResult.usedFallback,
+    attempts: failoverResult.attempts,
   };
 }
