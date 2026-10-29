@@ -15,18 +15,37 @@ export interface ShoppingIntent {
 }
 
 /**
+ * An individual retailer offer associated with a product
+ */
+export interface ProductOfferItem {
+  domain: string;
+  url: string;
+  priceMinor: number;
+  compareAtPriceMinor?: number | null;
+  currency: CurrencyCode;
+  availability: "in_stock" | "out_of_stock" | "unknown";
+  condition?: string | null;
+}
+
+/**
  * Normalized product schema for Channel3 / provider discovery (PRD Section 11)
  */
 export interface NormalizedProduct {
   source: string;
   sourceProductId: string | null;
   title: string;
+  brand?: string | null;
+  description?: string | null;
   imageUrl: string | null;
+  cleanedImageUrl?: string | null;
   priceMinor: number | null;
+  compareAtPriceMinor?: number | null;
   currency: CurrencyCode | null;
   retailerName: string | null;
   retailerUrl: string;
   availability: "in_stock" | "out_of_stock" | "unknown";
+  offers?: ProductOfferItem[];
+  offersCount?: number;
   specifications: Record<string, string>;
   sourceFacts: string[];
   explanation?: string;
@@ -72,3 +91,25 @@ export interface ExamplePromptItem {
   category: string;
 }
 
+/**
+ * Request payload for POST /api/products/search
+ */
+export interface SearchProductsRequestPayload {
+  query: string;
+  budget?: number | null;
+  currency?: CurrencyCode;
+}
+
+/**
+ * Response payload for POST /api/products/search
+ */
+export interface SearchProductsResponsePayload {
+  success: boolean;
+  query: string;
+  budgetApplied?: number | null;
+  currency: CurrencyCode;
+  count: number;
+  products: NormalizedProduct[];
+  cached?: boolean;
+  error?: string;
+}

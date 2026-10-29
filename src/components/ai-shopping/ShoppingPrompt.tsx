@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import Image from "next/image";
-import { ArrowRight, Sparkles, ShieldCheck, AlertCircle, Info } from "lucide-react";
+import { ArrowRight, Sparkles, ShieldCheck, AlertCircle, Info, RefreshCw } from "lucide-react";
 import { BudgetInput } from "./BudgetInput";
 import { ExamplePrompts } from "./ExamplePrompts";
 import type { CurrencyCode } from "@/types";
@@ -11,12 +11,16 @@ interface ShoppingPromptProps {
   initialPrompt?: string;
   initialBudget?: string;
   initialCurrency?: CurrencyCode;
+  onSearch?: (query: string, budget: number | null, currency: CurrencyCode) => Promise<void> | void;
+  isLoading?: boolean;
 }
 
 export function ShoppingPrompt({
   initialPrompt = "",
   initialBudget = "",
   initialCurrency = "USD",
+  onSearch,
+  isLoading = false,
 }: ShoppingPromptProps) {
   const [prompt, setPrompt] = useState(initialPrompt);
   const [budget, setBudget] = useState(initialBudget);
@@ -104,13 +108,18 @@ export function ShoppingPrompt({
 
     setErrorMessage(null);
 
-    // Phase 1: capture valid frontend request state without faking completed API calls
-    setSubmittedState({
-      query: trimmed,
-      budget: budget.trim(),
-      currency,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-    });
+    if (onSearch) {
+      const parsedBudget = budget.trim() ? Number(budget.trim()) : null;
+      onSearch(trimmed, parsedBudget, currency);
+    } else {
+      // Phase 1 fallback: capture valid frontend request state
+      setSubmittedState({
+        query: trimmed,
+        budget: budget.trim(),
+        currency,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      });
+    }
   };
 
   return (
@@ -177,11 +186,21 @@ export function ShoppingPrompt({
             <div className="flex items-center gap-3">
               <button
                 type="submit"
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF6A00] px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-[#FF6A00]/20 transition-all hover:bg-[#FF8126] active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF6A00]"
+                disabled={isLoading}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-[#FF6A00] px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-[#FF6A00]/20 transition-all hover:bg-[#FF8126] active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-[#FF6A00] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF6A00]"
               >
-                <Sparkles className="h-4 w-4 text-white" aria-hidden="true" />
-                <span>Find my options</span>
-                <ArrowRight className="h-4 w-4 text-white" aria-hidden="true" />
+                {isLoading ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 text-white animate-spin" aria-hidden="true" />
+                    <span>Searching Channel3...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4 text-white" aria-hidden="true" />
+                    <span>Find my options</span>
+                    <ArrowRight className="h-4 w-4 text-white" aria-hidden="true" />
+                  </>
+                )}
               </button>
             </div>
           </div>
