@@ -81,3 +81,4 @@ describe("Shopping Recommendation Pipeline & Fallback Safety", () => {
     assert.strictEqual(result.allProducts[1].sourceProductId, "c3-102");
   });
 });
+

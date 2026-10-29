@@ -143,8 +143,81 @@ export interface SearchProductsResponsePayload {
 
 export type AiProcessingStatus = "complete" | "partial" | "unavailable";
 
+export type AssessmentRating = "strong" | "partial" | "weak" | "unknown";
+
 /**
- * Request payload for POST /api/shopping/recommend (Asynchronous Gemini AI ranking)
+ * Normalized evidence fact extracted from genuine Channel3 data
+ */
+export interface EvidenceFact {
+  id: string; // e.g. "fact-prod1-0"
+  productId: string;
+  category: "attribute" | "specification" | "offer" | "price" | "feature" | "brand";
+  label: string;
+  value: string;
+  sourceField: string;
+}
+
+/**
+ * Assessment of a product against a specific comparison criterion
+ */
+export interface CriterionAssessment {
+  productId: string;
+  assessment: AssessmentRating;
+  reason: string;
+  evidenceFactIds: string[];
+}
+
+/**
+ * A relevant comparison criterion evaluated across candidate products
+ */
+export interface ComparisonCriterion {
+  name: string;
+  importance: "high" | "medium" | "low";
+  assessments: CriterionAssessment[];
+}
+
+/**
+ * A notable trade-off or limitation for a candidate product
+ */
+export interface ProductTradeOff {
+  productId: string;
+  summary: string;
+}
+
+/**
+ * An alternative product pick tailored to a specific user priority
+ */
+export interface AlternativePick {
+  productId: string;
+  bestFor: string;
+  reason: string;
+}
+
+/**
+ * An important requested specification that was not provided in the listing
+ */
+export interface MissingInformation {
+  productId: string;
+  field: string;
+  explanation: string;
+}
+
+/**
+ * Structured AI Comparison Contract (Section 4)
+ */
+export interface AiComparisonResult {
+  summary: string;
+  bestMatchProductId: string;
+  bestMatchReason: string;
+  priorityInterpretation: string[];
+  criteria: ComparisonCriterion[];
+  tradeoffs: ProductTradeOff[];
+  alternativePicks: AlternativePick[];
+  missingInformation: MissingInformation[];
+}
+
+/**
+ * Request payload for POST /api/shopping/recommend (Asynchronous Gemini AI ranking & comparison)
  */
 export interface ShoppingRecommendRequestPayload {
   query: string;
@@ -152,15 +225,18 @@ export interface ShoppingRecommendRequestPayload {
   budget?: number | null;
   currency?: CurrencyCode;
   intent?: ParsedShoppingIntent;
+  priorityOverride?: string;
 }
 
 /**
- * Response payload for POST /api/shopping/recommend (Asynchronous Gemini AI ranking)
+ * Response payload for POST /api/shopping/recommend (Asynchronous Gemini AI ranking & comparison)
  */
 export interface ShoppingRecommendResponsePayload {
   success: boolean;
   aiStatus: AiProcessingStatus;
   aiMessage?: string | null;
+  comparison?: AiComparisonResult | null;
+  evidenceFacts?: Record<string, EvidenceFact>;
   topRecommendations: NormalizedProduct[];
   otherMatches: NormalizedProduct[];
   allProducts: NormalizedProduct[];

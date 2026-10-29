@@ -43,7 +43,7 @@ export function getGeminiClient(): GoogleGenAI {
  * Defaults to "gemini-3.8-flash" as configured in environment.
  */
 export function getGeminiModel(): string {
-  return process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
+  return process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash";
 }
 
 export interface GenerateWithDeadlineOptions {
@@ -90,18 +90,23 @@ export async function executeGeminiWithDeadline<T>(
           throw new GeminiTimeoutError(timeoutMs);
         }
 
+        const errStr = typeof err === "object" && err ? JSON.stringify(err) : String(err);
         const isQuotaExhausted =
-          err &&
-          typeof err === "object" &&
-          (("status" in err && err.status === 429) ||
-            ("message" in err && typeof err.message === "string" && err.message.includes("quota")));
+          (err &&
+            typeof err === "object" &&
+            "status" in err &&
+            (err.status === 429 || err.status === "RESOURCE_EXHAUSTED")) ||
+          errStr.includes("RESOURCE_EXHAUSTED") ||
+          errStr.includes("limit exceeded") ||
+          errStr.includes("quota") ||
+          errStr.includes("QuotaFailure");
 
-        // If primary model hit 429 quota exhaustion (e.g. Free Tier limit on gemini-3.8-flash)
-        // and we haven't tried the fallback yet, switch to gemini-3.1-flash-lite
-        if (isQuotaExhausted && model !== "gemini-3.1-flash-lite") {
+        // If primary model hit quota exhaustion (e.g. Free Tier daily limit)
+        // and we haven't tried the fallback yet, switch to gemini-3.5-flash-lite
+        if (isQuotaExhausted && model !== "gemini-3.5-flash-lite") {
           const remainingMs = timeoutMs - (Date.now() - startTime);
           if (remainingMs > 3000) {
-            model = "gemini-3.1-flash-lite";
+            model = "gemini-3.5-flash-lite";
             continue;
           }
         }

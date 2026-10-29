@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { rankAndExplainProducts } from "@/lib/ai/gemini-ranking";
+import { runAiComparison } from "@/lib/ai/gemini-comparison";
 import type {
   ShoppingRecommendRequestPayload,
   ShoppingRecommendResponsePayload,
@@ -20,7 +20,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { query = "", products = [], budget = null, currency = "USD" } = body;
+    const {
+      query = "",
+      products = [],
+      budget = null,
+      currency = "USD",
+      priorityOverride,
+    } = body;
 
     if (!Array.isArray(products) || products.length === 0) {
       return NextResponse.json(
@@ -31,6 +37,8 @@ export async function POST(request: NextRequest) {
           otherMatches: [],
           allProducts: [],
           comparisonOverview: null,
+          comparison: null,
+          evidenceFacts: {},
           timings: {
             geminiDurationMs: Math.round(performance.now() - t0),
             requestId,
@@ -46,7 +54,9 @@ export async function POST(request: NextRequest) {
         {
           success: true,
           aiStatus: "unavailable",
-          aiMessage: "AI recommendation unavailable (missing GEMINI_API_KEY). Showing verified catalog matches.",
+          aiMessage: "AI comparison unavailable (missing GEMINI_API_KEY). Showing verified catalog matches.",
+          comparison: null,
+          evidenceFacts: {},
           topRecommendations: [],
           otherMatches: products as NormalizedProduct[],
           allProducts: products as NormalizedProduct[],
@@ -60,19 +70,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Call Gemini candidate ranking with hard 10s deadline & low thinking
-    const ranked = await rankAndExplainProducts({
+    // Call Gemini evidence-grounded comparison
+    const result = await runAiComparison({
       query,
+      products: products as NormalizedProduct[],
       budget,
       currency,
-      products: products as NormalizedProduct[],
+      priorityOverride,
     });
 
     const geminiDurationMs = Math.round(performance.now() - t0);
 
     if (process.env.NODE_ENV !== "production") {
       console.log(
-        `[RecommendAPI] id=${requestId} query="${query}" recCount=${ranked.topRecommendations.length} duration=${geminiDurationMs}ms`
+        `[RecommendAPI] id=${requestId} query="${query}" override="${priorityOverride || "none"}" duration=${geminiDurationMs}ms criteriaCount=${result.comparison.criteria.length}`
       );
     }
 
@@ -80,10 +91,12 @@ export async function POST(request: NextRequest) {
       {
         success: true,
         aiStatus: "complete",
-        topRecommendations: ranked.topRecommendations,
-        otherMatches: ranked.otherMatches,
-        allProducts: ranked.allProducts,
-        comparisonOverview: ranked.comparisonOverview,
+        comparison: result.comparison,
+        evidenceFacts: result.evidenceFacts,
+        topRecommendations: result.topRecommendations,
+        otherMatches: result.otherMatches,
+        allProducts: result.allProducts,
+        comparisonOverview: result.comparison.summary,
         timings: {
           geminiDurationMs,
           requestId,
@@ -93,7 +106,7 @@ export async function POST(request: NextRequest) {
     );
   } catch (error: unknown) {
     const geminiDurationMs = Math.round(performance.now() - t0);
-    const message = error instanceof Error ? error.message : "AI ranking error occurred.";
+    const message = error instanceof Error ? error.message : "AI comparison error occurred.";
 
     const isQuota =
       message.toLowerCase().includes("quota") ||
@@ -120,6 +133,8 @@ export async function POST(request: NextRequest) {
         success: true,
         aiStatus: "unavailable",
         aiMessage: safeMessage,
+        comparison: null,
+        evidenceFacts: {},
         topRecommendations: [],
         otherMatches: [],
         allProducts: [],

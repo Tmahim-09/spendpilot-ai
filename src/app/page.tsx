@@ -16,6 +16,8 @@ import type {
   SearchProductsResponsePayload,
   ShoppingRecommendResponsePayload,
   AiProcessingStatus,
+  AiComparisonResult,
+  EvidenceFact,
 } from "@/types";
 
 export default function Home() {
@@ -25,13 +27,15 @@ export default function Home() {
 
   // Products and Recommendations State
   const [products, setProducts] = useState<NormalizedProduct[]>([]);
+  const [comparison, setComparison] = useState<AiComparisonResult | null>(null);
+  const [evidenceFacts, setEvidenceFacts] = useState<Record<string, EvidenceFact>>({});
   const [topRecommendations, setTopRecommendations] = useState<NormalizedProduct[]>([]);
   const [otherMatches, setOtherMatches] = useState<NormalizedProduct[]>([]);
-  const [comparisonOverview, setComparisonOverview] = useState<string | null>(null);
 
   // Status & Progress State
   const [isSearchingProducts, setIsSearchingProducts] = useState(false);
   const [isRankingAi, setIsRankingAi] = useState(false);
+  const [isRefining, setIsRefining] = useState(false);
   const [aiStatus, setAiStatus] = useState<AiProcessingStatus>("complete");
   const [aiMessage, setAiMessage] = useState<string | null>(null);
   const [playfulNotice, setPlayfulNotice] = useState<{
@@ -58,7 +62,8 @@ export default function Home() {
     setCurrency(searchCurrency);
     setError(null);
     setHasSearched(true);
-    setComparisonOverview(null);
+    setComparison(null);
+    setEvidenceFacts({});
     setTopRecommendations([]);
     setOtherMatches([]);
 
@@ -147,7 +152,7 @@ export default function Home() {
         return;
       }
 
-      // Step 4: Asynchronous Gemini Candidate Ranking in Background
+      // Step 4: Asynchronous Gemini Candidate Comparison in Background
       setIsRankingAi(true);
       setAiStatus("complete");
       setAiMessage(null);
@@ -169,11 +174,12 @@ export default function Home() {
         // Guard against race condition
         if (currentId !== activeSearchId.current) return;
 
-        if (recRes.ok && recData.success && recData.topRecommendations?.length > 0) {
-          // Smoothly update display with AI-ranked recommendations
-          setTopRecommendations(recData.topRecommendations);
+        if (recRes.ok && recData.success && recData.comparison) {
+          // Update display with comprehensive AI comparison workspace & recommendations
+          setComparison(recData.comparison);
+          setEvidenceFacts(recData.evidenceFacts || {});
+          setTopRecommendations(recData.topRecommendations || []);
           setOtherMatches(recData.otherMatches || []);
-          setComparisonOverview(recData.comparisonOverview || null);
           setAiStatus(recData.aiStatus || "complete");
         } else {
           // If Gemini was unavailable or timed out, preserve all rendered products
@@ -204,9 +210,49 @@ export default function Home() {
     }
   };
 
+  // Section 8: Priority Refinement on Stored Candidate Products without re-querying Channel3
+  const handleRefinePriority = async (priorityText: string) => {
+    if (!query || products.length === 0) return;
+
+    setIsRefining(true);
+    try {
+      const recRes = await fetch("/api/shopping/recommend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          products,
+          budget,
+          currency,
+          priorityOverride: priorityText,
+        }),
+      });
+
+      const recData = (await recRes.json()) as ShoppingRecommendResponsePayload;
+
+      if (recRes.ok && recData.success && recData.comparison) {
+        setComparison(recData.comparison);
+        setEvidenceFacts(recData.evidenceFacts || {});
+        setTopRecommendations(recData.topRecommendations || []);
+        setOtherMatches(recData.otherMatches || []);
+        setAiStatus("complete");
+      }
+    } catch {
+      // Keep existing comparison intact on network glitch
+    } finally {
+      setIsRefining(false);
+    }
+  };
+
   const handleRetry = () => {
     if (query) {
       handleSearch(query, budget, currency);
+    }
+  };
+
+  const handleRetryComparison = () => {
+    if (query && products.length > 0) {
+      handleRefinePriority("");
     }
   };
 
@@ -230,23 +276,27 @@ export default function Home() {
           initialCurrency={currency}
         />
 
-        {/* Live Search & Responsive AI Results */}
+        {/* Live Search & Responsive AI Comparison Workspace */}
         {hasSearched ? (
           <LiveProductResults
             query={query}
             budget={budget}
             currency={currency}
             products={products}
+            comparison={comparison}
+            evidenceFacts={evidenceFacts}
             topRecommendations={topRecommendations}
             otherMatches={otherMatches}
-            comparisonOverview={comparisonOverview}
             isSearchingProducts={isSearchingProducts}
             isRankingAi={isRankingAi}
+            isRefining={isRefining}
             aiStatus={aiStatus}
             aiMessage={aiMessage}
             playfulNotice={playfulNotice}
             error={error}
             onRetry={handleRetry}
+            onRetryComparison={handleRetryComparison}
+            onRefinePriority={handleRefinePriority}
             onSelectPrompt={handleSelectPrompt}
             cached={cached}
           />

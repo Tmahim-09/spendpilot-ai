@@ -2,7 +2,14 @@
 
 import React from "react";
 import { ProductCard } from "./ProductCard";
-import type { NormalizedProduct, CurrencyCode, AiProcessingStatus } from "@/types";
+import { AiComparisonWorkspace } from "@/components/comparison/AiComparisonWorkspace";
+import type {
+  NormalizedProduct,
+  CurrencyCode,
+  AiProcessingStatus,
+  AiComparisonResult,
+  EvidenceFact,
+} from "@/types";
 import {
   ShieldAlert,
   RefreshCw,
@@ -21,11 +28,13 @@ interface LiveProductResultsProps {
   budget: number | null;
   currency: CurrencyCode;
   products: NormalizedProduct[];
+  comparison?: AiComparisonResult | null;
+  evidenceFacts?: Record<string, EvidenceFact>;
   topRecommendations?: NormalizedProduct[];
   otherMatches?: NormalizedProduct[];
-  comparisonOverview?: string | null;
   isSearchingProducts: boolean;
   isRankingAi: boolean;
+  isRefining?: boolean;
   aiStatus: AiProcessingStatus;
   aiMessage?: string | null;
   playfulNotice?: {
@@ -34,6 +43,8 @@ interface LiveProductResultsProps {
   } | null;
   error: string | null;
   onRetry?: () => void;
+  onRetryComparison?: () => void;
+  onRefinePriority?: (priority: string) => void;
   onSelectPrompt?: (promptText: string) => void;
   cached?: boolean;
 }
@@ -43,16 +54,20 @@ export function LiveProductResults({
   budget,
   currency,
   products,
+  comparison = null,
+  evidenceFacts = {},
   topRecommendations = [],
   otherMatches = [],
-  comparisonOverview = null,
   isSearchingProducts,
   isRankingAi,
+  isRefining = false,
   aiStatus,
   aiMessage = null,
   playfulNotice = null,
   error,
   onRetry,
+  onRetryComparison,
+  onRefinePriority,
   onSelectPrompt,
   cached = false,
 }: LiveProductResultsProps) {
@@ -121,7 +136,6 @@ export function LiveProductResults({
       >
         <div className="mx-auto max-w-xl px-4 sm:px-6 lg:px-8 text-center">
           <div className="rounded-2xl border border-[#242424] bg-[#0e0e0e] p-8 sm:p-12 shadow-2xl relative overflow-hidden">
-            {/* Subtle background radar pulse */}
             <div className="relative mx-auto mb-6 flex h-20 w-20 items-center justify-center">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#FF6A00]/15 motion-reduce:animate-none" />
               <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-[#FF6A00]/40 bg-[#161310] text-[#FF8126] shadow-lg shadow-[#FF6A00]/10">
@@ -142,7 +156,6 @@ export function LiveProductResults({
               </p>
             </div>
 
-            {/* Restrained animated progress shimmer */}
             <div className="mt-8 h-1 w-full overflow-hidden rounded-full bg-[#1c1c1c]">
               <div className="h-full w-1/2 rounded-full bg-gradient-to-r from-[#FF6A00]/20 via-[#FF6A00] to-[#FF6A00]/20 animate-pulse motion-reduce:animate-none mx-auto" />
             </div>
@@ -231,30 +244,29 @@ export function LiveProductResults({
 
   return (
     <section id="search-results" className="py-12 sm:py-16 border-b border-[#242424] bg-[#080808]">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 space-y-12">
         {/* Results Header with Live Lifecycle Indicator */}
-        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between mb-8 pb-4 border-b border-[#222222] gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between pb-4 border-b border-[#222222] gap-4">
           <div className="space-y-2">
-            {/* Real Lifecycle Badges */}
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-[#35C979]/40 bg-[#35C979]/10 px-2.5 py-0.5 text-xs font-semibold text-[#35C979]">
                 <Check className="h-3 w-3" />
                 Live Channel3 Results
               </span>
 
-              {/* Meaningful Asynchronous AI State */}
+              {/* Asynchronous AI State Badge */}
               {isRankingAi ? (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-2.5 py-0.5 text-xs font-semibold text-[#FF8126]">
                   <Sparkles className="h-3 w-3 animate-spin text-[#FF6A00] motion-reduce:animate-none" />
-                  <span>Comparing your best matches...</span>
+                  <span>Comparing your best matches across key criteria...</span>
                 </span>
-              ) : aiStatus === "complete" ? (
+              ) : comparison && aiStatus === "complete" ? (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-2.5 py-0.5 text-xs font-semibold text-[#FF8126]">
                   <Sparkles className="h-3 w-3 text-[#FF6A00]" />
-                  <span>AI Ranked &amp; Compared</span>
+                  <span>AI Comparison Ready</span>
                 </span>
               ) : aiStatus === "unavailable" ? (
-                <span className="inline-flex items-center gap-1 rounded-full border border-[#2b2b2b] bg-[#141414] px-2.5 py-0.5 text-[11px] text-[#888888]">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-[#2b2b2b] bg-[#141414] px-2.5 py-0.5 text-[11px] text-[#888888]">
                   <span>Catalog View</span>
                 </span>
               ) : null}
@@ -294,80 +306,71 @@ export function LiveProductResults({
         </div>
 
         {/* Small non-blocking AI status message if Gemini was unavailable */}
-        {aiStatus === "unavailable" && aiMessage && (
-          <div className="mb-6 rounded-xl border border-[#282828] bg-[#121212] p-3 text-xs text-[#A3A3A3] flex items-center gap-2.5">
-            <AlertCircle className="h-4 w-4 text-[#F5B942] shrink-0" />
-            <span>{aiMessage}</span>
-          </div>
-        )}
-
-        {/* AI Comparison Overview Banner (if provided by Gemini) */}
-        {comparisonOverview && (
-          <div className="mb-8 rounded-xl border border-[#FF6A00]/25 bg-[#12100e] p-4 text-xs text-[#D4D4D4] leading-relaxed flex items-start gap-3">
-            <Sparkles className="h-4 w-4 text-[#FF8126] shrink-0 mt-0.5" />
-            <div>
-              <span className="font-semibold text-[#FF8126] block mb-0.5">SpendPilot Comparison:</span>
-              <p>{comparisonOverview}</p>
+        {aiStatus === "unavailable" && (
+          <div className="rounded-xl border border-[#282828] bg-[#121212] p-4 text-xs text-[#A3A3A3] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <AlertCircle className="h-4 w-4 text-[#F5B942] shrink-0" />
+              <span>{aiMessage || "AI comparison is temporarily unavailable. Showing verified catalog matches directly."}</span>
             </div>
-          </div>
-        )}
-
-        {/* Top AI Recommendations Section */}
-        {hasRecommendations && (
-          <div className="mb-12">
-            <div className="flex items-center justify-between mb-5 pb-2.5 border-b border-[#222222]">
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-[#FF8126]" />
-                <h3 className="text-lg font-bold text-[#F5F5F5]">
-                  Top AI Picks
-                </h3>
-                <span className="text-xs text-[#888888] hidden sm:inline">
-                  &bull; Ranked by intent fit, verified specs, and budget value
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {topRecommendations.map((product) => (
-                <ProductCard
-                  key={product.sourceProductId || product.title}
-                  product={product}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Other Matching Catalog Options / Standard Grid */}
-        {secondaryProducts.length > 0 && (
-          <div>
-            {hasRecommendations && (
-              <div className="flex items-center justify-between mb-5 pb-2.5 border-b border-[#222222]">
-                <div className="flex items-center gap-2">
-                  <Layers className="h-4 w-4 text-[#888888]" />
-                  <h3 className="text-base sm:text-lg font-bold text-[#F5F5F5]">
-                    Other Matching Options
-                  </h3>
-                </div>
-                <span className="text-xs text-[#737373]">
-                  {secondaryProducts.length} additional authentic catalog items
-                </span>
-              </div>
+            {onRetryComparison && (
+              <button
+                type="button"
+                onClick={onRetryComparison}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#333333] bg-[#1c1c1c] px-3 py-1.5 text-xs text-[#F5F5F5] hover:bg-[#262626] hover:text-[#FF8126] transition-colors"
+              >
+                <RefreshCw className="h-3 w-3" />
+                <span>Retry AI Comparison</span>
+              </button>
             )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-              {secondaryProducts.map((product) => (
-                <ProductCard
-                  key={product.sourceProductId || product.title}
-                  product={product}
-                />
-              ))}
-            </div>
           </div>
         )}
+
+        {/* ─────────────────────────────────────────────────────────────
+            PRIMARY EXPERIENCE: THE AI COMPARISON WORKSPACE
+           ───────────────────────────────────────────────────────────── */}
+        {comparison && aiStatus === "complete" && (
+          <AiComparisonWorkspace
+            query={query}
+            budget={budget}
+            currency={currency}
+            comparison={comparison}
+            evidenceFacts={evidenceFacts}
+            products={products}
+            isRefining={isRefining}
+            onRefinePriority={onRefinePriority || (() => {})}
+          />
+        )}
+
+        {/* ─────────────────────────────────────────────────────────────
+            SUPPORTING EXPERIENCE: PRODUCT DETAILS & RETAILER OFFERS
+           ───────────────────────────────────────────────────────────── */}
+        <section aria-label="Product details and retailer offers" className="space-y-6 pt-6 border-t border-[#1e1e1e]">
+          <div className="flex items-center justify-between pb-2">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-[#888888]" />
+                <h3 className="text-base sm:text-lg font-bold text-[#F5F5F5]">
+                  {comparison && aiStatus === "complete" ? "Product Details & Retailer Offers" : "Verified Channel3 Products"}
+                </h3>
+              </div>
+              <p className="text-xs text-[#737373]">
+                Direct links to verified merchant stores &bull; Prices and stock confirmed at merchant checkout
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {(secondaryProducts.length > 0 ? secondaryProducts : products).map((product) => (
+              <ProductCard
+                key={product.sourceProductId || product.title}
+                product={product}
+              />
+            ))}
+          </div>
+        </section>
 
         {/* Transparent Policy & Merchant Notice */}
-        <div className="mt-10 rounded-xl border border-[#222222] bg-[#0e0e0e] p-4 text-xs text-[#888888] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="rounded-xl border border-[#222222] bg-[#0e0e0e] p-4 text-xs text-[#888888] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <ShieldAlert className="h-4 w-4 text-[#F5B942] shrink-0" />
             <span>
