@@ -163,11 +163,24 @@ export interface SetupRequirementItem {
   id: string; // e.g. "req-desktop", "req-monitor"
   name: string; // e.g. "Gaming desktop PC"
   searchQuery: string; // e.g. "gaming desktop PC RTX"
+  fallbackQuery?: string; // e.g. "Naruto anime wall light"
+  productCategory?: string; // e.g. "neon wall decor", "bedding set"
   allocationPercentage: number; // e.g. 60
   allocatedAmountMinor: number; // integer cents (e.g. 180000 for $1,800.00)
   allocatedAmount: number; // dollar representation (e.g. 1800)
-  requirements: string[];
+  requirements: string[]; // key requested features
   priority: "high" | "medium" | "low";
+
+  // Hard & Soft Theme Constraints
+  requiredEntities?: string[]; // e.g. ["Naruto"]
+  requiredFranchises?: string[]; // e.g. ["Naruto"]
+  requiredCharacters?: string[]; // e.g. ["Naruto Uzumaki"]
+  mustHaveTerms?: string[]; // e.g. ["Naruto"]
+  hardConstraints?: string[]; // e.g. ["Must be related to Naruto"]
+  softPreferences?: string[]; // e.g. ["LED", "wall mounted"]
+  allowedSubstitutions?: string[]; // e.g. ["Naruto wall scroll", "Naruto poster"]
+  diversityGroup?: string; // e.g. "wall-lighting", "bedding", "figurine"
+  maxAlternatives?: number; // default 2
 }
 
 /**
@@ -182,6 +195,8 @@ export interface SetupDecompositionResult {
   items: SetupRequirementItem[];
   summary: string;
   isPrebuiltVsCustom?: "prebuilt" | "custom_pc" | "standard";
+  mandatoryFranchises?: string[];
+  mandatoryCharacters?: string[];
 }
 
 /**
@@ -191,12 +206,17 @@ export interface SetupCategorySearchResult {
   requirementId: string;
   requirementName: string;
   searchQuery: string;
+  fallbackQueryUsed?: string;
   allocatedAmountMinor: number;
-  products: NormalizedProduct[]; // At most 2 distinct products
+  products: NormalizedProduct[]; // At most 2 distinct ELIGIBLE products
   status: "fulfilled" | "partial" | "unavailable";
   emptyInPreferredRange?: boolean;
   isRangeExpanded?: boolean;
   errorMessage?: string;
+  unfulfilledReason?: string;
+  relevanceMap?: Record<string, unknown>; // Map of productId -> RelevanceEvaluationResult
+  totalCandidatesFound?: number;
+  rejectedCount?: number;
 }
 
 /**
@@ -214,6 +234,12 @@ export interface SetupComparisonCategoryResult {
   missingSpecs: string[];
   compatibilityNotes?: string;
   compatibilityStatus?: "verified" | "unverified" | "not_applicable";
+  relevanceBadge?: string; // e.g. "Naruto theme match"
+  relevanceOutcome?: "direct_match" | "verified_substitute" | "uncertain" | "unrelated";
+  evidenceQuote?: string;
+  evidenceField?: string;
+  unfulfilled?: boolean;
+  unfulfilledActions?: string[];
 }
 
 /**
@@ -228,6 +254,10 @@ export interface RecommendedBundleItem {
   alternativeProduct?: NormalizedProduct | null;
   comparison: SetupComparisonCategoryResult;
   isOverCategoryBudget: boolean;
+  relevanceBadge?: string;
+  relevanceOutcome?: "direct_match" | "verified_substitute" | "uncertain" | "unrelated";
+  evidenceQuote?: string;
+  evidenceField?: string;
 }
 
 /**
@@ -245,6 +275,9 @@ export interface RecommendedBundle {
   taxNotice: string;
   largestBudgetItemName?: string;
   largestBudgetItemPercentage?: number;
+  diversityWarnings?: string[];
+  isDiverse?: boolean;
+  isPartiallyMatched?: boolean;
 }
 
 /**

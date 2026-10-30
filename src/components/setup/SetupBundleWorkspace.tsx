@@ -14,6 +14,7 @@ import {
   Check,
   Cpu,
   Info,
+  Sparkles,
 } from "lucide-react";
 import type {
   CurrencyCode,
@@ -35,8 +36,11 @@ interface SetupBundleWorkspaceProps {
 
 export function SetupBundleWorkspace({
   bundle,
-  categories,
+  requirements = [],
+  categories = [],
+  comparisons = [],
   onSelectProduct,
+  onExpandCategoryRange,
   currency = "USD",
 }: SetupBundleWorkspaceProps) {
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -92,7 +96,7 @@ export function SetupBundleWorkspace({
                 ) : (
                   <span className="inline-flex items-center gap-1 rounded-full bg-[#F5B942]/15 border border-[#F5B942]/30 px-2.5 py-0.5 text-xs font-semibold text-[#F5B942]">
                     <AlertTriangle className="h-3.5 w-3.5" />
-                    Incomplete Setup ({bundle.missingRequirements.length} Unfilled)
+                    Partially matched setup ({bundle.missingRequirements.length} Unfilled)
                   </span>
                 )}
               </div>
@@ -169,14 +173,29 @@ export function SetupBundleWorkspace({
           </div>
         )}
 
+        {/* Diversity Warnings Advisory */}
+        {bundle.diversityWarnings && bundle.diversityWarnings.length > 0 && (
+          <div className="mb-6 p-4 rounded-2xl border border-[#2a2a2a] bg-[#121212] text-xs text-[#D4D4D4] flex items-start gap-3">
+            <Info className="h-4 w-4 text-[#69A8FF] shrink-0 mt-0.5" />
+            <div>
+              <div className="font-bold text-xs text-white">Bundle Theme &amp; Diversity Advisory</div>
+              <ul className="list-disc list-inside mt-1 space-y-0.5 text-[#A3A3A3]">
+                {bundle.diversityWarnings.map((w, idx) => (
+                  <li key={idx}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+
         {/* Missing Requirements Callout if Incomplete */}
         {!bundle.isComplete && bundle.missingRequirements.length > 0 && (
           <div className="mb-8 p-4 rounded-2xl border border-[#F5B942]/30 bg-[#F5B942]/10 text-xs text-[#F5B942] flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
             <div>
-              <div className="font-bold text-sm">Incomplete Bundle Notice</div>
+              <div className="font-bold text-sm">Partially Matched Setup Notice</div>
               <p className="mt-1 text-[#D4D4D4]">
-                The following product requirements could not be fulfilled in their allocated budget range:
+                To maintain strict thematic fidelity, SpendPilot refused to substitute unrelated generic items for the following:
               </p>
               <ul className="list-disc list-inside mt-1.5 space-y-0.5 font-semibold text-[#F5B942]">
                 {bundle.missingRequirements.map((reqName) => (
@@ -187,12 +206,102 @@ export function SetupBundleWorkspace({
           </div>
         )}
 
-        {/* Category by Category Recommendations (At most 2 alternatives per requirement) */}
+        {/* Category by Category Recommendations & Unfulfilled Requirements */}
         <div className="space-y-8">
-          {bundle.items.map((item, catIdx) => {
-            const cat = categories.find((c) => c.requirementId === item.requirementId);
-            const comp = item.comparison;
+          {(requirements.length > 0
+            ? requirements
+            : bundle.items.map((i) => ({
+                id: i.requirementId,
+                name: i.requirementName,
+                allocatedAmountMinor: i.allocatedAmountMinor,
+                requiredFranchises: undefined,
+              }))
+          ).map((req, catIdx) => {
+            const item = bundle.items.find((i) => i.requirementId === req.id);
+            const cat = categories.find((c) => c.requirementId === req.id);
+            const comp = item?.comparison || comparisons.find((c) => c.requirementId === req.id);
             const alternatives = cat?.products || [];
+            const isUnfulfilled = !item || comp?.unfulfilled || alternatives.length === 0;
+
+            if (isUnfulfilled) {
+              return (
+                <div
+                  key={req.id}
+                  className="rounded-2xl border border-[#3a2818] bg-[#140f09] p-5 sm:p-6 transition-all"
+                >
+                  {/* Category Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-[#291b10]">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="h-5 w-5 rounded-full bg-[#F5B942]/20 text-[#F5B942] flex items-center justify-center text-xs font-bold">
+                          {catIdx + 1}
+                        </span>
+                        <h3 className="text-base sm:text-lg font-bold text-[#F5F5F5]">
+                          {req.name}
+                        </h3>
+                      </div>
+                      <p className="text-xs text-[#8E8E8E] mt-0.5">
+                        Target Allocation: {formatMoney(req.allocatedAmountMinor)}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#F5B942] bg-[#F5B942]/10 border border-[#F5B942]/30 px-2.5 py-1 rounded-full">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        No Verified Theme Match
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Honest Unfulfilled Reason Callout */}
+                  <div className="my-4 p-4 rounded-xl border border-[#443015] bg-[#1a1208] text-xs">
+                    <p className="text-[#E5E5E5] leading-relaxed">
+                      {comp?.recommendedReason ||
+                        `No verified ${req.requiredFranchises?.join(" / ") || "thematic"} ${req.name} products were found within the ${formatMoney(req.allocatedAmountMinor)} allocation.`}
+                    </p>
+                    <p className="mt-2 text-[#A3A3A3] text-[11px]">
+                      SpendPilot AI strict relevance gate refused unrelated items (e.g. generic solid colors or unrelated franchises) to protect your room theme.
+                    </p>
+                  </div>
+
+                  {/* Explicit User Actions */}
+                  <div className="mt-4 pt-4 border-t border-[#291b10]">
+                    <div className="text-[11px] font-bold text-[#8E8E8E] uppercase tracking-wider mb-2.5">
+                      Available Actions:
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onExpandCategoryRange?.(req.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#383838] bg-[#1e1913] px-3 py-1.5 text-xs font-medium text-[#D4D4D4] hover:border-[#F5B942] hover:text-white transition-all"
+                      >
+                        <span>Search with alternative keywords</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onExpandCategoryRange?.(req.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#383838] bg-[#1e1913] px-3 py-1.5 text-xs font-medium text-[#D4D4D4] hover:border-[#F5B942] hover:text-white transition-all"
+                      >
+                        <span>Explore in another format</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onExpandCategoryRange?.(req.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#383838] bg-[#1e1913] px-3 py-1.5 text-xs font-medium text-[#D4D4D4] hover:border-[#F5B942] hover:text-white transition-all"
+                      >
+                        <span>Allow general anime decoration</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#383838] bg-[#141414] px-3 py-1.5 text-xs font-medium text-[#8E8E8E] hover:text-white transition-all"
+                      >
+                        <span>Leave requirement unfilled</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
 
             return (
               <div
@@ -215,7 +324,21 @@ export function SetupBundleWorkspace({
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Relevance Badge */}
+                    {item.relevanceBadge && (
+                      <span
+                        className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${
+                          item.relevanceOutcome === "verified_substitute"
+                            ? "text-[#38BDF8] bg-[#38BDF8]/10 border border-[#38BDF8]/30"
+                            : "text-[#35C979] bg-[#35C979]/10 border border-[#35C979]/30"
+                        }`}
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        {item.relevanceBadge}
+                      </span>
+                    )}
+
                     {/* PC Build Compatibility Badge */}
                     {comp?.compatibilityStatus === "unverified" && (
                       <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#F5B942] bg-[#F5B942]/10 border border-[#F5B942]/30 px-2 py-0.5 rounded-full">
@@ -226,7 +349,7 @@ export function SetupBundleWorkspace({
                     {comp?.compatibilityStatus === "verified" && (
                       <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#35C979] bg-[#35C979]/10 border border-[#35C979]/30 px-2 py-0.5 rounded-full">
                         <Check className="h-3 w-3" />
-                        Socket & Form Factor Verified
+                        Socket &amp; Form Factor Verified
                       </span>
                     )}
                   </div>
@@ -238,6 +361,13 @@ export function SetupBundleWorkspace({
                     <span className="text-[#FF6A00] font-bold">Why Recommended: </span>
                     {comp?.recommendedReason}
                   </div>
+
+                  {item.evidenceQuote && (
+                    <div className="mt-2 text-[11px] text-[#A3A3A3] italic flex items-center gap-1.5">
+                      <span className="text-[#35C979] font-medium not-italic">Verified evidence:</span>
+                      &ldquo;{item.evidenceQuote}&rdquo; {item.evidenceField ? `(in ${item.evidenceField})` : ""}
+                    </div>
+                  )}
 
                   {comp?.tradeoffs && comp.tradeoffs.length > 0 && (
                     <div className="mt-2 text-[#8E8E8E] flex items-start gap-1.5">

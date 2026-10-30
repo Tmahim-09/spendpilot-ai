@@ -8,6 +8,7 @@ import type {
   SetupComparisonCategoryResult,
   SetupRequirementItem,
 } from "../../types/index.ts";
+import type { RelevanceEvaluationResult } from "../relevance/relevance-evaluator.ts";
 
 const setupComparisonSchema = {
   type: Type.OBJECT,
@@ -19,8 +20,14 @@ const setupComparisonSchema = {
         type: Type.OBJECT,
         properties: {
           requirementId: { type: Type.STRING },
-          recommendedProductId: { type: Type.STRING },
-          alternativeProductId: { type: Type.STRING },
+          recommendedProductId: {
+            type: Type.STRING,
+            description: "Product ID of the best eligible match, or null if no candidate meets the hard theme constraints.",
+          },
+          alternativeProductId: {
+            type: Type.STRING,
+            description: "Product ID of the secondary alternative, or null.",
+          },
           recommendedReason: { type: Type.STRING },
           keyDifferences: {
             type: Type.ARRAY,
@@ -42,7 +49,6 @@ const setupComparisonSchema = {
         },
         required: [
           "requirementId",
-          "recommendedProductId",
           "recommendedReason",
           "keyDifferences",
           "tradeoffs",
@@ -93,7 +99,7 @@ export async function runSetupComparison({
       comparisons: [],
       selectedItemIds,
     });
-    return { bundle, comparisons: [] };
+    return { bundle, comparisons: validateSetupComparisons(null, categories, requirements) };
   }
 
   // Build compact summaries for Gemini prompt
@@ -102,6 +108,8 @@ export async function runSetupComparison({
     return {
       requirementId: cat.requirementId,
       requirementName: cat.requirementName,
+      mandatoryFranchises: req?.requiredFranchises || [],
+      mandatoryCharacters: req?.requiredCharacters || [],
       allocatedBudget: `${currency} ${((cat.allocatedAmountMinor || 0) / 100).toFixed(2)}`,
       requestedFeatures: req?.requirements || [],
       priority: req?.priority || "medium",
@@ -118,17 +126,14 @@ export async function runSetupComparison({
   });
 
   const systemInstruction = `You are the Lead Multi-Product Comparison Engine for SpendPilot AI (PayPal AI Hackathon 2026).
-Your job is to compare the up to 2 product alternatives within EACH requirement category of the user's multi-product setup.
-Rules:
-1. Category-isolated comparison: Compare alternatives WITHIN each requirement category. Never compare a monitor against a keyboard as if they were alternatives.
-2. Select the best match for each category: Identify recommendedProductId from the provided candidates for that requirement.
-3. If 2 candidates are present: Recommend one and designate the other as alternativeProductId, explaining key differences and trade-offs.
+Your job is to compare candidate alternatives within EACH requirement category of the user's multi-product setup.
+
+CRITICAL INSTRUCTION HIERARCHY:
+1. Satisfy mandatory user intent: If a category requires a specific theme or anime franchise (e.g. Naruto, One Piece, Attack on Titan), ONLY candidates with verified evidence of that franchise are eligible.
+2. Honest unfilled state: If none of the candidates in a category satisfy the hard theme constraints, set recommendedProductId to null and explain why. NEVER choose an irrelevant or generic product as a winner.
+3. Compare eligible alternatives: If candidates meet the theme, compare them on key differences, trade-offs, and quality.
 4. Grounding: Do not invent specifications, prices, or ratings. Use only facts from the listing.
-5. PC Component Compatibility:
-   - For custom PC components (CPU, motherboard, RAM, case, power supply), check socket, form factor, RAM type, and wattage.
-   - If crucial attributes are missing, set compatibilityStatus to 'unverified' and explain in compatibilityNotes.
-   - NEVER falsely claim that a full PC build is guaranteed compatible when facts are missing.
-   - Set compatibilityStatus to 'not_applicable' for non-PC setups.`;
+5. PC Component Compatibility: Check socket, form factor, RAM, and PSU. Set compatibilityStatus to 'unverified' if specs missing, or 'not_applicable' for non-PC setups.`;
 
   const userPrompt = `Shopping Request: "${query}"
 Total Budget: ${currency} ${totalBudget}
@@ -136,7 +141,7 @@ Total Budget: ${currency} ${totalBudget}
 Categories and Candidate Alternatives to Evaluate:
 ${JSON.stringify(categoryPromptData, null, 2)}
 
-Provide a side-by-side comparison for each category.`;
+Provide a side-by-side comparison for each category following the instruction hierarchy.`;
 
   let rawJson: Record<string, unknown> | null = null;
   let modelUsed: string | undefined;
@@ -182,7 +187,7 @@ Provide a side-by-side comparison for each category.`;
   }
 
   // Validate and sanitize comparisons
-  const comparisons = validateSetupComparisons(rawJson, categories);
+  const comparisons = validateSetupComparisons(rawJson, categories, requirements);
 
   // Compute final recommended bundle
   const bundle = calculateRecommendedBundle({
@@ -207,10 +212,12 @@ Provide a side-by-side comparison for each category.`;
  * - Ensures recommendedProductId exists in that category's actual candidate list.
  * - Ensures alternativeProductId exists in that category's actual candidate list.
  * - Strips or corrects hallucinated product IDs.
+ * - Attaches relevance badge and unfulfilled actions.
  */
 export function validateSetupComparisons(
   rawJson: unknown,
-  categories: SetupCategorySearchResult[]
+  categories: SetupCategorySearchResult[],
+  requirements: SetupRequirementItem[] = []
 ): SetupComparisonCategoryResult[] {
   const categoryMap = new Map<string, SetupCategorySearchResult>();
   for (const cat of categories) {
@@ -223,9 +230,9 @@ export function validateSetupComparisons(
       : [];
 
   const rawMap = new Map<string, Record<string, unknown>>();
-  for (const item of rawComparisons) {
-    if (item && typeof item.requirementId === "string") {
-      rawMap.set(item.requirementId, item);
+  for (const c of rawComparisons) {
+    if (c && typeof c.requirementId === "string") {
+      rawMap.set(c.requirementId, c);
     }
   }
 
@@ -234,38 +241,126 @@ export function validateSetupComparisons(
   for (const cat of categories) {
     const rawComp = rawMap.get(cat.requirementId);
     const validCandidateIds = cat.products.map((p) => p.sourceProductId || p.title);
+    const req = requirements.find((r) => r.id === cat.requirementId);
+
+    // If zero eligible products found in this category:
+    if (validCandidateIds.length === 0) {
+      const franchiseNotice = req?.requiredFranchises && req.requiredFranchises.length > 0
+        ? `No verified ${req.requiredFranchises.join(" / ")} products found in retailer stock.`
+        : `No qualifying products found within budget.`;
+
+      results.push({
+        requirementId: cat.requirementId,
+        requirementName: cat.requirementName,
+        candidateProductIds: [],
+        recommendedProductId: null,
+        alternativeProductId: null,
+        recommendedReason: cat.unfulfilledReason || franchiseNotice,
+        keyDifferences: [],
+        tradeoffs: [],
+        missingSpecs: [],
+        compatibilityStatus: "not_applicable",
+        unfulfilled: true,
+        unfulfilledActions: [
+          "Search with alternative keywords",
+          "Explore in another format",
+          "Allow general anime decoration",
+          "Leave requirement unfilled",
+        ],
+      });
+      continue;
+    }
 
     let recommendedProductId: string | null = null;
     let alternativeProductId: string | null = null;
 
+    const relevanceMap = (cat.relevanceMap || {}) as Record<string, RelevanceEvaluationResult>;
+
     if (rawComp && typeof rawComp.recommendedProductId === "string") {
       const id = rawComp.recommendedProductId.trim();
       if (validCandidateIds.includes(id)) {
-        recommendedProductId = id;
+        const candEval = relevanceMap[id];
+        if (!candEval || candEval.isEligible) {
+          recommendedProductId = id;
+        }
       }
     }
 
     if (rawComp && typeof rawComp.alternativeProductId === "string") {
       const id = rawComp.alternativeProductId.trim();
       if (validCandidateIds.includes(id) && id !== recommendedProductId) {
-        alternativeProductId = id;
+        const candEval = relevanceMap[id];
+        if (!candEval || candEval.isEligible) {
+          alternativeProductId = id;
+        }
       }
     }
 
-    // Default fallback to real candidates if Gemini returned fake IDs or missing
+    // Default to first eligible candidate if model returned missing, hallucinated, or ineligible ID
     if (!recommendedProductId && validCandidateIds.length > 0) {
-      recommendedProductId = validCandidateIds[0];
+      const eligibleId = validCandidateIds.find((id) => {
+        const ev = relevanceMap[id];
+        return !ev || ev.isEligible;
+      });
+      recommendedProductId = eligibleId || null;
     }
     if (!alternativeProductId && validCandidateIds.length > 1) {
-      alternativeProductId = validCandidateIds.find((id) => id !== recommendedProductId) || null;
+      alternativeProductId =
+        validCandidateIds.find((id) => {
+          if (id === recommendedProductId) return false;
+          const ev = relevanceMap[id];
+          return !ev || ev.isEligible;
+        }) || null;
+    }
+
+    // If no candidate is eligible, mark unfulfilled
+    if (!recommendedProductId) {
+      const franchiseNotice = req?.requiredFranchises && req.requiredFranchises.length > 0
+        ? `No verified ${req.requiredFranchises.join(" / ")} products found in retailer stock.`
+        : `No qualifying products found within budget.`;
+
+      results.push({
+        requirementId: cat.requirementId,
+        requirementName: cat.requirementName,
+        candidateProductIds: validCandidateIds,
+        recommendedProductId: null,
+        alternativeProductId: null,
+        recommendedReason: cat.unfulfilledReason || franchiseNotice,
+        keyDifferences: [],
+        tradeoffs: [],
+        missingSpecs: [],
+        compatibilityStatus: "not_applicable",
+        unfulfilled: true,
+        unfulfilledActions: [
+          "Search with alternative keywords",
+          "Explore in another format",
+          "Allow general anime decoration",
+          "Leave requirement unfilled",
+        ],
+      });
+      continue;
+    }
+
+    // Attach relevance evaluation details
+    const chosenEval = recommendedProductId ? relevanceMap[recommendedProductId] : undefined;
+
+    let relevanceBadge: string | undefined;
+    if (chosenEval) {
+      if (chosenEval.matchedFranchises && chosenEval.matchedFranchises.length > 0) {
+        relevanceBadge = `${chosenEval.matchedFranchises[0]} theme match`;
+      } else if (chosenEval.outcome === "verified_substitute") {
+        relevanceBadge = "Verified Substitute";
+      } else if (chosenEval.outcome === "direct_match") {
+        relevanceBadge = "Direct Match";
+      }
+    } else if (req?.requiredFranchises && req.requiredFranchises.length > 0) {
+      relevanceBadge = `${req.requiredFranchises[0]} match`;
     }
 
     const recommendedReason =
       rawComp && typeof rawComp.recommendedReason === "string" && rawComp.recommendedReason.trim()
         ? rawComp.recommendedReason.trim()
-        : validCandidateIds.length > 0
-        ? "Best match based on verified specifications and budget allocation."
-        : "No products available in this category.";
+        : "Best verified candidate matching your requested theme and budget.";
 
     const keyDifferences =
       rawComp && Array.isArray(rawComp.keyDifferences)
@@ -309,6 +404,10 @@ export function validateSetupComparisons(
       missingSpecs,
       compatibilityNotes,
       compatibilityStatus,
+      relevanceBadge,
+      relevanceOutcome: chosenEval?.outcome,
+      evidenceQuote: chosenEval?.evidenceQuote,
+      evidenceField: chosenEval?.evidenceField,
     });
   }
 

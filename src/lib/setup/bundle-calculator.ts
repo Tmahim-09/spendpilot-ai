@@ -7,6 +7,7 @@ import type {
   SetupComparisonCategoryResult,
   SetupRequirementItem,
 } from "../../types/index.ts";
+import { evaluateBundleDiversity } from "./bundle-diversity.ts";
 
 export interface BuildRecommendedBundleOptions {
   totalBudget: number;
@@ -54,7 +55,8 @@ export function calculateRecommendedBundle({
 
     const products = cat?.products || [];
 
-    if (products.length === 0) {
+    // If no products available or comparator marked this requirement unfulfilled (no verified match)
+    if (products.length === 0 || comp?.unfulfilled) {
       missingRequirements.push(req.name);
       continue;
     }
@@ -119,11 +121,19 @@ export function calculateRecommendedBundle({
       alternativeProduct: altProduct,
       comparison: comparisonObj,
       isOverCategoryBudget,
+      relevanceBadge: comp?.relevanceBadge,
+      relevanceOutcome: comp?.relevanceOutcome,
+      evidenceQuote: comp?.evidenceQuote,
+      evidenceField: comp?.evidenceField,
     });
   }
 
   const isComplete = missingRequirements.length === 0 && items.length === requirements.length;
+  const isPartiallyMatched = missingRequirements.length > 0;
   const remainingBudgetMinor = Math.max(0, totalBudgetMinor - productSubtotalMinor);
+
+  // Evaluate visual and functional diversity of the bundle
+  const diversityReport = evaluateBundleDiversity(items, requirements);
 
   // Identify which item takes the largest portion of the budget
   let largestBudgetItemName: string | undefined;
@@ -147,6 +157,9 @@ export function calculateRecommendedBundle({
     productSubtotalMinor,
     remainingBudgetMinor,
     isComplete,
+    isPartiallyMatched,
+    diversityWarnings: diversityReport.warnings,
+    isDiverse: diversityReport.isDiverse,
     missingRequirements,
     items,
     shippingNotice:
