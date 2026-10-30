@@ -1,15 +1,12 @@
-import type { NormalizedProduct, SetupRequirementItem } from "../../types/index.ts";
+import type { NormalizedProduct, RelevanceOutcome, SetupRequirementItem } from "../../types/index.ts";
 import {
   verifyTargetFranchiseInProduct,
   identifyFranchisesInText,
   containsPhrase,
+  isGeneralAnimeTheme,
 } from "./entity-registry.ts";
 
-export type RelevanceOutcome =
-  | "direct_match"
-  | "verified_substitute"
-  | "uncertain"
-  | "unrelated";
+export type { RelevanceOutcome };
 
 export interface RelevanceEvaluationResult {
   productId: string;
@@ -22,7 +19,7 @@ export interface RelevanceEvaluationResult {
   isSubstitution: boolean;
   substitutionCategory?: string;
   explanation: string;
-  isEligible: boolean; // direct_match or verified_substitute
+  isEligible: boolean; // true for matches and permitted fallbacks
 }
 
 /**
@@ -106,9 +103,19 @@ function checkProductCategoryMatch(
     return { isCategoryMatch: true, isSubstitution: false };
   }
 
+  // 1b. Check allowedProductFormats
+  const allowedFormats = req.allowedProductFormats || [];
+  for (const fmt of allowedFormats) {
+    const fmtKeywords = extractCategoryKeywords(fmt);
+    const fmtMatches = fmtKeywords.some((kw) => containsPhrase(productText, kw).found);
+    if (fmtMatches || containsPhrase(productText, fmt.toLowerCase()).found) {
+      return { isCategoryMatch: true, isSubstitution: false };
+    }
+  }
+
   // If no standard category keywords were found in the requirement name/query,
   // fall back to checking if non-trivial tokens from the requirement name/query appear in product
-  if (reqCategoryKeywords.length === 0) {
+  if (reqCategoryKeywords.length === 0 && allowedFormats.length === 0) {
     const fallbackWords = `${req.name} ${req.searchQuery || ""}`
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, " ")
@@ -132,6 +139,22 @@ function checkProductCategoryMatch(
     const subMatches = subKeywords.some((kw) => containsPhrase(productText, kw).found);
     if (subMatches || containsPhrase(productText, sub.toLowerCase()).found) {
       return { isCategoryMatch: false, isSubstitution: true, matchedSub: sub };
+    }
+  }
+
+  // 3. If requirement explicitly allows alternative formats and product belongs to decorative domain:
+  if (req.allowAlternativeFormat) {
+    // Bedding is special: a poster or keychain cannot substitute for bedding
+    const isBeddingReq = reqCategoryKeywords.some((k) => ["bedding", "duvet", "comforter", "sheet"].includes(k));
+    const isProductBedding = ["bedding", "duvet", "comforter", "sheet", "blanket", "quilt"].some((k) => containsPhrase(productText, k).found);
+    if (isBeddingReq && !isProductBedding) {
+      return { isCategoryMatch: false, isSubstitution: false };
+    }
+
+    const decorativeFormats = ["poster", "scroll", "tapestry", "flag", "canvas", "art", "print", "lamp", "light", "neon", "figure", "figurine", "statue", "mat", "pad", "pillow", "cushion", "blanket"];
+    const matchedFmt = decorativeFormats.find((f) => containsPhrase(productText, f).found);
+    if (matchedFmt) {
+      return { isCategoryMatch: false, isSubstitution: true, matchedSub: matchedFmt };
     }
   }
 
@@ -171,7 +194,7 @@ export function verifyEvidenceGroundedInProduct(
 
 /**
  * Evaluates whether a product is eligible for a specific requirement based on
- * mandatory franchise constraints, character constraints, and product purpose.
+ * mandatory/preferred franchise constraints, character constraints, and product purpose.
  */
 export function evaluateProductRelevance(
   product: NormalizedProduct,
@@ -181,6 +204,9 @@ export function evaluateProductRelevance(
   const reqId = requirement.id;
 
   const requiredFranchises = requirement.requiredFranchises || [];
+  const preferredFranchises = requirement.preferredFranchises || [];
+  const targetFranchises = requiredFranchises.length > 0 ? requiredFranchises : preferredFranchises;
+
   const requiredCharacters = requirement.requiredCharacters || [];
   const mustHaveTerms = requirement.mustHaveTerms || [];
 
@@ -192,56 +218,34 @@ export function evaluateProductRelevance(
     sourceFacts: product.sourceFacts,
   };
 
+  const productFullText = `${product.title} ${product.description || ""} ${product.brand || ""} ${Object.values(product.specifications || {}).join(" ")} ${(product.sourceFacts || []).join(" ")}`;
+
   // ─────────────────────────────────────────────────────────────
-  // 1. Mandatory Franchise / Entity Verification
+  // 1. Mandatory/Preferred Franchise & Entity Verification
   // ─────────────────────────────────────────────────────────────
-  if (requiredFranchises.length > 0) {
+  if (targetFranchises.length > 0) {
     let matchedFranchiseName: string | null = null;
+    let matchedEntityType: "franchise" | "character" | "alias" | "organization" | "keyTerm" = "franchise";
+    let matchedEntityName = "";
     let franchiseQuote = "";
     let franchiseField: RelevanceEvaluationResult["evidenceField"] = "none";
 
-    for (const franchise of requiredFranchises) {
+    for (const franchise of targetFranchises) {
       const matchResult = verifyTargetFranchiseInProduct(franchise, productFields);
       if (matchResult.isMatched) {
-        matchedFranchiseName = franchise;
-        franchiseQuote = matchResult.evidenceQuote || franchise;
+        matchedFranchiseName = matchResult.canonicalFranchise || franchise;
+        matchedEntityType = matchResult.entityType || "franchise";
+        matchedEntityName = matchResult.matchedEntity || matchedFranchiseName;
+        franchiseQuote = matchResult.evidenceQuote || matchedEntityName;
         franchiseField = (matchResult.evidenceField as RelevanceEvaluationResult["evidenceField"]) || "title";
         break;
       }
     }
 
-    // If required franchise was NOT found in any field:
-    if (!matchedFranchiseName) {
-      // Check if product mentions an unrelated/conflicting franchise (e.g. Demon Slayer, Powerpuff Girls)
-      const allFound = identifyFranchisesInText(
-        `${product.title} ${product.description || ""} ${product.brand || ""}`
-      );
-      const conflicting = allFound.filter(
-        (f) => !requiredFranchises.some((rf) => rf.toLowerCase() === f.franchiseId.toLowerCase())
-      );
-
-      const conflictMsg = conflicting.length > 0
-        ? `Mentions unrelated franchise "${conflicting[0].canonicalName}" instead of required "${requiredFranchises.join(", ")}"`
-        : `Product does not contain evidence of required franchise "${requiredFranchises.join(", ")}"`;
-
-      return {
-        productId,
-        requirementId: reqId,
-        outcome: "unrelated",
-        matchedFranchises: [],
-        matchedCharacters: [],
-        evidenceQuote: "",
-        evidenceField: "none",
-        isSubstitution: false,
-        explanation: conflictMsg,
-        isEligible: false,
-      };
-    }
-
     // Criterion 8: Product title alone cannot override conflicting source metadata
     const metadataText = `${product.brand || ""} ${product.description || ""} ${Object.values(product.specifications || {}).join(" ")}`;
     const conflictingInMetadata = identifyFranchisesInText(metadataText).filter(
-      (f) => !requiredFranchises.some((rf) => rf.toLowerCase() === f.franchiseId.toLowerCase())
+      (f) => !targetFranchises.some((rf) => rf.toLowerCase() === f.franchiseId.toLowerCase())
     );
 
     if (conflictingInMetadata.length > 0) {
@@ -254,7 +258,78 @@ export function evaluateProductRelevance(
         evidenceQuote: "",
         evidenceField: "none",
         isSubstitution: false,
-        explanation: `Source metadata contradicts title: product metadata indicates "${conflictingInMetadata[0].canonicalName}" rather than required "${requiredFranchises.join(", ")}"`,
+        explanation: `Source metadata contradicts title: product metadata indicates "${conflictingInMetadata[0].canonicalName}" rather than required "${targetFranchises.join(", ")}"`,
+        isEligible: false,
+      };
+    }
+
+    // If required franchise was NOT found:
+    if (!matchedFranchiseName) {
+      // Check if product mentions an unrelated/conflicting franchise (e.g. Demon Slayer, Powerpuff Girls)
+      const allFound = identifyFranchisesInText(productFullText);
+      const conflicting = allFound.filter(
+        (f) => !targetFranchises.some((rf) => rf.toLowerCase() === f.franchiseId.toLowerCase())
+      );
+
+      if (conflicting.length > 0) {
+        return {
+          productId,
+          requirementId: reqId,
+          outcome: "unrelated",
+          matchedFranchises: [],
+          matchedCharacters: [],
+          evidenceQuote: "",
+          evidenceField: "none",
+          isSubstitution: false,
+          explanation: `Mentions unrelated franchise "${conflicting[0].canonicalName}" instead of required "${targetFranchises.join(", ")}"`,
+          isEligible: false,
+        };
+      }
+
+      // Check if product represents a general anime theme
+      if (isGeneralAnimeTheme(productFullText)) {
+        if (requirement.allowGeneralAnimeFallback) {
+          const categoryResult = checkProductCategoryMatch(product, requirement);
+          if (categoryResult.isCategoryMatch || categoryResult.isSubstitution || requirement.allowAlternativeFormat) {
+            return {
+              productId,
+              requirementId: reqId,
+              outcome: "general_anime_theme",
+              matchedFranchises: [],
+              matchedCharacters: [],
+              evidenceQuote: product.title,
+              evidenceField: "title",
+              isSubstitution: false,
+              explanation: "General anime theme decoration without specific franchise branding.",
+              isEligible: true,
+            };
+          }
+        }
+        return {
+          productId,
+          requirementId: reqId,
+          outcome: "general_anime_theme",
+          matchedFranchises: [],
+          matchedCharacters: [],
+          evidenceQuote: product.title,
+          evidenceField: "title",
+          isSubstitution: false,
+          explanation: `Features general anime aesthetic, but does not match required franchise "${targetFranchises.join(", ")}"`,
+          isEligible: false,
+        };
+      }
+
+      // Neither franchise nor anime aesthetic -> generic unrelated product
+      return {
+        productId,
+        requirementId: reqId,
+        outcome: "unrelated",
+        matchedFranchises: [],
+        matchedCharacters: [],
+        evidenceQuote: "",
+        evidenceField: "none",
+        isSubstitution: false,
+        explanation: `Product does not contain evidence of required franchise "${targetFranchises.join(", ")}" or general anime theme.`,
         isEligible: false,
       };
     }
@@ -294,7 +369,7 @@ export function evaluateProductRelevance(
     // 3. Must-Have Terms Check
     // ─────────────────────────────────────────────────────────────
     if (mustHaveTerms.length > 0) {
-      const fullText = `${product.title} ${product.description || ""}`.toLowerCase();
+      const fullText = productFullText.toLowerCase();
       const missingTerms = mustHaveTerms.filter(
         (t) => !containsPhrase(fullText, t.toLowerCase()).found
       );
@@ -320,16 +395,23 @@ export function evaluateProductRelevance(
     const categoryResult = checkProductCategoryMatch(product, requirement);
 
     if (categoryResult.isCategoryMatch) {
+      let outcome: RelevanceOutcome = "direct_franchise_match";
+      if (matchedEntityType === "character") {
+        outcome = "verified_character_match";
+      } else if (matchedEntityType === "alias" || matchedEntityType === "organization") {
+        outcome = "verified_franchise_alias_match";
+      }
+
       return {
         productId,
         requirementId: reqId,
-        outcome: "direct_match",
+        outcome,
         matchedFranchises: [matchedFranchiseName],
-        matchedCharacters: matchedCharName ? [matchedCharName] : [],
+        matchedCharacters: matchedCharName ? [matchedCharName] : (matchedEntityType === "character" ? [matchedEntityName] : []),
         evidenceQuote: charQuote || franchiseQuote,
         evidenceField: franchiseField,
         isSubstitution: false,
-        explanation: `Direct match: Verified "${matchedFranchiseName}" ${requirement.name} with authentic merchant offer.`,
+        explanation: `Direct match: Verified "${matchedFranchiseName}" (${matchedEntityName}) with authentic merchant offer.`,
         isEligible: true,
       };
     }
@@ -338,19 +420,19 @@ export function evaluateProductRelevance(
       return {
         productId,
         requirementId: reqId,
-        outcome: "verified_substitute",
+        outcome: "verified_same_franchise_substitute",
         matchedFranchises: [matchedFranchiseName],
-        matchedCharacters: matchedCharName ? [matchedCharName] : [],
+        matchedCharacters: matchedCharName ? [matchedCharName] : (matchedEntityType === "character" ? [matchedEntityName] : []),
         evidenceQuote: charQuote || franchiseQuote,
         evidenceField: franchiseField,
         isSubstitution: true,
-        substitutionCategory: categoryResult.matchedSub,
-        explanation: `Verified substitute: Matches "${matchedFranchiseName}" in alternative allowed format (${categoryResult.matchedSub}).`,
+        substitutionCategory: categoryResult.matchedSub || "Alternative format",
+        explanation: `Verified alternative format: Matches "${matchedFranchiseName}" in alternative decorative format (${categoryResult.matchedSub || 'alternative format'}).`,
         isEligible: true,
       };
     }
 
-    // Franchise matches, but product category is completely wrong (e.g. asked for bedding, found a keychain)
+    // Franchise matches, but product category is completely incompatible
     return {
       productId,
       requirementId: reqId,
@@ -368,6 +450,21 @@ export function evaluateProductRelevance(
   // ─────────────────────────────────────────────────────────────
   // Non-Franchise General Requirements (e.g. Standard PC builds)
   // ─────────────────────────────────────────────────────────────
+  if (isGeneralAnimeTheme(productFullText)) {
+    return {
+      productId,
+      requirementId: reqId,
+      outcome: "general_anime_theme",
+      matchedFranchises: [],
+      matchedCharacters: [],
+      evidenceQuote: product.title,
+      evidenceField: "title",
+      isSubstitution: false,
+      explanation: `General anime-themed match for ${requirement.name}.`,
+      isEligible: true,
+    };
+  }
+
   const categoryResult = checkProductCategoryMatch(product, requirement);
   if (categoryResult.isCategoryMatch) {
     return {

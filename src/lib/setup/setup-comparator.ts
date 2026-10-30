@@ -245,9 +245,13 @@ export function validateSetupComparisons(
 
     // If zero eligible products found in this category:
     if (validCandidateIds.length === 0) {
-      const franchiseNotice = req?.requiredFranchises && req.requiredFranchises.length > 0
-        ? `No verified ${req.requiredFranchises.join(" / ")} products found in retailer stock.`
-        : `No qualifying products found within budget.`;
+      const targetFranchises = req?.requiredFranchises?.length
+        ? req.requiredFranchises
+        : req?.preferredFranchises || [];
+      const franchiseNotice =
+        targetFranchises.length > 0
+          ? `No verified ${targetFranchises.join(" / ")} products found in retailer stock.`
+          : `No qualifying products found within budget.`;
 
       results.push({
         requirementId: cat.requirementId,
@@ -315,9 +319,13 @@ export function validateSetupComparisons(
 
     // If no candidate is eligible, mark unfulfilled
     if (!recommendedProductId) {
-      const franchiseNotice = req?.requiredFranchises && req.requiredFranchises.length > 0
-        ? `No verified ${req.requiredFranchises.join(" / ")} products found in retailer stock.`
-        : `No qualifying products found within budget.`;
+      const targetFranchises = req?.requiredFranchises?.length
+        ? req.requiredFranchises
+        : req?.preferredFranchises || [];
+      const franchiseNotice =
+        targetFranchises.length > 0
+          ? `No verified ${targetFranchises.join(" / ")} products found in retailer stock.`
+          : `No qualifying products found within budget.`;
 
       results.push({
         requirementId: cat.requirementId,
@@ -346,13 +354,50 @@ export function validateSetupComparisons(
 
     let relevanceBadge: string | undefined;
     if (chosenEval) {
-      if (chosenEval.matchedFranchises && chosenEval.matchedFranchises.length > 0) {
-        relevanceBadge = `${chosenEval.matchedFranchises[0]} theme match`;
-      } else if (chosenEval.outcome === "verified_substitute") {
-        relevanceBadge = "Verified Substitute";
-      } else if (chosenEval.outcome === "direct_match") {
-        relevanceBadge = "Direct Match";
+      const franchise =
+        chosenEval.matchedFranchises?.[0] ||
+        req?.preferredFranchises?.[0] ||
+        req?.requiredFranchises?.[0];
+      const character = chosenEval.matchedCharacters?.[0];
+
+      switch (chosenEval.outcome) {
+        case "direct_franchise_match":
+          relevanceBadge = franchise ? `${franchise} franchise match` : "Direct franchise match";
+          break;
+        case "verified_character_match":
+          relevanceBadge = character
+            ? `${character} character match`
+            : franchise
+            ? `${franchise} character match`
+            : "Verified character match";
+          break;
+        case "verified_franchise_alias_match":
+          relevanceBadge = franchise ? `${franchise} franchise match` : "Franchise alias match";
+          break;
+        case "verified_same_franchise_substitute":
+          relevanceBadge = franchise ? `${franchise} alternative format` : "Alternative format";
+          break;
+        case "general_anime_theme":
+          relevanceBadge = "General anime theme";
+          break;
+        case "direct_match":
+          relevanceBadge = franchise ? `${franchise} match` : "Direct Match";
+          break;
+        case "verified_substitute":
+          relevanceBadge = franchise ? `${franchise} alternative format` : "Verified Alternative";
+          break;
+        case "uncertain":
+        case "unrelated":
+          relevanceBadge = "Theme not verified";
+          break;
+        default:
+          if (franchise) {
+            relevanceBadge = `${franchise} match`;
+          }
+          break;
       }
+    } else if (req?.preferredFranchises && req.preferredFranchises.length > 0) {
+      relevanceBadge = `${req.preferredFranchises[0]} match`;
     } else if (req?.requiredFranchises && req.requiredFranchises.length > 0) {
       relevanceBadge = `${req.requiredFranchises[0]} match`;
     }

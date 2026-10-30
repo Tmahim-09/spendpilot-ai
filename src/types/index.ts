@@ -172,16 +172,36 @@ export interface SetupRequirementItem {
   priority: "high" | "medium" | "low";
 
   // Hard & Soft Theme Constraints
+  requiredTheme?: string; // e.g. "Japanese anime"
   requiredEntities?: string[]; // e.g. ["Naruto"]
   requiredFranchises?: string[]; // e.g. ["Naruto"]
+  preferredFranchises?: string[]; // e.g. ["Naruto", "One Piece", "Attack on Titan"]
   requiredCharacters?: string[]; // e.g. ["Naruto Uzumaki"]
   mustHaveTerms?: string[]; // e.g. ["Naruto"]
   hardConstraints?: string[]; // e.g. ["Must be related to Naruto"]
   softPreferences?: string[]; // e.g. ["LED", "wall mounted"]
   allowedSubstitutions?: string[]; // e.g. ["Naruto wall scroll", "Naruto poster"]
+  allowedProductFormats?: string[]; // e.g. ["poster", "wall scroll", "tapestry", "neon sign"]
+  allowAlternativeFormat?: boolean; // default true
+  allowGeneralAnimeFallback?: boolean; // default true for general anime requests
   diversityGroup?: string; // e.g. "wall-lighting", "bedding", "figurine"
   maxAlternatives?: number; // default 2
+  maximumAlternatives?: number; // default 2
 }
+
+/**
+ * Progressive relevance classification tiers
+ */
+export type RelevanceOutcome =
+  | "direct_franchise_match"
+  | "verified_character_match"
+  | "verified_franchise_alias_match"
+  | "verified_same_franchise_substitute"
+  | "general_anime_theme"
+  | "uncertain"
+  | "unrelated"
+  | "direct_match"
+  | "verified_substitute";
 
 /**
  * Gemini decomposition result of a multi-product setup request
@@ -195,8 +215,11 @@ export interface SetupDecompositionResult {
   items: SetupRequirementItem[];
   summary: string;
   isPrebuiltVsCustom?: "prebuilt" | "custom_pc" | "standard";
+  requiredTheme?: string;
   mandatoryFranchises?: string[];
+  preferredFranchises?: string[];
   mandatoryCharacters?: string[];
+  allowGeneralAnimeFallback?: boolean;
 }
 
 /**
@@ -234,8 +257,8 @@ export interface SetupComparisonCategoryResult {
   missingSpecs: string[];
   compatibilityNotes?: string;
   compatibilityStatus?: "verified" | "unverified" | "not_applicable";
-  relevanceBadge?: string; // e.g. "Naruto theme match"
-  relevanceOutcome?: "direct_match" | "verified_substitute" | "uncertain" | "unrelated";
+  relevanceBadge?: string; // e.g. "Naruto franchise match"
+  relevanceOutcome?: RelevanceOutcome;
   evidenceQuote?: string;
   evidenceField?: string;
   unfulfilled?: boolean;
@@ -255,7 +278,7 @@ export interface RecommendedBundleItem {
   comparison: SetupComparisonCategoryResult;
   isOverCategoryBudget: boolean;
   relevanceBadge?: string;
-  relevanceOutcome?: "direct_match" | "verified_substitute" | "uncertain" | "unrelated";
+  relevanceOutcome?: RelevanceOutcome;
   evidenceQuote?: string;
   evidenceField?: string;
 }

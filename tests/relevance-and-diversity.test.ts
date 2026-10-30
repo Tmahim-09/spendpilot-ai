@@ -65,7 +65,7 @@ describe("Product Relevance, Theme Matching and Bundle Diversity (28 Acceptance 
 
       const result = evaluateProductRelevance(product, requirement);
       assert.equal(result.isEligible, true);
-      assert.equal(result.outcome, "direct_match");
+      assert.equal(result.outcome, "direct_franchise_match");
       assert(result.matchedFranchises.includes("Naruto"));
       assert(result.evidenceQuote.length > 0);
     });
@@ -105,7 +105,7 @@ describe("Product Relevance, Theme Matching and Bundle Diversity (28 Acceptance 
 
       const result = evaluateProductRelevance(product, requirement);
       assert.equal(result.isEligible, true);
-      assert.equal(result.outcome, "direct_match");
+      assert.equal(result.outcome, "direct_franchise_match");
       assert(result.matchedFranchises.includes("One Piece"));
       assert(result.matchedCharacters.includes("Luffy") || result.matchedCharacters.includes("Monkey D. Luffy"));
     });
@@ -144,7 +144,7 @@ describe("Product Relevance, Theme Matching and Bundle Diversity (28 Acceptance 
 
       const result = evaluateProductRelevance(product, requirement);
       assert.equal(result.isEligible, true);
-      assert.equal(result.outcome, "direct_match");
+      assert.equal(result.outcome, "direct_franchise_match");
       assert(result.matchedFranchises.includes("Attack on Titan"));
     });
 
@@ -1056,6 +1056,402 @@ describe("Product Relevance, Theme Matching and Bundle Diversity (28 Acceptance 
       assert.equal(bundle.remainingBudgetMinor, 10000 - 8375); // 1625 cents ($16.25)
       assert.equal(bundle.totalBudgetMinor, 10000);
       assert(bundle.productSubtotalMinor <= bundle.totalBudgetMinor);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // SUITE 5: PROGRESSIVE RELEVANCE & BUNDLE DISCOVERY (Examples A - H)
+  // ─────────────────────────────────────────────────────────────────────────────
+  describe("Suite 5: Progressive Relevance & Bundle Discovery (Examples A - H)", () => {
+    // Example A: Naruto LED sign unavailable -> Naruto wall scroll/poster accepted as substitute
+    test("Example A: Naruto wall scroll/poster accepted as verified alternative format when neon sign is unavailable", () => {
+      const requirement: SetupRequirementItem = {
+        id: "req-lighting",
+        name: "Naruto LED Neon Sign",
+        productCategory: "decorative lighting",
+        searchQuery: "Naruto Uzumaki LED neon sign",
+        allocationPercentage: 20,
+        allocatedAmount: 60,
+        allocatedAmountMinor: 6000,
+        priority: "high",
+        requirements: ["LED sign or wall decor"],
+        preferredFranchises: ["Naruto"],
+        allowAlternativeFormat: true,
+        allowedProductFormats: ["neon sign", "led lamp", "wall scroll", "poster"],
+        diversityGroup: "wall-lighting",
+      };
+
+      const product: NormalizedProduct = {
+        source: "channel3",
+        sourceProductId: "ch3-naruto-scroll-01",
+        title: "Official Naruto Shippuden Uzumaki Fabric Wall Scroll Poster 16x24",
+        brand: "GE Animation",
+        description: "Durable fabric wall scroll featuring Naruto Uzumaki.",
+        imageUrl: "https://example.com/scroll.jpg",
+        priceMinor: 2499,
+        currency: "USD",
+        retailerName: "AnimeCity",
+        retailerUrl: "https://example.com/scroll",
+        availability: "in_stock",
+        specifications: { Franchise: "Naruto Shippuden", Format: "Wall Scroll" },
+        sourceFacts: ["Official Naruto Wall Scroll"],
+      };
+
+      const result = evaluateProductRelevance(product, requirement);
+      assert.equal(result.isEligible, true);
+      assert(
+        result.outcome === "verified_same_franchise_substitute" ||
+        result.outcome === "direct_franchise_match"
+      );
+      assert(result.matchedFranchises.includes("Naruto"));
+    });
+
+    // Example B: One Piece Luffy canvas unavailable -> Straw Hat Pirates flag accepted
+    test("Example B: One Piece Straw Hat Pirates flag accepted as verified alternative format", () => {
+      const requirement: SetupRequirementItem = {
+        id: "req-wall-art",
+        name: "One Piece Luffy Canvas Art",
+        productCategory: "wall-art",
+        searchQuery: "One Piece Monkey D Luffy canvas art",
+        allocationPercentage: 20,
+        allocatedAmount: 50,
+        allocatedAmountMinor: 5000,
+        priority: "high",
+        requirements: ["Canvas art"],
+        preferredFranchises: ["One Piece"],
+        allowAlternativeFormat: true,
+        allowedProductFormats: ["canvas", "wall flag", "tapestry", "poster"],
+        diversityGroup: "wall-art",
+      };
+
+      const product: NormalizedProduct = {
+        source: "channel3",
+        sourceProductId: "ch3-op-flag-01",
+        title: "Straw Hat Pirates Jolly Roger Flag Banner 3x5 ft",
+        brand: "Toei Animation",
+        description: "Official One Piece Straw Hat Pirates skull flag with brass grommets.",
+        imageUrl: "https://example.com/flag.jpg",
+        priceMinor: 1999,
+        currency: "USD",
+        retailerName: "Crunchyroll",
+        retailerUrl: "https://example.com/flag",
+        availability: "in_stock",
+        specifications: { Organization: "Straw Hat Pirates", Series: "One Piece" },
+        sourceFacts: ["Straw Hat Pirates Flag"],
+      };
+
+      const result = evaluateProductRelevance(product, requirement);
+      assert.equal(result.isEligible, true);
+      assert(
+        result.outcome === "verified_franchise_alias_match" ||
+        result.outcome === "verified_character_match" ||
+        result.outcome === "direct_franchise_match" ||
+        result.outcome === "verified_same_franchise_substitute"
+      );
+      assert(result.matchedFranchises.includes("One Piece"));
+    });
+
+    // Example C: AoT bedding unavailable -> AoT poster NOT substituted for bedding; bedding stays unresolved
+    test("Example C: AoT poster cannot substitute for bedding; bedding requirement remains honestly unfulfilled", () => {
+      const beddingReq: SetupRequirementItem = {
+        id: "req-bedding",
+        name: "Attack on Titan Bedding Set",
+        productCategory: "bedding",
+        searchQuery: "Attack on Titan Survey Corps duvet cover bedding",
+        allocationPercentage: 25,
+        allocatedAmount: 75,
+        allocatedAmountMinor: 7500,
+        priority: "high",
+        requirements: ["Bedding set", "Queen"],
+        preferredFranchises: ["Attack on Titan"],
+        allowAlternativeFormat: true,
+        allowedProductFormats: ["bedding set", "duvet cover", "throw blanket"],
+        diversityGroup: "bedding",
+      };
+
+      const posterProduct: NormalizedProduct = {
+        source: "channel3",
+        sourceProductId: "ch3-aot-poster-01",
+        title: "Attack on Titan Eren Jaeger Wall Poster 24x36",
+        brand: "Kodansha",
+        description: "High quality gloss poster of Attack on Titan.",
+        imageUrl: "https://example.com/poster.jpg",
+        priceMinor: 1499,
+        currency: "USD",
+        retailerName: "PosterStore",
+        retailerUrl: "https://example.com/poster",
+        availability: "in_stock",
+        specifications: { Type: "Poster" },
+        sourceFacts: ["Attack on Titan Wall Poster"],
+      };
+
+      // Bedding incompatibility guard: a poster cannot fulfill a bedding requirement
+      const relevance = evaluateProductRelevance(posterProduct, beddingReq);
+      assert.equal(relevance.isEligible, false);
+
+      // Category comparison marks requirement unfulfilled
+      const comps = validateSetupComparisons(
+        null,
+        [
+          {
+            requirementId: "req-bedding",
+            requirementName: beddingReq.name,
+            searchQuery: beddingReq.searchQuery,
+            allocatedAmountMinor: 7500,
+            products: [], // no authentic bedding survived
+            totalCandidatesFound: 1,
+            rejectedCount: 1,
+            status: "unavailable",
+          },
+        ],
+        [beddingReq]
+      );
+
+      assert.equal(comps.length, 1);
+      assert.equal(comps[0].unfulfilled, true);
+      assert.equal(comps[0].recommendedProductId, null);
+      assert(comps[0].unfulfilledActions && comps[0].unfulfilledActions.length >= 4);
+    });
+
+    // Example D: Generic landscape canvas -> rejected as unrelated
+    test("Example D: Generic landscape artwork rejected as unrelated", () => {
+      const requirement: SetupRequirementItem = {
+        id: "req-art",
+        name: "Anime Wall Decor",
+        productCategory: "wall-art",
+        searchQuery: "Naruto One Piece Attack on Titan anime wall art",
+        allocationPercentage: 20,
+        allocatedAmount: 50,
+        allocatedAmountMinor: 5000,
+        priority: "high",
+        requirements: [],
+        preferredFranchises: ["Naruto", "One Piece", "Attack on Titan"],
+        allowGeneralAnimeFallback: true,
+        diversityGroup: "wall-art",
+      };
+
+      const genericLandscape: NormalizedProduct = {
+        source: "channel3",
+        sourceProductId: "ch3-landscape-01",
+        title: "Modern Minimalist Scandinavian Forest Landscape Canvas Print",
+        brand: "IkeaArt",
+        description: "Serene pine tree forest mist wall art for living room.",
+        imageUrl: "https://example.com/forest.jpg",
+        priceMinor: 2999,
+        currency: "USD",
+        retailerName: "HomeDecor",
+        retailerUrl: "https://example.com/forest",
+        availability: "in_stock",
+        specifications: {},
+        sourceFacts: [],
+      };
+
+      const result = evaluateProductRelevance(genericLandscape, requirement);
+      assert.equal(result.isEligible, false);
+      assert.equal(result.outcome, "unrelated");
+    });
+
+    // Example E: General anime illustration -> classified as general_anime_theme
+    test("Example E: General anime illustration classified as general_anime_theme", () => {
+      const animeReqWithFallback: SetupRequirementItem = {
+        id: "req-art",
+        name: "Anime Wall Decor",
+        productCategory: "wall-art",
+        searchQuery: "Anime wall scroll poster",
+        allocationPercentage: 20,
+        allocatedAmount: 40,
+        allocatedAmountMinor: 4000,
+        priority: "medium",
+        requirements: [],
+        preferredFranchises: ["Naruto", "One Piece"],
+        allowGeneralAnimeFallback: true,
+        allowAlternativeFormat: true,
+        allowedProductFormats: ["poster", "wall scroll", "canvas"],
+        diversityGroup: "wall-art",
+      };
+
+      const generalAnimePoster: NormalizedProduct = {
+        source: "channel3",
+        sourceProductId: "ch3-general-anime-01",
+        title: "Japanese Anime Manga Tokyo Cityscape Aesthetic Wall Art Poster",
+        brand: "OtakuStyle",
+        description: "Retro vintage 90s aesthetic anime scenery wall art print.",
+        imageUrl: "https://example.com/tokyo.jpg",
+        priceMinor: 1800,
+        currency: "USD",
+        retailerName: "AnimeBoutique",
+        retailerUrl: "https://example.com/tokyo",
+        availability: "in_stock",
+        specifications: { Theme: "Manga Aesthetic", Origin: "Japan" },
+        sourceFacts: ["Japanese Anime Scenery Poster"],
+      };
+
+      const result = evaluateProductRelevance(generalAnimePoster, animeReqWithFallback);
+      assert.equal(result.outcome, "general_anime_theme");
+      assert.equal(result.isEligible, true);
+
+      // If requirement strictly forbids general anime fallback, it must be rejected
+      const strictReq: SetupRequirementItem = {
+        ...animeReqWithFallback,
+        requiredFranchises: ["Naruto"],
+        allowGeneralAnimeFallback: false,
+      };
+      const strictResult = evaluateProductRelevance(generalAnimePoster, strictReq);
+      assert.equal(strictResult.isEligible, false);
+    });
+
+    // Example F: $25 figurine with $45 allocation -> accepted (no 90% floor)
+    test("Example F: $25 figurine accepted under $45 allocation with no 90% floor", async () => {
+      const figureReq: SetupRequirementItem = {
+        id: "req-figure",
+        name: "Naruto Action Figurine",
+        productCategory: "figurine",
+        searchQuery: "Naruto Uzumaki Shippuden Action Figure",
+        allocationPercentage: 30,
+        allocatedAmount: 45, // $45 allocation
+        allocatedAmountMinor: 4500,
+        priority: "high",
+        requirements: ["PVC Figurine"],
+        preferredFranchises: ["Naruto"],
+        diversityGroup: "figurine",
+      };
+
+      const cheapFigurine: NormalizedProduct = {
+        source: "channel3",
+        sourceProductId: "ch3-naruto-fig-25",
+        title: "Banpresto Naruto Shippuden Vibration Stars Naruto Uzumaki Figure",
+        brand: "Banpresto",
+        description: "Official collectible PVC figure of Naruto.",
+        imageUrl: "https://example.com/fig.jpg",
+        priceMinor: 2500, // $25.00 — below 90% ($40.50), but within $45 budget ceiling!
+        currency: "USD",
+        retailerName: "RightStuf",
+        retailerUrl: "https://example.com/fig",
+        availability: "in_stock",
+        specifications: { Franchise: "Naruto Shippuden", Character: "Naruto Uzumaki" },
+        sourceFacts: ["Banpresto Naruto Uzumaki Figure"],
+      };
+
+      // Mock search function returning the $25 figurine
+      const searchResults = await executeSetupSearch({
+        items: [figureReq],
+        currency: "USD",
+        searchFn: async () => [cheapFigurine],
+      });
+
+      assert.equal(searchResults.length, 1);
+      assert.equal(searchResults[0].products.length, 1);
+      assert.equal(searchResults[0].products[0].sourceProductId, "ch3-naruto-fig-25");
+      assert.equal(searchResults[0].products[0].priceMinor, 2500);
+      assert.equal(searchResults[0].status, "partial");
+    });
+
+    // Example G: Multiple retailer offers on identical product -> deduplicated into single candidate
+    test("Example G: Multiple retailer offers on identical product deduplicate into single candidate", async () => {
+      const req: SetupRequirementItem = {
+        id: "req-desk-mat",
+        name: "One Piece Desk Mat",
+        productCategory: "desk-mat",
+        searchQuery: "One Piece Luffy Extended Gaming Desk Mat",
+        allocationPercentage: 100,
+        allocatedAmount: 35,
+        allocatedAmountMinor: 3500,
+        priority: "medium",
+        requirements: [],
+        preferredFranchises: ["One Piece"],
+        diversityGroup: "desk-mat",
+      };
+
+      const offerA: NormalizedProduct = {
+        source: "channel3",
+        sourceProductId: "prod-op-mat-999",
+        title: "One Piece Straw Hat Crew Extended Gaming Desk Mat 900x400mm",
+        brand: "GamingGear",
+        imageUrl: "https://example.com/mat.jpg",
+        priceMinor: 2200,
+        currency: "USD",
+        retailerName: "Retailer Alpha",
+        retailerUrl: "https://example.com/alpha",
+        availability: "in_stock",
+        specifications: { Series: "One Piece" },
+        sourceFacts: ["One Piece Desk Mat"],
+      };
+
+      const offerB: NormalizedProduct = {
+        source: "channel3",
+        sourceProductId: "prod-op-mat-999", // SAME sourceProductId from different merchant
+        title: "One Piece Straw Hat Crew Extended Gaming Desk Mat 900x400mm",
+        brand: "GamingGear",
+        imageUrl: "https://example.com/mat.jpg",
+        priceMinor: 2450,
+        currency: "USD",
+        retailerName: "Retailer Beta",
+        retailerUrl: "https://example.com/beta",
+        availability: "in_stock",
+        specifications: { Series: "One Piece" },
+        sourceFacts: ["One Piece Desk Mat"],
+      };
+
+      const searchResults = await executeSetupSearch({
+        items: [req],
+        currency: "USD",
+        searchFn: async () => [offerA, offerB],
+      });
+
+      assert.equal(searchResults.length, 1);
+      // Must be deduplicated into 1 candidate, not 2!
+      assert.equal(searchResults[0].products.length, 1);
+      assert.equal(searchResults[0].products[0].sourceProductId, "prod-op-mat-999");
+    });
+
+    // Example H: Multi-franchise diverse bundle -> enforces relevance, diversity, and total budget
+    test("Example H: Multi-franchise diverse bundle enforces relevance, diversity, and total budget", () => {
+      const totalBudget = 300;
+      const currency = "USD";
+
+      const requirements: SetupRequirementItem[] = [
+        { id: "r1", name: "Naruto LED Sign", productCategory: "wall-lighting", searchQuery: "Naruto LED", allocationPercentage: 20, allocatedAmount: 60, allocatedAmountMinor: 6000, priority: "high", requirements: [], preferredFranchises: ["Naruto"], diversityGroup: "wall-lighting" },
+        { id: "r2", name: "One Piece Canvas", productCategory: "wall-art", searchQuery: "One Piece Canvas", allocationPercentage: 20, allocatedAmount: 60, allocatedAmountMinor: 6000, priority: "high", requirements: [], preferredFranchises: ["One Piece"], diversityGroup: "wall-art" },
+        { id: "r3", name: "Attack on Titan Blanket", productCategory: "bedding", searchQuery: "Attack on Titan Blanket", allocationPercentage: 20, allocatedAmount: 60, allocatedAmountMinor: 6000, priority: "high", requirements: [], preferredFranchises: ["Attack on Titan"], diversityGroup: "bedding" },
+        { id: "r4", name: "Naruto Action Figure", productCategory: "figurine", searchQuery: "Naruto Figure", allocationPercentage: 20, allocatedAmount: 60, allocatedAmountMinor: 6000, priority: "medium", requirements: [], preferredFranchises: ["Naruto"], diversityGroup: "figurine" },
+        { id: "r5", name: "One Piece Floor Rug", productCategory: "rug", searchQuery: "One Piece Rug", allocationPercentage: 20, allocatedAmount: 60, allocatedAmountMinor: 6000, priority: "medium", requirements: [], preferredFranchises: ["One Piece"], diversityGroup: "rug" },
+      ];
+
+      const p1: NormalizedProduct = { source: "channel3", sourceProductId: "p1", title: "Naruto Uzumaki LED Light Sign", brand: "B", imageUrl: "", priceMinor: 4800, currency, retailerName: "R", retailerUrl: "", availability: "in_stock", specifications: {}, sourceFacts: ["Naruto Sign"] };
+      const p2: NormalizedProduct = { source: "channel3", sourceProductId: "p2", title: "One Piece Luffy Canvas Wall Art", brand: "B", imageUrl: "", priceMinor: 3900, currency, retailerName: "R", retailerUrl: "", availability: "in_stock", specifications: {}, sourceFacts: ["Luffy Canvas"] };
+      const p3: NormalizedProduct = { source: "channel3", sourceProductId: "p3", title: "Attack on Titan Survey Corps Fleece Blanket", brand: "B", imageUrl: "", priceMinor: 4500, currency, retailerName: "R", retailerUrl: "", availability: "in_stock", specifications: {}, sourceFacts: ["AoT Blanket"] };
+      const p4: NormalizedProduct = { source: "channel3", sourceProductId: "p4", title: "Naruto Shippuden Sasuke Uchiha Figure", brand: "B", imageUrl: "", priceMinor: 3200, currency, retailerName: "R", retailerUrl: "", availability: "in_stock", specifications: {}, sourceFacts: ["Sasuke Figure"] };
+      const p5: NormalizedProduct = { source: "channel3", sourceProductId: "p5", title: "One Piece Straw Hat Pirates Area Floor Rug", brand: "B", imageUrl: "", priceMinor: 4100, currency, retailerName: "R", retailerUrl: "", availability: "in_stock", specifications: {}, sourceFacts: ["One Piece Rug"] };
+
+      const bundle = calculateRecommendedBundle({
+        totalBudget,
+        currency,
+        requirements,
+        categories: [
+          { requirementId: "r1", requirementName: requirements[0].name, searchQuery: "", allocatedAmountMinor: 6000, products: [p1], totalCandidatesFound: 1, status: "fulfilled" },
+          { requirementId: "r2", requirementName: requirements[1].name, searchQuery: "", allocatedAmountMinor: 6000, products: [p2], totalCandidatesFound: 1, status: "fulfilled" },
+          { requirementId: "r3", requirementName: requirements[2].name, searchQuery: "", allocatedAmountMinor: 6000, products: [p3], totalCandidatesFound: 1, status: "fulfilled" },
+          { requirementId: "r4", requirementName: requirements[3].name, searchQuery: "", allocatedAmountMinor: 6000, products: [p4], totalCandidatesFound: 1, status: "fulfilled" },
+          { requirementId: "r5", requirementName: requirements[4].name, searchQuery: "", allocatedAmountMinor: 6000, products: [p5], totalCandidatesFound: 1, status: "fulfilled" },
+        ],
+        comparisons: [
+          { requirementId: "r1", requirementName: requirements[0].name, candidateProductIds: ["p1"], recommendedProductId: "p1", alternativeProductId: null, recommendedReason: "Matches Naruto", keyDifferences: [], tradeoffs: [], missingSpecs: [], relevanceBadge: "Naruto franchise match", relevanceOutcome: "direct_franchise_match" },
+          { requirementId: "r2", requirementName: requirements[1].name, candidateProductIds: ["p2"], recommendedProductId: "p2", alternativeProductId: null, recommendedReason: "Matches One Piece", keyDifferences: [], tradeoffs: [], missingSpecs: [], relevanceBadge: "One Piece franchise match", relevanceOutcome: "direct_franchise_match" },
+          { requirementId: "r3", requirementName: requirements[2].name, candidateProductIds: ["p3"], recommendedProductId: "p3", alternativeProductId: null, recommendedReason: "Matches AoT", keyDifferences: [], tradeoffs: [], missingSpecs: [], relevanceBadge: "Attack on Titan franchise match", relevanceOutcome: "direct_franchise_match" },
+          { requirementId: "r4", requirementName: requirements[3].name, candidateProductIds: ["p4"], recommendedProductId: "p4", alternativeProductId: null, recommendedReason: "Matches Naruto figure", keyDifferences: [], tradeoffs: [], missingSpecs: [], relevanceBadge: "Naruto character match", relevanceOutcome: "verified_character_match" },
+          { requirementId: "r5", requirementName: requirements[4].name, candidateProductIds: ["p5"], recommendedProductId: "p5", alternativeProductId: null, recommendedReason: "Matches One Piece rug", keyDifferences: [], tradeoffs: [], missingSpecs: [], relevanceBadge: "One Piece franchise match", relevanceOutcome: "direct_franchise_match" },
+        ],
+      });
+
+      assert.equal(bundle.isComplete, true);
+      assert.equal(bundle.items.length, 5);
+      // Total sum: 4800 + 3900 + 4500 + 3200 + 4100 = 20500 cents ($205.00)
+      assert.equal(bundle.productSubtotalMinor, 20500);
+      assert(bundle.productSubtotalMinor <= bundle.totalBudgetMinor);
+      assert.equal(bundle.remainingBudgetMinor, 9500); // $95.00 remaining
+      // Diversity evaluation should be satisfied
+      assert.equal(bundle.isDiverse, true);
+      assert(Array.isArray(bundle.diversityWarnings));
     });
   });
 });

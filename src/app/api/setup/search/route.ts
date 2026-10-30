@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     const {
       totalBudget = 0,
       currency = "USD",
-      pricePreference = "near_budget",
+      pricePreference = "best_value",
       expandRequirementIds = [],
     } = body;
 

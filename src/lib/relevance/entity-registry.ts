@@ -375,6 +375,15 @@ export function identifyFranchisesInText(text: string): MatchedEntityDetails[] {
   return results;
 }
 
+export interface TargetFranchiseVerificationResult {
+  isMatched: boolean;
+  matchedEntity?: string;
+  entityType?: "franchise" | "character" | "alias" | "organization" | "keyTerm";
+  canonicalFranchise?: string;
+  evidenceQuote?: string;
+  evidenceField?: string;
+}
+
 /**
  * Resolves whether a candidate product contains evidence for a specific target franchise.
  */
@@ -387,7 +396,7 @@ export function verifyTargetFranchiseInProduct(
     specifications?: Record<string, string>;
     sourceFacts?: string[];
   }
-): { isMatched: boolean; matchedEntity?: string; evidenceQuote?: string; evidenceField?: string } {
+): TargetFranchiseVerificationResult {
   const normTarget = targetFranchise.toLowerCase().trim();
   const entry = ANIME_FRANCHISE_REGISTRY[normTarget] || Object.values(ANIME_FRANCHISE_REGISTRY).find(
     (e) => e.canonicalName.toLowerCase() === normTarget || e.aliases.includes(normTarget)
@@ -402,8 +411,11 @@ export function verifyTargetFranchiseInProduct(
       for (const alias of entry.aliases) {
         const match = containsPhrase(lower, alias);
         if (match.found) {
+          const isDirect = alias.toLowerCase() === entry.canonicalName.toLowerCase() || alias.toLowerCase() === entry.id.toLowerCase();
           return {
             matchedEntity: alias,
+            entityType: (isDirect ? "franchise" : "alias") as "franchise" | "alias",
+            canonicalFranchise: entry.canonicalName,
             evidenceQuote: val.substring(match.matchIndex, match.matchIndex + alias.length),
             evidenceField: fieldName,
           };
@@ -414,6 +426,8 @@ export function verifyTargetFranchiseInProduct(
         if (match.found) {
           return {
             matchedEntity: char,
+            entityType: "character" as const,
+            canonicalFranchise: entry.canonicalName,
             evidenceQuote: val.substring(match.matchIndex, match.matchIndex + char.length),
             evidenceField: fieldName,
           };
@@ -424,6 +438,8 @@ export function verifyTargetFranchiseInProduct(
         if (match.found) {
           return {
             matchedEntity: org,
+            entityType: "organization" as const,
+            canonicalFranchise: entry.canonicalName,
             evidenceQuote: val.substring(match.matchIndex, match.matchIndex + org.length),
             evidenceField: fieldName,
           };
@@ -434,6 +450,8 @@ export function verifyTargetFranchiseInProduct(
         if (match.found) {
           return {
             matchedEntity: term,
+            entityType: "keyTerm" as const,
+            canonicalFranchise: entry.canonicalName,
             evidenceQuote: val.substring(match.matchIndex, match.matchIndex + term.length),
             evidenceField: fieldName,
           };
@@ -445,6 +463,8 @@ export function verifyTargetFranchiseInProduct(
       if (match.found) {
         return {
           matchedEntity: normTarget,
+          entityType: "franchise" as const,
+          canonicalFranchise: targetFranchise,
           evidenceQuote: val.substring(match.matchIndex, match.matchIndex + normTarget.length),
           evidenceField: fieldName,
         };
@@ -486,4 +506,67 @@ export function verifyTargetFranchiseInProduct(
   }
 
   return { isMatched: false };
+}
+
+/**
+ * Normalizes duplicated terms in display names (e.g. "Naruto Naruto Uzumaki" -> "Naruto Uzumaki")
+ */
+export function normalizeEntityDisplayName(text: string): string {
+  if (!text || typeof text !== "string") return "";
+  const trimmed = text.trim();
+
+  // Collapse consecutive identical words (case-insensitive)
+  const tokens = trimmed.split(/\s+/);
+  const normalizedTokens: string[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const current = tokens[i];
+    const prev = normalizedTokens[normalizedTokens.length - 1];
+    if (prev && prev.toLowerCase() === current.toLowerCase()) {
+      continue;
+    }
+    normalizedTokens.push(current);
+  }
+
+  let cleaned = normalizedTokens.join(" ");
+
+  // Collapse consecutive multi-word phrases like "One Piece One Piece"
+  cleaned = cleaned.replace(/\b(One Piece)\s+(One Piece)\b/gi, "$1");
+  cleaned = cleaned.replace(/\b(Attack on Titan)\s+(Attack on Titan)\b/gi, "$1");
+  cleaned = cleaned.replace(/\b(Dragon Ball)\s+(Dragon Ball)\b/gi, "$1");
+  cleaned = cleaned.replace(/\b(Demon Slayer)\s+(Demon Slayer)\b/gi, "$1");
+
+  return cleaned;
+}
+
+const GENERAL_ANIME_KEYWORDS = [
+  "anime",
+  "manga",
+  "japanese animation",
+  "otaku",
+  "chibi",
+  "kawaii",
+  "cosplay",
+  "waifu",
+  "shonen",
+  "shoujo",
+  "seinen",
+  "light novel",
+  "vocaloid",
+  "hatsune miku",
+  "studio ghibli",
+];
+
+/**
+ * Checks whether text displays clear general Japanese anime/manga aesthetic markers.
+ */
+export function isGeneralAnimeTheme(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const lower = text.toLowerCase();
+  for (const kw of GENERAL_ANIME_KEYWORDS) {
+    if (containsPhrase(lower, kw).found) {
+      return true;
+    }
+  }
+  return false;
 }

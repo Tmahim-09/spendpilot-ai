@@ -72,6 +72,25 @@ export function SetupBundleWorkspace({
     }
   };
 
+  const getBadgeStyles = (outcome?: string) => {
+    switch (outcome) {
+      case "verified_same_franchise_substitute":
+      case "verified_substitute":
+        return "text-[#38BDF8] bg-[#38BDF8]/10 border border-[#38BDF8]/30";
+      case "general_anime_theme":
+        return "text-[#A78BFA] bg-[#A78BFA]/10 border border-[#A78BFA]/30";
+      case "uncertain":
+      case "unrelated":
+        return "text-[#F5B942] bg-[#F5B942]/10 border border-[#F5B942]/30";
+      case "direct_franchise_match":
+      case "verified_character_match":
+      case "verified_franchise_alias_match":
+      case "direct_match":
+      default:
+        return "text-[#35C979] bg-[#35C979]/10 border border-[#35C979]/30";
+    }
+  };
+
   return (
     <div id="bundle-workspace" className="w-full max-w-5xl mx-auto my-10 animate-fadeIn">
       {/* Workspace Container */}
@@ -328,11 +347,9 @@ export function SetupBundleWorkspace({
                     {/* Relevance Badge */}
                     {item.relevanceBadge && (
                       <span
-                        className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${
-                          item.relevanceOutcome === "verified_substitute"
-                            ? "text-[#38BDF8] bg-[#38BDF8]/10 border border-[#38BDF8]/30"
-                            : "text-[#35C979] bg-[#35C979]/10 border border-[#35C979]/30"
-                        }`}
+                        className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${getBadgeStyles(
+                          item.relevanceOutcome
+                        )}`}
                       >
                         <Sparkles className="h-3 w-3" />
                         {item.relevanceBadge}
