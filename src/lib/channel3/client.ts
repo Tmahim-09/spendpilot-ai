@@ -31,6 +31,7 @@ export function getChannel3Client(): Channel3 {
 
 export interface Channel3SearchOptions {
   query: string;
+  minPrice?: number | null;
   maxPrice?: number | null;
   currency?: string;
   limit?: number;
@@ -46,12 +47,13 @@ export interface Channel3SearchResult {
  */
 export async function searchChannel3Products({
   query,
+  minPrice,
   maxPrice,
   currency = "USD",
   limit = 8,
 }: Channel3SearchOptions): Promise<Channel3SearchResult> {
   const normalizedQuery = query.trim().toLowerCase();
-  const cacheKey = `${normalizedQuery}|${maxPrice ?? "all"}|${currency}|${limit}`;
+  const cacheKey = `${normalizedQuery}|${minPrice ?? "0"}|${maxPrice ?? "all"}|${currency}|${limit}`;
 
   // Check cache
   const cached = searchCache.get(cacheKey);
@@ -66,10 +68,17 @@ export async function searchChannel3Products({
 
   const searchFilters: Channel3Api.SearchFilters = {};
 
-  if (typeof maxPrice === "number" && maxPrice > 0) {
-    searchFilters.price = {
-      max_price: maxPrice,
-    };
+  if (
+    (typeof minPrice === "number" && minPrice > 0) ||
+    (typeof maxPrice === "number" && maxPrice > 0)
+  ) {
+    searchFilters.price = {};
+    if (typeof minPrice === "number" && minPrice > 0) {
+      searchFilters.price.min_price = minPrice;
+    }
+    if (typeof maxPrice === "number" && maxPrice > 0) {
+      searchFilters.price.max_price = maxPrice;
+    }
   }
 
   // Pass validated configuration

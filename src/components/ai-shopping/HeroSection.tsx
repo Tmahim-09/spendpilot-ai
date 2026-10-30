@@ -4,14 +4,22 @@ import React from "react";
 import Image from "next/image";
 import { ShoppingPrompt } from "./ShoppingPrompt";
 import { ShieldCheck, CheckCircle2 } from "lucide-react";
-import type { CurrencyCode } from "@/types";
+import type { CurrencyCode, ShoppingMode, PricePreference } from "@/types";
 
 interface HeroSectionProps {
-  onSearch?: (query: string, budget: number | null, currency: CurrencyCode) => Promise<void> | void;
+  onSearch?: (
+    query: string,
+    budget: number | null,
+    currency: CurrencyCode,
+    mode: ShoppingMode,
+    pricePreference: PricePreference
+  ) => Promise<void> | void;
   isLoading?: boolean;
   initialPrompt?: string;
   initialBudget?: string;
   initialCurrency?: CurrencyCode;
+  initialMode?: ShoppingMode;
+  initialPricePreference?: PricePreference;
 }
 
 export function HeroSection({
@@ -20,6 +28,8 @@ export function HeroSection({
   initialPrompt,
   initialBudget,
   initialCurrency,
+  initialMode = "single",
+  initialPricePreference = "near_budget",
 }: HeroSectionProps = {}) {
   return (
     <section className="relative overflow-hidden pt-8 pb-16 md:pt-12 md:pb-20 border-b border-[#242424]">
@@ -102,6 +112,8 @@ export function HeroSection({
             initialPrompt={initialPrompt}
             initialBudget={initialBudget}
             initialCurrency={initialCurrency}
+            initialMode={initialMode}
+            initialPricePreference={initialPricePreference}
           />
         </div>
       </div>

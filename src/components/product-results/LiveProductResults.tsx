@@ -20,6 +20,7 @@ import {
   Search,
   Bot,
   Layers,
+  ArrowRight,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -41,6 +42,10 @@ interface LiveProductResultsProps {
     message: string;
     suggestedProducts: string[];
   } | null;
+  emptyInPreferredRange?: boolean;
+  preferredRangeText?: string | null;
+  isRangeExpanded?: boolean;
+  onExpandRange?: () => void;
   error: string | null;
   onRetry?: () => void;
   onRetryComparison?: () => void;
@@ -64,6 +69,10 @@ export function LiveProductResults({
   aiStatus,
   aiMessage = null,
   playfulNotice = null,
+  emptyInPreferredRange = false,
+  preferredRangeText = null,
+  isRangeExpanded = false,
+  onExpandRange,
   error,
   onRetry,
   onRetryComparison,
@@ -209,6 +218,55 @@ export function LiveProductResults({
 
   // State 5: Zero results matching
   if (products.length === 0) {
+    if (emptyInPreferredRange) {
+      return (
+        <section id="search-results" className="py-12 sm:py-16 border-b border-[#242424] bg-[#090909]">
+          <div className="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8 text-center">
+            <div className="rounded-2xl border border-[#FF6A00]/40 bg-[#120f0c] p-8 sm:p-12 shadow-2xl relative overflow-hidden">
+              <div
+                className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_50%_0%,rgba(255,106,0,0.08),rgba(0,0,0,0))]"
+                aria-hidden="true"
+              />
+              <div className="relative mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-[#FF6A00]/40 bg-[#1e150f] text-[#FF8126] mb-4 shadow-lg shadow-[#FF6A00]/15">
+                <ShoppingBag className="h-7 w-7" aria-hidden="true" />
+              </div>
+              <span className="relative inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-3 py-1 text-xs font-semibold text-[#FF8126] mb-3">
+                <Sparkles className="h-3 w-3" />
+                Near-Budget Search Focus
+              </span>
+              <h3 className="relative text-xl sm:text-2xl font-bold text-[#F5F5F5] mb-2">
+                No suitable products were found in your preferred {preferredRangeText || "near-budget"} range.
+              </h3>
+              <p className="relative text-xs sm:text-sm text-[#A3A3A3] max-w-md mx-auto mb-6 leading-relaxed">
+                To maximize your budget, SpendPilot prioritizes products in the upper tier of your budget. If you wish to view all verified products under your maximum limit, you can expand the range now.
+              </p>
+              <div className="relative flex flex-wrap items-center justify-center gap-3">
+                {onExpandRange && (
+                  <button
+                    type="button"
+                    onClick={onExpandRange}
+                    className="inline-flex items-center gap-2 rounded-xl bg-[#FF6A00] px-5 py-2.5 text-xs sm:text-sm font-semibold text-white shadow-lg shadow-[#FF6A00]/25 hover:bg-[#FF8126] transition-colors"
+                  >
+                    <span>Expand price range</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                )}
+                {onRetry && (
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#303030] bg-[#171717] px-4 py-2.5 text-xs font-medium text-[#F5F5F5] hover:bg-[#202020] transition-colors"
+                  >
+                    <span>Edit your request</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+      );
+    }
+
     return (
       <section id="search-results" className="py-12 sm:py-16 border-b border-[#242424] bg-[#090909]">
         <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 text-center">
@@ -274,6 +332,12 @@ export function LiveProductResults({
               {cached && (
                 <span className="text-[10px] text-[#737373] font-mono bg-[#141414] px-2 py-0.5 rounded border border-[#222222]">
                   Cached Result
+                </span>
+              )}
+
+              {isRangeExpanded && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-2.5 py-0.5 text-xs font-semibold text-[#FF8126]">
+                  <span>Expanded Price Range (All items &le; {formatCurrency((budget || 0) * 100, currency)})</span>
                 </span>
               )}
             </div>

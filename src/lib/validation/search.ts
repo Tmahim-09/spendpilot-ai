@@ -1,4 +1,4 @@
-import type { CurrencyCode } from "@/types";
+import type { CurrencyCode, ShoppingMode, PricePreference } from "@/types";
 
 export const ALLOWED_CURRENCIES: CurrencyCode[] = ["USD", "EUR", "GBP"];
 
@@ -6,6 +6,9 @@ export interface ValidatedSearchParams {
   query: string;
   budget: number | null;
   currency: CurrencyCode;
+  mode: ShoppingMode;
+  pricePreference: PricePreference;
+  expandRange: boolean;
 }
 
 export type ValidationResult =
@@ -83,12 +86,26 @@ export function validateSearchPayload(body: unknown): ValidationResult {
     };
   }
 
+  // Validate mode
+  const rawMode = typeof payload.mode === "string" ? payload.mode.toLowerCase() : "single";
+  const mode: ShoppingMode = rawMode === "setup" ? "setup" : "single";
+
+  // Validate price preference
+  const rawPref = typeof payload.pricePreference === "string" ? payload.pricePreference.toLowerCase() : "near_budget";
+  const pricePreference: PricePreference = rawPref === "best_value" ? "best_value" : "near_budget";
+
+  // Validate expandRange
+  const expandRange = Boolean(payload.expandRange);
+
   return {
     valid: true,
     data: {
       query,
       budget: budgetNumber,
       currency: rawCurrency as CurrencyCode,
+      mode,
+      pricePreference,
+      expandRange,
     },
   };
 }

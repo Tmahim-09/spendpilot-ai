@@ -3,6 +3,11 @@ import { searchChannel3Products } from "@/lib/channel3/client";
 import { normalizeChannel3Products } from "@/lib/channel3/normalize-products";
 import { validateSearchPayload } from "@/lib/validation/search";
 import { evaluateShoppingIntentGate } from "@/lib/validation/intent-gate";
+import {
+  calculateBudgetRange,
+  resolvePricePreference,
+  filterQualifyingProducts,
+} from "@/lib/shopping/price-policy";
 import type { SearchProductsResponsePayload } from "@/types";
 
 export async function POST(request: NextRequest) {
@@ -20,7 +25,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { query, budget, currency } = validation.data;
+    const { query, budget, currency, mode, pricePreference, expandRange } = validation.data;
 
     // Fast Deterministic Intent Gate: Check if clearly unrelated to shopping
     const intentGate = evaluateShoppingIntentGate(query);
@@ -37,6 +42,8 @@ export async function POST(request: NextRequest) {
           isUnrelated: true,
           playfulMessage: intentGate.playfulResponse,
           suggestedProducts: intentGate.suggestedProducts,
+          mode,
+          pricePreference,
           timings: {
             durationMs,
             requestId,
@@ -58,29 +65,54 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Determine effective price preference (handles user prompt with words like "cheap" or "affordable")
+    const effectivePreference = resolvePricePreference(pricePreference, query);
+
+    // Compute price filters based on policy
+    let minPriceFilter: number | null = null;
+    let maxPriceFilter: number | null = budget;
+
+    if (budget !== null && budget > 0) {
+      const budgetRange = calculateBudgetRange(budget, currency);
+      maxPriceFilter = budgetRange.hardMax;
+
+      if (effectivePreference === "near_budget" && !expandRange) {
+        minPriceFilter = budgetRange.preferredMin;
+      }
+    }
+
     // Perform live Channel3 search with 15-second client timeout
     const { products: rawProducts, cached } = await searchChannel3Products({
       query,
-      maxPrice: budget,
+      minPrice: minPriceFilter,
+      maxPrice: maxPriceFilter,
       currency,
       limit: 8,
     });
 
     // Normalize raw products into application schema
-    let normalized = normalizeChannel3Products(rawProducts, currency);
+    const normalized = normalizeChannel3Products(rawProducts, currency);
 
-    // Apply defensive budget filter if user specified budget
-    if (budget !== null) {
-      const budgetMinor = Math.round(budget * 100);
-      normalized = normalized.filter((p) => p.priceMinor === null || p.priceMinor <= budgetMinor);
-    }
+    // Apply strict server-side qualifying offer and price range filtering
+    const {
+      qualifyingProducts,
+      emptyInPreferredRange,
+      preferredRange,
+      preferredRangeText,
+    } = filterQualifyingProducts({
+      products: normalized,
+      budget,
+      currency,
+      pricePreference: effectivePreference,
+      expandRange,
+    });
 
     const durationMs = Math.round(performance.now() - t0);
 
     // Development diagnostic log
     if (process.env.NODE_ENV !== "production") {
       console.log(
-        `[SearchAPI] id=${requestId} query="${query}" count=${normalized.length} cached=${cached} duration=${durationMs}ms`
+        `[SearchAPI] id=${requestId} query="${query}" mode=${mode} pref=${effectivePreference} expanded=${expandRange} count=${qualifyingProducts.length} cached=${cached} duration=${durationMs}ms`
       );
     }
 
@@ -89,9 +121,15 @@ export async function POST(request: NextRequest) {
       query,
       budgetApplied: budget,
       currency,
-      count: normalized.length,
-      products: normalized,
+      count: qualifyingProducts.length,
+      products: qualifyingProducts,
       cached,
+      mode,
+      pricePreference: effectivePreference,
+      preferredRange,
+      preferredRangeText,
+      emptyInPreferredRange,
+      isRangeExpanded: expandRange,
       timings: {
         durationMs,
         requestId,
