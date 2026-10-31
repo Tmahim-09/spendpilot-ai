@@ -36,6 +36,8 @@ interface AiComparisonWorkspaceProps {
   isRefining?: boolean;
   onRefinePriority: (priorityText: string) => void;
   onResetSearch?: () => void;
+  onConfigureProduct?: (product: NormalizedProduct) => void;
+  configuredProductIds?: Set<string>;
 }
 
 export function AiComparisonWorkspace({
@@ -47,6 +49,8 @@ export function AiComparisonWorkspace({
   products,
   isRefining = false,
   onRefinePriority,
+  onConfigureProduct,
+  configuredProductIds = new Set(),
 }: AiComparisonWorkspaceProps) {
   const [customPriority, setCustomPriority] = useState("");
   const [activePriority, setActivePriority] = useState<string | null>(null);
@@ -266,15 +270,36 @@ export function AiComparisonWorkspace({
                 </div>
               </div>
 
-              <a
-                href={bestMatch.retailerUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#FF6A00] px-4 py-2.5 text-xs font-semibold text-white shadow hover:bg-[#FF8126] transition-all focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
-              >
-                <span>View retailer offer</span>
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
+              <div className="space-y-2">
+                {onConfigureProduct && (
+                  <button
+                    type="button"
+                    onClick={() => onConfigureProduct(bestMatch)}
+                    className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
+                      configuredProductIds.has(bestMatch.sourceProductId || bestMatch.title)
+                        ? "border border-[#35C979]/40 bg-[#35C979]/15 text-[#35C979] hover:bg-[#35C979]/20"
+                        : "border border-[#FF6A00]/50 bg-[#161310] text-[#FF8126] hover:bg-[#FF6A00]/20"
+                    }`}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>
+                      {configuredProductIds.has(bestMatch.sourceProductId || bestMatch.title)
+                        ? "Configuration Verified ✓"
+                        : "Configure Options (Size / Color)"}
+                    </span>
+                  </button>
+                )}
+
+                <a
+                  href={bestMatch.retailerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#FF6A00] px-4 py-2.5 text-xs font-semibold text-white shadow hover:bg-[#FF8126] transition-all focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
+                >
+                  <span>View retailer offer</span>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </div>
             </div>
 
             {/* Right Column: Grounded Decision Rationale */}

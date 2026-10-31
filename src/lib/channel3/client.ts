@@ -35,6 +35,9 @@ export interface Channel3SearchOptions {
   maxPrice?: number | null;
   currency?: string;
   limit?: number;
+  categoryIds?: string[];
+  attributes?: Record<string, string[]>;
+  gender?: string;
 }
 
 export interface Channel3SearchResult {
@@ -51,9 +54,14 @@ export async function searchChannel3Products({
   maxPrice,
   currency = "USD",
   limit = 8,
+  categoryIds,
+  attributes,
+  gender,
 }: Channel3SearchOptions): Promise<Channel3SearchResult> {
   const normalizedQuery = query.trim().toLowerCase();
-  const cacheKey = `${normalizedQuery}|${minPrice ?? "0"}|${maxPrice ?? "all"}|${currency}|${limit}`;
+  const attrKey = attributes ? JSON.stringify(attributes) : "";
+  const catKey = categoryIds ? categoryIds.join(",") : "";
+  const cacheKey = `${normalizedQuery}|${minPrice ?? "0"}|${maxPrice ?? "all"}|${currency}|${limit}|${catKey}|${attrKey}|${gender ?? ""}`;
 
   // Check cache
   const cached = searchCache.get(cacheKey);
@@ -79,6 +87,18 @@ export async function searchChannel3Products({
     if (typeof maxPrice === "number" && maxPrice > 0) {
       searchFilters.price.max_price = maxPrice;
     }
+  }
+
+  if (categoryIds && categoryIds.length > 0) {
+    searchFilters.category_ids = categoryIds;
+  }
+
+  if (attributes && Object.keys(attributes).length > 0) {
+    searchFilters.attributes = attributes;
+  }
+
+  if (gender) {
+    searchFilters.gender = gender as Channel3Api.Gender;
   }
 
   // Pass validated configuration

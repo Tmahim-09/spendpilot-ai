@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { SiteHeader } from "@/components/layout/SiteHeader";
 import { HeroSection } from "@/components/ai-shopping/HeroSection";
 import { LiveProductResults } from "@/components/product-results/LiveProductResults";
 import { SetupDecompositionReview } from "@/components/setup/SetupDecompositionReview";
 import { SetupBundleWorkspace } from "@/components/setup/SetupBundleWorkspace";
+import { GuidedConversationWorkspace } from "@/components/guided-shopping/GuidedConversationWorkspace";
+import { ProductVariantConfigurator } from "@/components/guided-shopping/ProductVariantConfigurator";
 import { HowItWorks } from "@/components/sections/HowItWorks";
 import { TrustSection } from "@/components/sections/TrustSection";
 import { SiteFooter } from "@/components/layout/SiteFooter";
@@ -29,6 +31,12 @@ import type {
   SetupDecomposeResponsePayload,
   SetupSearchResponsePayload,
   SetupCompareResponsePayload,
+  ShoppingStage,
+  GuidedQuestion,
+  StructuredRequirement,
+  CollectedAnswer,
+  ProductVariantSelection,
+  StructuredRequirementSearchFilters,
 } from "@/types";
 import { Sparkles, Search, Layers, ShieldAlert, RefreshCw } from "lucide-react";
 
@@ -41,7 +49,21 @@ export default function Home() {
   const [mode, setMode] = useState<ShoppingMode>("single");
   const [pricePreference, setPricePreference] = useState<PricePreference>("near_budget");
 
-  // Single Product State
+  // Guided Shopping Interview State (Phase 4)
+  const [shoppingStage, setShoppingStage] = useState<ShoppingStage>("initial_request");
+  const [interviewQuestions, setInterviewQuestions] = useState<GuidedQuestion[]>([]);
+  const [interviewRequirements, setInterviewRequirements] = useState<StructuredRequirement[]>([]);
+  const [collectedAnswers, setCollectedAnswers] = useState<Record<string, CollectedAnswer>>({});
+  const [interviewAssistantMessage, setInterviewAssistantMessage] = useState<string>("");
+  const [isInterviewLoading, setIsInterviewLoading] = useState(false);
+  const [canSearchAfterInterview, setCanSearchAfterInterview] = useState(false);
+
+  // Variant Configuration State
+  const [configuringProduct, setConfiguringProduct] = useState<NormalizedProduct | null>(null);
+  const [configuredProductIds, setConfiguredProductIds] = useState<Set<string>>(new Set());
+  const [configuredVariants, setConfiguredVariants] = useState<Record<string, ProductVariantSelection>>({});
+
+  // Single Product Results State
   const [products, setProducts] = useState<NormalizedProduct[]>([]);
   const [comparison, setComparison] = useState<AiComparisonResult | null>(null);
   const [evidenceFacts, setEvidenceFacts] = useState<Record<string, EvidenceFact>>({});
@@ -79,6 +101,43 @@ export default function Home() {
   // Monotonic ID to prevent race conditions from previous late responses
   const activeSearchId = useRef(0);
 
+  // Load saved session on mount
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        if (typeof window !== "undefined") {
+          const saved = window.sessionStorage.getItem("spendpilot_guided_shopping_session");
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed.query) setQuery(parsed.query);
+            if (parsed.budget) setBudget(parsed.budget);
+            if (parsed.currency) setCurrency(parsed.currency);
+            if (parsed.mode) setMode(parsed.mode);
+            if (parsed.collectedAnswers) setCollectedAnswers(parsed.collectedAnswers);
+            if (parsed.interviewQuestions) setInterviewQuestions(parsed.interviewQuestions);
+            if (parsed.interviewRequirements) setInterviewRequirements(parsed.interviewRequirements);
+            if (Array.isArray(parsed.configuredProductIds)) {
+              setConfiguredProductIds(new Set(parsed.configuredProductIds));
+            }
+          }
+        }
+      } catch {
+        // Ignore session storage errors
+      }
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  const scrollToInterview = () => {
+    setTimeout(() => {
+      const el = document.getElementById("guided-interview");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 60);
+  };
+
   const scrollToResults = () => {
     setTimeout(() => {
       const resultsEl = document.getElementById("search-results") || document.getElementById("setup-workspace");
@@ -88,6 +147,10 @@ export default function Home() {
     }, 60);
   };
 
+  /**
+   * Initial submission handler from prompt composer.
+   * Starts the Guided Shopping interview to collect and confirm missing requirements.
+   */
   const handleSearch = async (
     searchQuery: string,
     searchBudget: number | null,
@@ -95,8 +158,6 @@ export default function Home() {
     searchMode: ShoppingMode = "single",
     searchPricePreference: PricePreference = "near_budget"
   ) => {
-    const currentId = ++activeSearchId.current;
-
     setQuery(searchQuery);
     setBudget(searchBudget);
     setCurrency(searchCurrency);
@@ -107,6 +168,10 @@ export default function Home() {
     setEmptyInPreferredRange(false);
     setIsRangeExpanded(false);
     setPreferredRangeText(null);
+    setHasSearched(false);
+    setProducts([]);
+    setComparison(null);
+    setSetupStage("idle");
 
     // Step 1: Lightweight Zero-LLM Intent Gate
     const intentGate = evaluateShoppingIntentGate(searchQuery);
@@ -117,16 +182,217 @@ export default function Home() {
           "I calculate budgets, not punchlines. Tell me what you're looking to buy!",
         suggestedProducts: intentGate.suggestedProducts || [],
       });
-      setProducts([]);
-      setHasSearched(true);
-      setSetupStage("idle");
-      setIsSearchingProducts(false);
-      setIsRankingAi(false);
+      setShoppingStage("initial_request");
+      setInterviewQuestions([]);
       scrollToResults();
       return;
     }
 
     setPlayfulNotice(null);
+
+    // Step 2: Trigger Guided Shopping Interview
+    setShoppingStage("understanding_request");
+    setIsInterviewLoading(true);
+
+    try {
+      const interviewRes = await fetch("/api/shopping/interview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestText: searchQuery,
+          mode: searchMode,
+          budget: searchBudget,
+          currency: searchCurrency,
+          answers: {},
+        }),
+      });
+
+      const interviewData = await interviewRes.json();
+      if (!interviewRes.ok || !interviewData.success) {
+        throw new Error(interviewData.error || "Unable to start guided shopping interview.");
+      }
+
+      setInterviewQuestions(interviewData.questions || []);
+      setInterviewRequirements(interviewData.requirements || []);
+      setInterviewAssistantMessage(interviewData.message || "");
+      setCanSearchAfterInterview(Boolean(interviewData.canSearch));
+      setCollectedAnswers({});
+
+      // Set stage: If questions exist and canSearch is false, go to needs_clarification
+      if (interviewData.questions && interviewData.questions.length > 0 && !interviewData.canSearch) {
+        setShoppingStage("needs_clarification");
+        scrollToInterview();
+      } else {
+        setShoppingStage("requirements_review");
+        scrollToInterview();
+      }
+    } catch {
+      // Fallback: If interview fails, proceed directly to search
+      setShoppingStage("ready_to_search");
+      executeDirectSearch(searchQuery, searchBudget, searchCurrency, searchMode, searchPricePreference);
+    } finally {
+      setIsInterviewLoading(false);
+    }
+  };
+
+  /**
+   * Handles user answering a question chip/selector in the guided conversation
+   */
+  const handleAnswerQuestion = async (
+    questionId: string,
+    attribute: string,
+    value: string,
+    displayValue: string,
+    isAiSelected = false
+  ) => {
+    const updatedAnswers = {
+      ...collectedAnswers,
+      [questionId]: {
+        questionId,
+        attribute,
+        value,
+        displayValue,
+        isAiSelected,
+        answeredAt: Date.now(),
+      },
+    };
+    setCollectedAnswers(updatedAnswers);
+    setIsInterviewLoading(true);
+
+    try {
+      const res = await fetch("/api/shopping/interview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestText: query || "",
+          mode,
+          budget,
+          currency,
+          answers: updatedAnswers,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setInterviewQuestions(data.questions || []);
+        setInterviewRequirements(data.requirements || []);
+        setInterviewAssistantMessage(data.message || "");
+        setCanSearchAfterInterview(Boolean(data.canSearch));
+
+        if (data.canSearch) {
+          setShoppingStage("requirements_review");
+        }
+      }
+    } catch {
+      // Keep existing state
+    } finally {
+      setIsInterviewLoading(false);
+    }
+  };
+
+  /**
+   * Handles skipping an optional preference question
+   */
+  const handleSkipQuestion = async (questionId: string, attribute: string) => {
+    const updatedAnswers = {
+      ...collectedAnswers,
+      [questionId]: {
+        questionId,
+        attribute,
+        value: "Skipped",
+        displayValue: "No preference",
+        isSkipped: true,
+        answeredAt: Date.now(),
+      },
+    };
+    setCollectedAnswers(updatedAnswers);
+    setIsInterviewLoading(true);
+
+    try {
+      const res = await fetch("/api/shopping/interview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestText: query || "",
+          mode,
+          budget,
+          currency,
+          answers: updatedAnswers,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setInterviewQuestions(data.questions || []);
+        setInterviewRequirements(data.requirements || []);
+        setInterviewAssistantMessage(data.message || "");
+        setCanSearchAfterInterview(Boolean(data.canSearch));
+
+        if (data.canSearch) {
+          setShoppingStage("requirements_review");
+        }
+      }
+    } catch {
+      // Keep existing state
+    } finally {
+      setIsInterviewLoading(false);
+    }
+  };
+
+  /**
+   * Handles editing a previously answered attribute
+   */
+  const handleEditAnswer = async (questionId: string) => {
+    const updated = { ...collectedAnswers };
+    delete updated[questionId];
+    setCollectedAnswers(updated);
+    setHasSearched(false);
+    setProducts([]);
+    setComparison(null);
+    setIsInterviewLoading(true);
+
+    try {
+      const res = await fetch("/api/shopping/interview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestText: query || "",
+          mode,
+          budget,
+          currency,
+          answers: updated,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setInterviewQuestions(data.questions || []);
+        setInterviewRequirements(data.requirements || []);
+        setInterviewAssistantMessage(data.message || "");
+        setCanSearchAfterInterview(Boolean(data.canSearch));
+        setShoppingStage(data.canSearch ? "requirements_review" : "needs_clarification");
+      }
+    } catch {
+      // Keep state
+    } finally {
+      setIsInterviewLoading(false);
+    }
+  };
+
+  /**
+   * Executes the actual product discovery (Channel3 + Gemini comparison)
+   * with the confirmed requirements and filters.
+   */
+  const executeDirectSearch = async (
+    searchQuery: string,
+    searchBudget: number | null,
+    searchCurrency: CurrencyCode,
+    searchMode: ShoppingMode = "single",
+    searchPricePreference: PricePreference = "near_budget",
+    searchFilters?: StructuredRequirementSearchFilters
+  ) => {
+    const currentId = ++activeSearchId.current;
+    setShoppingStage("searching_products");
 
     // ─────────────────────────────────────────────────────────────
     // BRANCH A: MULTI-PRODUCT SETUP MODE
@@ -207,6 +473,9 @@ export default function Home() {
           mode: "single",
           pricePreference: searchPricePreference,
           expandRange: false,
+          categorySlug: searchFilters?.categorySlug,
+          attributes: searchFilters?.attributes,
+          gender: searchFilters?.gender,
         }),
       });
 
@@ -232,7 +501,6 @@ export default function Home() {
         return;
       }
 
-      // Check if near-budget empty range condition occurred
       if (searchData.emptyInPreferredRange) {
         setProducts([]);
         setEmptyInPreferredRange(true);
@@ -275,20 +543,15 @@ export default function Home() {
           setEvidenceFacts(recData.evidenceFacts || {});
           setTopRecommendations(recData.topRecommendations || []);
           setOtherMatches(recData.otherMatches || []);
-          setAiStatus(recData.aiStatus || "complete");
+          setAiStatus("complete");
         } else {
           setAiStatus("unavailable");
-          setAiMessage(
-            recData.aiMessage ||
-              "AI comparison is temporarily unavailable. Showing verified catalog matches directly."
-          );
+          setAiMessage(recData.aiMessage || "Catalog view available.");
         }
       } catch {
         if (currentId !== activeSearchId.current) return;
         setAiStatus("unavailable");
-        setAiMessage(
-          "AI comparison temporarily unavailable. Showing verified catalog matches directly."
-        );
+        setAiMessage("Product catalog retrieved successfully. AI comparison temporarily delayed.");
       } finally {
         if (currentId === activeSearchId.current) {
           setIsRankingAi(false);
@@ -296,176 +559,161 @@ export default function Home() {
       }
     } catch (err: unknown) {
       if (currentId !== activeSearchId.current) return;
-      const msg = err instanceof Error ? err.message : "Network error during product search.";
-      setError(msg);
+      setError(err instanceof Error ? err.message : "Network error while searching Channel3.");
       setProducts([]);
       setIsSearchingProducts(false);
       setIsRankingAi(false);
     }
   };
 
-  // Expand price range action when 0 products were found in preferred 90%-100% range
-  const handleExpandRange = async () => {
-    if (!query) return;
-
-    setIsSearchingProducts(true);
-    setEmptyInPreferredRange(false);
-    setError(null);
-
-    try {
-      const searchRes = await fetch("/api/products/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query,
-          budget,
-          currency,
-          mode: "single",
-          pricePreference,
-          expandRange: true,
-        }),
-      });
-
-      const searchData = (await searchRes.json()) as SearchProductsResponsePayload;
-      if (!searchRes.ok || !searchData.success) {
-        setError(searchData.error || "Unable to search products with expanded range.");
-        setIsSearchingProducts(false);
-        return;
-      }
-
-      const retrievedProducts = searchData.products || [];
-      setProducts(retrievedProducts);
-      setIsRangeExpanded(true);
-      setIsSearchingProducts(false);
-
-      if (retrievedProducts.length > 0) {
-        // Trigger background comparison for expanded matches
-        setIsRankingAi(true);
-        try {
-          const recRes = await fetch("/api/shopping/recommend", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              query,
-              products: retrievedProducts,
-              budget,
-              currency,
-            }),
-          });
-          const recData = (await recRes.json()) as ShoppingRecommendResponsePayload;
-          if (recRes.ok && recData.success && recData.comparison) {
-            setComparison(recData.comparison);
-            setEvidenceFacts(recData.evidenceFacts || {});
-            setTopRecommendations(recData.topRecommendations || []);
-            setOtherMatches(recData.otherMatches || []);
-            setAiStatus(recData.aiStatus || "complete");
-          }
-        } catch {
-          setAiStatus("unavailable");
-        } finally {
-          setIsRankingAi(false);
-        }
-      }
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error expanding search range.");
-      setIsSearchingProducts(false);
-    }
+  /**
+   * Action when user confirms the reviewed shopping specifications
+   */
+  const handleConfirmAndSearch = () => {
+    const filters = interviewRequirements[0]?.searchFilters;
+    executeDirectSearch(query!, budget, currency, mode, pricePreference, filters);
   };
 
-  // Setup Stage 3 Confirm: Search Channel3 then perform consolidated comparison
+  /**
+   * Action when user chooses to browse without answering interview questions
+   */
+  const handleBrowseWithoutDetails = () => {
+    executeDirectSearch(query!, budget, currency, mode, pricePreference, undefined);
+  };
+
+  /**
+   * Product Variant Configuration Confirmation
+   */
+  const handleConfirmVariantSelection = (selection: ProductVariantSelection) => {
+    setConfiguredProductIds((prev) => new Set([...prev, selection.productId]));
+    setConfiguredVariants((prev) => ({
+      ...prev,
+      [selection.productId]: selection,
+    }));
+
+    try {
+      const planToSave = {
+        timestamp: new Date().toISOString(),
+        productId: selection.productId,
+        title: selection.title,
+        priceMinor: selection.confirmedPriceMinor,
+        retailerUrl: selection.confirmedRetailerUrl,
+        selectedOptions: selection.selectedOptions,
+      };
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem("spendpilot_configured_item", JSON.stringify(planToSave));
+      }
+    } catch {
+      // Ignore
+    }
+
+    setConfiguringProduct(null);
+  };
+
+  // Multi-Product Setup Handlers
   const handleConfirmSetup = async (
     confirmedItems: SetupRequirementItem[],
     totalBudget: number
   ) => {
+    const currentId = ++activeSearchId.current;
     setSetupRequirements(confirmedItems);
-    setBudget(totalBudget);
-    setSetupError(null);
     setSetupStage("searching");
     scrollToResults();
 
     try {
-      // Step 1: Bounded Category Discovery via Channel3
       const searchRes = await fetch("/api/setup/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          requirements: confirmedItems,
-          totalBudget,
+          items: confirmedItems,
           currency,
+          totalBudget,
         }),
       });
 
       const searchData = (await searchRes.json()) as SetupSearchResponsePayload;
+      if (currentId !== activeSearchId.current) return;
+
       if (!searchRes.ok || !searchData.success || !searchData.categories) {
-        setSetupError(searchData.error || "Failed to search product categories for setup.");
+        setSetupError(searchData.error || "Failed to search product candidates for categories.");
         setSetupStage("review");
         return;
       }
 
-      const categories = searchData.categories;
-      setSetupCategories(categories);
+      setSetupCategories(searchData.categories);
       setSetupStage("comparing");
 
-      // Step 2: Consolidated AI Comparison across all categories
       const compareRes = await fetch("/api/setup/compare", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          query: query || "",
-          requirements: confirmedItems,
-          categories,
+          setupQuery: query,
           totalBudget,
           currency,
+          categories: searchData.categories,
+          requirements: confirmedItems,
         }),
       });
 
       const compareData = (await compareRes.json()) as SetupCompareResponsePayload;
-      if (compareRes.ok && compareData.success && compareData.bundle) {
-        setSetupComparisons(compareData.comparisons || []);
-        setSetupBundle(compareData.bundle);
-        setSelectedItemIds({});
-        setSetupStage("workspace");
-      } else {
-        // Fallback: build bundle deterministically with server math even if AI comparison failed
-        const fallbackBundle = calculateRecommendedBundle({
-          totalBudget,
-          currency,
-          requirements: confirmedItems,
-          categories,
-          comparisons: [],
-        });
-        setSetupComparisons([]);
-        setSetupBundle(fallbackBundle);
-        setSelectedItemIds({});
-        setSetupStage("workspace");
+      if (currentId !== activeSearchId.current) return;
+
+      if (!compareRes.ok || !compareData.success || !compareData.bundle) {
+        setSetupError(compareData.error || "Failed to generate recommended setup bundle.");
+        setSetupStage("review");
+        return;
       }
+
+      setSetupComparisons(compareData.comparisons || []);
+      setSetupBundle(compareData.bundle);
+
+      const initialSelected: Record<string, string> = {};
+      compareData.bundle.items.forEach((item) => {
+        initialSelected[item.requirementId] = item.selectedProductId;
+      });
+      setSelectedItemIds(initialSelected);
+
+      setSetupStage("workspace");
     } catch (err: unknown) {
-      setSetupError(err instanceof Error ? err.message : "Network error during setup discovery.");
+      if (currentId !== activeSearchId.current) return;
+      setSetupError(err instanceof Error ? err.message : "Network error during setup search.");
       setSetupStage("review");
     }
   };
 
-  // Interactive Product Switching in Recommended Bundle
   const handleSelectBundleProduct = (requirementId: string, productId: string) => {
-    const updated = { ...selectedItemIds, [requirementId]: productId };
-    setSelectedItemIds(updated);
+    if (!setupBundle || !setupCategories.length) return;
+    const updatedSelected = { ...selectedItemIds, [requirementId]: productId };
+    setSelectedItemIds(updatedSelected);
 
-    const recalculated = calculateRecommendedBundle({
-      totalBudget: budget || setupDecomposition?.totalBudget || 0,
+    const recomputed = calculateRecommendedBundle({
+      totalBudget: setupBundle.totalBudgetMinor / 100,
       currency,
       requirements: setupRequirements,
       categories: setupCategories,
       comparisons: setupComparisons,
-      selectedItemIds: updated,
+      selectedItemIds: updatedSelected,
     });
-    setSetupBundle(recalculated);
+
+    setSetupBundle(recomputed);
   };
 
-  // Single Product Refinement on Stored Candidate Products
+  const handleExpandRange = () => {
+    setIsRangeExpanded(true);
+    setEmptyInPreferredRange(false);
+    executeDirectSearch(query!, budget, currency, mode, pricePreference, undefined);
+  };
+
+  const handleRetry = () => {
+    if (query) {
+      handleSearch(query, budget, currency, mode, pricePreference);
+    }
+  };
+
   const handleRefinePriority = async (priorityText: string) => {
     if (!query || products.length === 0) return;
-
     setIsRefining(true);
+
     try {
       const recRes = await fetch("/api/shopping/recommend", {
         method: "POST",
@@ -485,18 +733,11 @@ export default function Home() {
         setEvidenceFacts(recData.evidenceFacts || {});
         setTopRecommendations(recData.topRecommendations || []);
         setOtherMatches(recData.otherMatches || []);
-        setAiStatus("complete");
       }
     } catch {
-      // Keep existing comparison intact on network glitch
+      // Keep existing comparison
     } finally {
       setIsRefining(false);
-    }
-  };
-
-  const handleRetry = () => {
-    if (query) {
-      handleSearch(query, budget, currency, mode, pricePreference);
     }
   };
 
@@ -510,6 +751,12 @@ export default function Home() {
     handleSearch(suggestedPrompt, budget, currency, mode, pricePreference);
   };
 
+  // Determine whether to display the Guided Shopping Interview workspace
+  const isGuidedInterviewActive =
+    (shoppingStage === "needs_clarification" || shoppingStage === "requirements_review") &&
+    !hasSearched &&
+    setupStage === "idle";
+
   return (
     <div className="flex min-h-screen flex-col bg-[#080808] text-[#D4D4D4]">
       {/* Header with supplied logo asset and navigation */}
@@ -520,13 +767,41 @@ export default function Home() {
         {/* Hero Section: Dual-mode AI prompt composer */}
         <HeroSection
           onSearch={handleSearch}
-          isLoading={isSearchingProducts || setupStage === "decomposing" || setupStage === "searching"}
+          isLoading={isSearchingProducts || isInterviewLoading || setupStage === "decomposing" || setupStage === "searching"}
           initialPrompt={query || ""}
           initialBudget={budget ? String(budget) : ""}
           initialCurrency={currency}
           initialMode={mode}
           initialPricePreference={pricePreference}
         />
+
+        {/* ─────────────────────────────────────────────────────────────
+            GUIDED SHOPPING INTERVIEW CONVERSATION (PHASE 4)
+           ───────────────────────────────────────────────────────────── */}
+        {isGuidedInterviewActive && (
+          <GuidedConversationWorkspace
+            stage={shoppingStage}
+            mode={mode}
+            query={query || ""}
+            budget={budget}
+            currency={currency}
+            assistantMessage={interviewAssistantMessage}
+            questions={interviewQuestions}
+            requirements={interviewRequirements}
+            answers={collectedAnswers}
+            canSearch={canSearchAfterInterview}
+            isLoading={isInterviewLoading}
+            onAnswerQuestion={handleAnswerQuestion}
+            onSkipQuestion={handleSkipQuestion}
+            onEditAnswer={handleEditAnswer}
+            onConfirmAndSearch={handleConfirmAndSearch}
+            onBrowseWithoutDetails={handleBrowseWithoutDetails}
+            onResetInterview={() => {
+              setCollectedAnswers({});
+              setShoppingStage("initial_request");
+            }}
+          />
+        )}
 
         {/* ─────────────────────────────────────────────────────────────
             MULTI-PRODUCT SETUP WORKFLOW STAGES
@@ -634,6 +909,8 @@ export default function Home() {
                 comparisons={setupComparisons}
                 onSelectProduct={handleSelectBundleProduct}
                 onAdjustRequirements={() => setSetupStage("review")}
+                onConfigureProduct={(p) => setConfiguringProduct(p)}
+                configuredProductIds={configuredProductIds}
                 currency={currency}
               />
             )}
@@ -696,8 +973,30 @@ export default function Home() {
             onRefinePriority={handleRefinePriority}
             onSelectPrompt={handleSelectPrompt}
             cached={cached}
+            onConfigureProduct={(p) => setConfiguringProduct(p)}
+            configuredProductIds={configuredProductIds}
           />
         ) : null}
+
+        {/* Product Variant Configurator Modal */}
+        {configuringProduct && (
+          <ProductVariantConfigurator
+            product={configuringProduct}
+            initialSelections={{
+              ...(collectedAnswers["q-shoe-size"]?.value
+                ? { Size: String(collectedAnswers["q-shoe-size"].value) }
+                : {}),
+              ...(collectedAnswers["q-color"]?.value && collectedAnswers["q-color"].value !== "No preference"
+                ? { Color: String(collectedAnswers["q-color"].value) }
+                : {}),
+              ...(configuredVariants[configuringProduct.sourceProductId || configuringProduct.title]?.selectedOptions || {}),
+            }}
+            currency={currency}
+            isOpen={Boolean(configuringProduct)}
+            onClose={() => setConfiguringProduct(null)}
+            onConfirmSelection={handleConfirmVariantSelection}
+          />
+        )}
 
         {/* How It Works: 3-step explanation */}
         <HowItWorks />

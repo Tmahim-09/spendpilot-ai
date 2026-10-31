@@ -524,3 +524,199 @@ export interface ShoppingPlanResponsePayload {
   cached?: boolean;
   error?: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GUIDED SHOPPING CONVERSATION & PRODUCT CONFIGURATION TYPES (PHASE 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ShoppingStage =
+  | "initial_request"
+  | "understanding_request"
+  | "needs_clarification"
+  | "requirements_review"
+  | "ready_to_search"
+  | "searching_products"
+  | "comparing_products"
+  | "product_selection"
+  | "variant_configuration"
+  | "configuration_confirmed"
+  | "ready_for_future_checkout";
+
+export type AttributeImportance =
+  | "required_before_search"
+  | "optional_preference"
+  | "required_after_selection";
+
+export type QuestionInputType =
+  | "single_select"
+  | "multi_select"
+  | "size_selector"
+  | "color_swatch"
+  | "text_input"
+  | "boolean";
+
+export interface QuestionOption {
+  id: string;
+  label: string;
+  value: string;
+  description?: string;
+  isCommon?: boolean;
+}
+
+export interface GuidedQuestion {
+  id: string;
+  requirementId?: string;
+  attribute: string;
+  label: string;
+  description?: string;
+  inputType: QuestionInputType;
+  options: QuestionOption[];
+  importance: AttributeImportance;
+  allowSkip: boolean;
+  allowCustom?: boolean;
+  categorySlug?: string;
+}
+
+export interface CollectedAnswer {
+  questionId: string;
+  attribute: string;
+  value: string | string[] | boolean | number;
+  displayValue: string;
+  isAiSelected?: boolean;
+  isSkipped?: boolean;
+  answeredAt: number;
+}
+
+export interface StructuredRequirementSearchFilters {
+  categorySlug?: string;
+  attributes?: Record<string, string[]>;
+  gender?: string;
+  colors?: string[];
+  price?: {
+    min_price?: number;
+    max_price?: number;
+  };
+}
+
+export interface StructuredRequirement {
+  id: string;
+  name: string;
+  category: string;
+  categorySlug?: string;
+  budget?: number | null;
+  currency: CurrencyCode;
+  attributes: Record<string, string | number | boolean | string[] | null>;
+  confirmed: boolean;
+  searchFilters?: StructuredRequirementSearchFilters;
+}
+
+export interface ProductVariantOptionValue {
+  label: string;
+  exists: boolean;
+  available:
+    | "InStock"
+    | "LimitedAvailability"
+    | "PreOrder"
+    | "BackOrder"
+    | "SoldOut"
+    | "OutOfStock"
+    | "Discontinued"
+    | "Unknown";
+  thumbnailUrl?: string | null;
+  productId?: string | null;
+}
+
+export interface ProductVariantDimension {
+  name: string;
+  values: ProductVariantOptionValue[];
+  selectedValue?: string | null;
+}
+
+export interface ProductVariantState {
+  productId: string;
+  title: string;
+  imageUrl?: string | null;
+  options: ProductVariantDimension[];
+  selected: Record<string, string>;
+  effectiveSelected: Record<string, string>;
+  isRelaxed: boolean;
+  relaxationMessage?: string | null;
+  isFullyConfigured: boolean;
+  availability:
+    | "InStock"
+    | "LimitedAvailability"
+    | "PreOrder"
+    | "BackOrder"
+    | "SoldOut"
+    | "OutOfStock"
+    | "Discontinued"
+    | "Unknown";
+  verifiedPriceMinor?: number | null;
+  retailerUrl?: string;
+  retailerName?: string | null;
+}
+
+export interface ProductVariantSelection {
+  productId: string;
+  selectedOptions: Record<string, string>;
+  isConfirmed: boolean;
+  confirmedPriceMinor: number | null;
+  confirmedRetailerUrl: string;
+  title?: string;
+  retailerName?: string;
+  imageUrl?: string | null;
+}
+
+export interface GuidedShoppingSessionState {
+  sessionId: string;
+  stage: ShoppingStage;
+  originalRequest: string;
+  mode: ShoppingMode;
+  budget: number | null;
+  currency: CurrencyCode;
+  intentSummary: string;
+  requirements: StructuredRequirement[];
+  pendingQuestions: GuidedQuestion[];
+  answers: Record<string, CollectedAnswer>;
+  canSearch: boolean;
+  selectedProductId?: string | null;
+  selectedVariant?: ProductVariantSelection | null;
+  updatedAt: number;
+}
+
+export interface GuidedInterviewRequestPayload {
+  sessionId?: string;
+  requestText: string;
+  mode: ShoppingMode;
+  budget?: number | null;
+  currency?: CurrencyCode;
+  answers?: Record<string, CollectedAnswer>;
+  currentStage?: ShoppingStage;
+  confirmedRequirements?: StructuredRequirement[];
+}
+
+export interface GuidedInterviewResponsePayload {
+  success: boolean;
+  sessionId: string;
+  stage: ShoppingStage;
+  intentSummary: string;
+  requirements: StructuredRequirement[];
+  questions: GuidedQuestion[];
+  canSearch: boolean;
+  message: string;
+  modelUsed?: string;
+  error?: string;
+}
+
+export interface ProductVariantRequestPayload {
+  productId: string;
+  selectedOptions?: Record<string, string>;
+  currency?: CurrencyCode;
+}
+
+export interface ProductVariantResponsePayload {
+  success: boolean;
+  variantState: ProductVariantState | null;
+  error?: string;
+}
+

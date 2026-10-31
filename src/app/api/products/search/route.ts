@@ -25,7 +25,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { query, budget, currency, mode, pricePreference, expandRange } = validation.data;
+    const {
+      query,
+      budget,
+      currency,
+      mode,
+      pricePreference,
+      expandRange,
+      categorySlug,
+      attributes,
+      gender,
+    } = validation.data;
 
     // Fast Deterministic Intent Gate: Check if clearly unrelated to shopping
     const intentGate = evaluateShoppingIntentGate(query);
@@ -88,6 +98,9 @@ export async function POST(request: NextRequest) {
       maxPrice: maxPriceFilter,
       currency,
       limit: 8,
+      categoryIds: categorySlug ? [categorySlug] : undefined,
+      attributes,
+      gender,
     });
 
     // Normalize raw products into application schema

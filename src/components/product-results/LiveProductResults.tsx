@@ -52,6 +52,8 @@ interface LiveProductResultsProps {
   onRefinePriority?: (priority: string) => void;
   onSelectPrompt?: (promptText: string) => void;
   cached?: boolean;
+  onConfigureProduct?: (product: NormalizedProduct) => void;
+  configuredProductIds?: Set<string>;
 }
 
 export function LiveProductResults({
@@ -79,6 +81,8 @@ export function LiveProductResults({
   onRefinePriority,
   onSelectPrompt,
   cached = false,
+  onConfigureProduct,
+  configuredProductIds = new Set(),
 }: LiveProductResultsProps) {
   // State 1: Clearly Unrelated Prompt (Zero API calls made, instant witty response)
   if (playfulNotice) {
@@ -402,6 +406,8 @@ export function LiveProductResults({
             products={products}
             isRefining={isRefining}
             onRefinePriority={onRefinePriority || (() => {})}
+            onConfigureProduct={onConfigureProduct}
+            configuredProductIds={configuredProductIds}
           />
         )}
 
@@ -424,14 +430,19 @@ export function LiveProductResults({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {(secondaryProducts.length > 0 ? secondaryProducts : products).map((product) => (
-              <ProductCard
-                key={product.sourceProductId || product.title}
-                product={product}
-                budget={budget}
-                currency={currency}
-              />
-            ))}
+            {(secondaryProducts.length > 0 ? secondaryProducts : products).map((product) => {
+              const id = product.sourceProductId || product.title;
+              return (
+                <ProductCard
+                  key={id}
+                  product={product}
+                  budget={budget}
+                  currency={currency}
+                  onConfigure={onConfigureProduct}
+                  isConfigured={configuredProductIds.has(id)}
+                />
+              );
+            })}
           </div>
         </section>
 

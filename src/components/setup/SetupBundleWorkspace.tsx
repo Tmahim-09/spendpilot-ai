@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type {
   CurrencyCode,
+  NormalizedProduct,
   RecommendedBundle,
   SetupCategorySearchResult,
   SetupComparisonCategoryResult,
@@ -32,6 +33,8 @@ interface SetupBundleWorkspaceProps {
   onSelectProduct: (requirementId: string, productId: string) => void;
   onExpandCategoryRange?: (requirementId: string) => void;
   onAdjustRequirements?: () => void;
+  onConfigureProduct?: (product: NormalizedProduct) => void;
+  configuredProductIds?: Set<string>;
   currency?: CurrencyCode;
 }
 
@@ -43,6 +46,8 @@ export function SetupBundleWorkspace({
   onSelectProduct,
   onExpandCategoryRange,
   onAdjustRequirements,
+  onConfigureProduct,
+  configuredProductIds = new Set(),
   currency = "USD",
 }: SetupBundleWorkspaceProps) {
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -520,12 +525,27 @@ export function SetupBundleWorkspace({
                         )}
 
                         {/* Switch Action & Merchant Link */}
-                        <div className="mt-3 pt-3 border-t border-[#1e1e1e] flex items-center justify-between gap-2">
+                        <div className="mt-3 pt-3 border-t border-[#1e1e1e] flex flex-wrap items-center justify-between gap-2">
                           {isSelected ? (
-                            <span className="text-xs text-[#35C979] font-medium inline-flex items-center gap-1">
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                              Active in Bundle
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-[#35C979] font-medium inline-flex items-center gap-1">
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                Active
+                              </span>
+                              {onConfigureProduct && (
+                                <button
+                                  type="button"
+                                  onClick={() => onConfigureProduct(product)}
+                                  className={`text-[11px] px-2 py-0.5 rounded border transition-colors ${
+                                    configuredProductIds.has(prodId)
+                                      ? "border-[#35C979]/40 text-[#35C979] bg-[#35C979]/10"
+                                      : "border-[#FF6A00]/40 text-[#FF8126] bg-[#FF6A00]/10 hover:bg-[#FF6A00]/20"
+                                  }`}
+                                >
+                                  {configuredProductIds.has(prodId) ? "Configured ✓" : "Configure options"}
+                                </button>
+                              )}
+                            </div>
                           ) : (
                             <button
                               type="button"

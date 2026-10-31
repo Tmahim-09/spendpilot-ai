@@ -20,9 +20,17 @@ interface ProductCardProps {
   product: NormalizedProduct;
   budget?: number | null;
   currency?: CurrencyCode;
+  onConfigure?: (product: NormalizedProduct) => void;
+  isConfigured?: boolean;
 }
 
-export function ProductCard({ product, budget = null, currency = "USD" }: ProductCardProps) {
+export function ProductCard({
+  product,
+  budget = null,
+  currency = "USD",
+  onConfigure,
+  isConfigured = false,
+}: ProductCardProps) {
   const [showOffers, setShowOffers] = useState(false);
   const [showSpecs, setShowSpecs] = useState(false);
   const [imgError, setImgError] = useState(false);
@@ -274,8 +282,23 @@ export function ProductCard({ product, budget = null, currency = "USD" }: Produc
         )}
       </div>
 
-      {/* Card Action: View Retailer Offer */}
-      <div className="mt-5 pt-3 border-t border-[#202020]">
+      {/* Card Actions: Configure & View Retailer Offer */}
+      <div className="mt-5 pt-3 border-t border-[#202020] space-y-2">
+        {onConfigure && (
+          <button
+            type="button"
+            onClick={() => onConfigure(product)}
+            className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all ${
+              isConfigured
+                ? "border border-[#35C979]/40 bg-[#35C979]/15 text-[#35C979] hover:bg-[#35C979]/20"
+                : "border border-[#FF6A00]/50 bg-[#161310] text-[#FF8126] hover:bg-[#FF6A00]/20"
+            }`}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>{isConfigured ? "Configuration Verified ✓" : "Configure Options (Size / Color)"}</span>
+          </button>
+        )}
+
         <a
           href={product.retailerUrl}
           target="_blank"

@@ -9,6 +9,9 @@ export interface ValidatedSearchParams {
   mode: ShoppingMode;
   pricePreference: PricePreference;
   expandRange: boolean;
+  categorySlug?: string;
+  attributes?: Record<string, string[]>;
+  gender?: string;
 }
 
 export type ValidationResult =
@@ -97,6 +100,21 @@ export function validateSearchPayload(body: unknown): ValidationResult {
   // Validate expandRange
   const expandRange = Boolean(payload.expandRange);
 
+  const categorySlug =
+    typeof payload.categorySlug === "string" && payload.categorySlug.trim()
+      ? payload.categorySlug.trim()
+      : undefined;
+
+  const attributes =
+    payload.attributes && typeof payload.attributes === "object"
+      ? (payload.attributes as Record<string, string[]>)
+      : undefined;
+
+  const gender =
+    typeof payload.gender === "string" && payload.gender.trim()
+      ? payload.gender.trim()
+      : undefined;
+
   return {
     valid: true,
     data: {
@@ -106,6 +124,9 @@ export function validateSearchPayload(body: unknown): ValidationResult {
       mode,
       pricePreference,
       expandRange,
+      categorySlug,
+      attributes,
+      gender,
     },
   };
 }
