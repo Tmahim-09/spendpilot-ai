@@ -43,29 +43,23 @@ export function SiteHeader() {
             </div>
           </Link>
           <span className="hidden sm:inline-flex items-center rounded-full border border-[#303030] bg-[#141414] px-2.5 py-0.5 text-xs font-medium text-[#A3A3A3]">
-            PayPal Hackathon MVP
+            PayPal Hackathon 2026
           </span>
         </div>
 
         {/* Desktop Navigation */}
         <nav className="hidden md:flex items-center gap-8" aria-label="Main Navigation">
           <button
+            onClick={() => scrollToSection("prompt-composer")}
+            className="text-sm font-medium text-[#A3A3A3] transition-colors hover:text-[#F5F5F5] focus:outline-none"
+          >
+            Find products
+          </button>
+          <button
             onClick={() => scrollToSection("how-it-works")}
             className="text-sm font-medium text-[#A3A3A3] transition-colors hover:text-[#F5F5F5] focus:outline-none"
           >
             How it works
-          </button>
-          <button
-            onClick={() => scrollToSection("product-preview")}
-            className="text-sm font-medium text-[#A3A3A3] transition-colors hover:text-[#F5F5F5] focus:outline-none"
-          >
-            Product Preview
-          </button>
-          <button
-            onClick={() => scrollToSection("spending-rules")}
-            className="text-sm font-medium text-[#A3A3A3] transition-colors hover:text-[#F5F5F5] focus:outline-none"
-          >
-            Spending Rules
           </button>
           <button
             onClick={() => scrollToSection("trust")}
@@ -115,22 +109,16 @@ export function SiteHeader() {
               </span>
             </div>
             <button
+              onClick={() => scrollToSection("prompt-composer")}
+              className="text-left text-base font-medium text-[#D4D4D4] py-2 hover:text-[#FF6A00]"
+            >
+              Find products
+            </button>
+            <button
               onClick={() => scrollToSection("how-it-works")}
               className="text-left text-base font-medium text-[#D4D4D4] py-2 hover:text-[#FF6A00]"
             >
               How it works
-            </button>
-            <button
-              onClick={() => scrollToSection("product-preview")}
-              className="text-left text-base font-medium text-[#D4D4D4] py-2 hover:text-[#FF6A00]"
-            >
-              Product Preview
-            </button>
-            <button
-              onClick={() => scrollToSection("spending-rules")}
-              className="text-left text-base font-medium text-[#D4D4D4] py-2 hover:text-[#FF6A00]"
-            >
-              Spending Rules
             </button>
             <button
               onClick={() => scrollToSection("trust")}
@@ -153,4 +141,3 @@ export function SiteHeader() {
     </header>
   );
 }
-

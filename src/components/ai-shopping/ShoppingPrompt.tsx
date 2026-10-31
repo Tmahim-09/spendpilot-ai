@@ -1,13 +1,11 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import Image from "next/image";
 import {
   ArrowRight,
   Sparkles,
   ShieldCheck,
   AlertCircle,
-  Info,
   RefreshCw,
   Tag,
   Layers,
@@ -48,14 +46,6 @@ export function ShoppingPrompt({
   const [mode, setMode] = useState<ShoppingMode>(initialMode);
   const [pricePreference, setPricePreference] = useState<PricePreference>(initialPricePreference);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [submittedState, setSubmittedState] = useState<{
-    query: string;
-    budget: string;
-    currency: CurrencyCode;
-    mode: ShoppingMode;
-    pricePreference: PricePreference;
-    timestamp: string;
-  } | null>(null);
 
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -85,7 +75,6 @@ export function ShoppingPrompt({
       setMode(selectedMode);
     }
     setErrorMessage(null);
-    setSubmittedState(null);
     if (textareaRef.current) {
       textareaRef.current.focus();
     }
@@ -137,15 +126,6 @@ export function ShoppingPrompt({
     if (onSearch) {
       const parsedBudget = budget.trim() ? Number(budget.trim()) : null;
       onSearch(trimmed, parsedBudget, currency, mode, pricePreference);
-    } else {
-      setSubmittedState({
-        query: trimmed,
-        budget: budget.trim(),
-        currency,
-        mode,
-        pricePreference,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-      });
     }
   };
 
@@ -189,7 +169,7 @@ export function ShoppingPrompt({
                   mode === "single" ? "bg-[#FF6A00] text-white" : "bg-[#1f1f1f] text-[#A3A3A3]"
                 }`}
               >
-                <Tag className="h-4 w-4" />
+                <Tag className="h-4 w-4" aria-hidden="true" />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
@@ -205,10 +185,7 @@ export function ShoppingPrompt({
                   )}
                 </div>
                 <p className="text-xs text-[#8E8E8E] mt-0.5 leading-relaxed">
-                  Find and compare one product within your target budget.
-                </p>
-                <p className="text-[11px] text-[#5A5A5A] mt-1 italic">
-                  e.g. &ldquo;Wireless headphones under $150&rdquo;
+                  Find and compare one product.
                 </p>
               </div>
             </button>
@@ -233,7 +210,7 @@ export function ShoppingPrompt({
                   mode === "setup" ? "bg-[#FF6A00] text-white" : "bg-[#1f1f1f] text-[#A3A3A3]"
                 }`}
               >
-                <Layers className="h-4 w-4" />
+                <Layers className="h-4 w-4" aria-hidden="true" />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
@@ -249,10 +226,7 @@ export function ShoppingPrompt({
                   )}
                 </div>
                 <p className="text-xs text-[#8E8E8E] mt-0.5 leading-relaxed">
-                  Build a complete collection of products within one total budget.
-                </p>
-                <p className="text-[11px] text-[#5A5A5A] mt-1 italic">
-                  e.g. &ldquo;Complete gaming setup under $3,000&rdquo;
+                  Build a complete setup within your budget.
                 </p>
               </div>
             </button>
@@ -320,8 +294,8 @@ export function ShoppingPrompt({
               onCompositionEnd={handleCompositionEnd}
               placeholder={
                 mode === "setup"
-                  ? "Describe the setup or bundle you need (e.g. Build a gaming setup with a desktop PC, monitor, keyboard, mouse, and headset under $3,000)..."
-                  : "Describe the single product you need (e.g. Wireless headphones under $150 with good battery life and comfortable ear cushions)..."
+                  ? "Describe the setup or bundle you need (e.g. Build a gaming setup with desktop, monitor, and keyboard under $3,000)..."
+                  : "Describe what you're looking for (e.g. Wireless headphones under $150 with good battery life)..."
               }
               className="w-full resize-none rounded-xl border border-[#242424] bg-[#0c0c0c] p-4 text-base font-normal text-[#F5F5F5] placeholder-[#5a5a5a] transition-colors focus:border-[#FF6A00] focus:outline-none"
               aria-invalid={errorMessage !== null}
@@ -350,15 +324,9 @@ export function ShoppingPrompt({
             <div className="w-full sm:w-64">
               <BudgetInput
                 value={budget}
-                onChange={(val) => {
-                  setBudget(val);
-                  if (submittedState) setSubmittedState(null);
-                }}
+                onChange={(val) => setBudget(val)}
                 currency={currency}
-                onCurrencyChange={(curr) => {
-                  setCurrency(curr);
-                  if (submittedState) setSubmittedState(null);
-                }}
+                onCurrencyChange={(curr) => setCurrency(curr)}
               />
             </div>
 
@@ -371,12 +339,12 @@ export function ShoppingPrompt({
                 {isLoading ? (
                   <>
                     <RefreshCw className="h-4 w-4 text-white animate-spin" aria-hidden="true" />
-                    <span>{mode === "setup" ? "Decomposing Setup..." : "Searching Channel3..."}</span>
+                    <span>{mode === "setup" ? "Planning setup..." : "Searching products..."}</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="h-4 w-4 text-white" aria-hidden="true" />
-                    <span>{mode === "setup" ? "Decompose & Plan Setup" : "Find & Compare Options"}</span>
+                    <span>{mode === "setup" ? "Plan Complete Setup" : "Find & Compare Options"}</span>
                     <ArrowRight className="h-4 w-4 text-white" aria-hidden="true" />
                   </>
                 )}
@@ -385,63 +353,16 @@ export function ShoppingPrompt({
           </div>
         </form>
 
-        {/* Phase 1 Prototype submission state notice */}
-        {submittedState && (
-          <div
-            role="status"
-            className="mt-5 rounded-xl border border-[#303030] bg-[#141414] p-4 text-sm text-[#D4D4D4] animate-fadeIn"
-          >
-            <div className="flex items-start gap-3">
-              <div className="relative h-6 w-6 shrink-0 overflow-hidden rounded-md border border-[#303030] bg-[#0c0c0c] p-0.5 mt-0.5 shadow-sm shadow-[#FF6A00]/20">
-                <Image
-                  src="/logo/SpendPilotLOGO.png"
-                  alt="SpendPilot"
-                  width={24}
-                  height={24}
-                  className="h-full w-full object-contain"
-                />
-              </div>
-              <div className="flex-1 space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-[#F5F5F5]">
-                    Request Captured ({submittedState.mode === "setup" ? "Multi-Product Mode" : "Single Product Mode"})
-                  </span>
-                  <span className="text-xs text-[#737373] tabular-nums">
-                    {submittedState.timestamp}
-                  </span>
-                </div>
-                <p className="text-xs text-[#A3A3A3]">
-                  Query: <span className="text-[#F5F5F5] font-medium">&ldquo;{submittedState.query}&rdquo;</span>
-                  {submittedState.budget && (
-                    <>
-                      {" "}&bull; Budget Cap:{" "}
-                      <span className="text-[#35C979] font-medium tabular-nums">
-                        {submittedState.currency} {submittedState.budget}
-                      </span>
-                    </>
-                  )}
-                </p>
-                <div className="mt-2 flex items-center gap-1.5 text-xs text-[#A3A3A3] bg-[#0c0c0c] p-2.5 rounded-lg border border-[#242424]">
-                  <Info className="h-4 w-4 shrink-0 text-[#69A8FF]" />
-                  <span>
-                    <strong>Mode:</strong> {submittedState.mode === "setup" ? "Multi-product bundle breakdown" : `Single product comparison (${submittedState.pricePreference})`}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Example prompts */}
         <div className="mt-6 border-t border-[#222222] pt-4">
           <ExamplePrompts mode={mode} onSelectPrompt={handleSelectExample} />
         </div>
 
-        {/* Understated trust message */}
+        {/* Trust reassurance */}
         <div className="mt-4 flex items-center gap-2 text-xs text-[#A3A3A3]">
           <ShieldCheck className="h-4 w-4 shrink-0 text-[#35C979]" aria-hidden="true" />
           <span>
-            Product recommendations are source-backed by verified catalog data. You explicitly review and approve every checkout.
+            Verified products from authentic retailers. You review and approve every selection.
           </span>
         </div>
       </div>

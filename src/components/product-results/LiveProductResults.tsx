@@ -135,7 +135,7 @@ export function LiveProductResults({
     );
   }
 
-  // State 2: Distinctive Single Animated Search-in-Progress (Replaces the 4 repetitive skeletons)
+  // State 2: Distinctive Single Animated Search-in-Progress (Clean purpose-built indicator)
   if (isSearchingProducts) {
     return (
       <section
@@ -158,7 +158,7 @@ export function LiveProductResults({
                 Live Channel3 Discovery
               </span>
               <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#F5F5F5]">
-                Scanning the product catalog...
+                Finding products that match your request...
               </h2>
               <p className="text-xs sm:text-sm text-[#888888] max-w-md mx-auto">
                 Discovering authentic merchant offers and pricing for &ldquo;{query}&rdquo;
@@ -232,13 +232,13 @@ export function LiveProductResults({
               </div>
               <span className="relative inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-3 py-1 text-xs font-semibold text-[#FF8126] mb-3">
                 <Sparkles className="h-3 w-3" />
-                Near-Budget Search Focus
+                Budget Targeting
               </span>
               <h3 className="relative text-xl sm:text-2xl font-bold text-[#F5F5F5] mb-2">
-                No suitable products were found in your preferred {preferredRangeText || "near-budget"} range.
+                No suitable products found in your preferred {preferredRangeText || "near-budget"} range
               </h3>
               <p className="relative text-xs sm:text-sm text-[#A3A3A3] max-w-md mx-auto mb-6 leading-relaxed">
-                To maximize your budget, SpendPilot prioritizes products in the upper tier of your budget. If you wish to view all verified products under your maximum limit, you can expand the range now.
+                SpendPilot prioritizes quality products near your budget limit. If you want to see all verified options under your maximum budget, expand the range below.
               </p>
               <div className="relative flex flex-wrap items-center justify-center gap-3">
                 {onExpandRange && (
@@ -278,8 +278,8 @@ export function LiveProductResults({
               No matching products found
             </h3>
             <p className="text-xs sm:text-sm text-[#A3A3A3] max-w-md mx-auto mb-6">
-              We couldn&apos;t find any products on Channel3 matching &ldquo;{query}&rdquo;
-              {budget ? ` under ${formatCurrency(budget * 100, currency)}` : ""}. Try using broader terms or increasing your budget limit.
+              We couldn&apos;t find verified products matching &ldquo;{query}&rdquo;
+              {budget ? ` under ${formatCurrency(budget * 100, currency)}` : ""}. Try using broader search terms or increasing your budget limit.
             </p>
             {onRetry && (
               <button
@@ -343,7 +343,7 @@ export function LiveProductResults({
             </div>
 
             <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#F5F5F5]">
-              Results for &ldquo;{query}&rdquo;
+              Your best matches for &ldquo;{query}&rdquo;
             </h2>
 
             <p className="text-xs text-[#A3A3A3]">
@@ -361,15 +361,15 @@ export function LiveProductResults({
 
           <div className="shrink-0 text-left sm:text-right">
             <span className="text-[11px] text-[#737373] block">
-              Direct Retailer Referral Flow
+              Direct Retailer Referral
             </span>
             <span className="text-xs font-medium text-[#D4D4D4]">
-              Authentic destination links &bull; No middleman fees
+              Authentic destination links &bull; Real merchant stock
             </span>
           </div>
         </div>
 
-        {/* Small non-blocking AI status message if Gemini was unavailable */}
+        {/* Non-blocking AI status message if Gemini was unavailable */}
         {aiStatus === "unavailable" && (
           <div className="rounded-xl border border-[#282828] bg-[#121212] p-4 text-xs text-[#A3A3A3] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
@@ -414,7 +414,7 @@ export function LiveProductResults({
               <div className="flex items-center gap-2">
                 <Layers className="h-4 w-4 text-[#888888]" />
                 <h3 className="text-base sm:text-lg font-bold text-[#F5F5F5]">
-                  {comparison && aiStatus === "complete" ? "Product Details & Retailer Offers" : "Verified Channel3 Products"}
+                  {comparison && aiStatus === "complete" ? "Product Details & Retailer Offers" : "Verified Retailer Offers"}
                 </h3>
               </div>
               <p className="text-xs text-[#737373]">
@@ -428,6 +428,8 @@ export function LiveProductResults({
               <ProductCard
                 key={product.sourceProductId || product.title}
                 product={product}
+                budget={budget}
+                currency={currency}
               />
             ))}
           </div>
@@ -442,7 +444,7 @@ export function LiveProductResults({
             </span>
           </div>
           <span className="shrink-0 text-[11px] text-[#737373]">
-            PayPal Sandbox checkout is reserved for the Demo Store catalog.
+            Direct merchant referral links &bull; No markups or hidden fees
           </span>
         </div>
       </div>

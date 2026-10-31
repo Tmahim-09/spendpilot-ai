@@ -1,33 +1,30 @@
 "use client";
 
 import React from "react";
-import { MessageSquareText, Search, ShieldCheck } from "lucide-react";
+import { MessageSquareText, Scale, ShoppingBag } from "lucide-react";
 
 export function HowItWorks() {
   const steps = [
     {
       number: "01",
       icon: MessageSquareText,
-      title: "Tell SpendPilot what you need",
+      title: "Describe what you need",
       description:
-        "Describe your shopping goal in plain language with your constraints and budget. SpendPilot interprets your requirements, preferences, and price limits.",
-      tag: "Gemini Intent Parsing",
+        "Set your goals, criteria, and budget in plain language. SpendPilot extracts your explicit constraints, item preferences, and priorities.",
     },
     {
       number: "02",
-      icon: Search,
-      title: "Compare source-backed products",
+      icon: Scale,
+      title: "Compare verified options",
       description:
-        "Explore real product options with verified retailer prices and specifications. AI explains trade-offs using retrieved facts—never fabricated specs or fake prices.",
-      tag: "Channel3 Discovery",
+        "Explore real products with objective facts, key trade-offs, and grounded comparisons across multiple merchant offers.",
     },
     {
       number: "03",
-      icon: ShieldCheck,
-      title: "Check spending rules & approve checkout",
+      icon: ShoppingBag,
+      title: "Choose with confidence",
       description:
-        "The deterministic Purchase Policy Engine verifies your total basket against budget caps on the server before you review and approve PayPal checkout.",
-      tag: "PayPal Sandbox & Policy Engine",
+        "Pick the best fit or build a complete multi-product setup within your budget, then follow direct links to retailer offers.",
     },
   ];
 
@@ -42,7 +39,7 @@ export function HowItWorks() {
             A shopping assistant designed around your budget
           </h2>
           <p className="mt-3 text-sm sm:text-base text-[#A3A3A3]">
-            SpendPilot bridges conversational discovery and deterministic spending control in three transparent steps.
+            SpendPilot combines conversational intelligence with source-grounded product comparisons in three simple steps.
           </p>
         </div>
 
@@ -52,7 +49,7 @@ export function HowItWorks() {
             return (
               <div
                 key={step.number}
-                className="relative flex flex-col justify-between rounded-xl border border-[#262626] bg-[#101010] p-6 sm:p-8 transition-all hover:border-[#3d3d3d] hover:bg-[#141414]"
+                className="relative flex flex-col justify-between rounded-xl border border-[#262626] bg-[#101010] p-6 sm:p-8 transition-all hover:border-[#383838] hover:bg-[#121212]"
               >
                 <div>
                   <div className="flex items-center justify-between mb-6">
@@ -72,12 +69,6 @@ export function HowItWorks() {
                     {step.description}
                   </p>
                 </div>
-
-                <div className="mt-6 pt-4 border-t border-[#222222]">
-                  <span className="inline-block text-[11px] font-medium text-[#737373]">
-                    Under the hood: <strong className="text-[#A3A3A3]">{step.tag}</strong>
-                  </span>
-                </div>
               </div>
             );
           })}
@@ -86,4 +77,3 @@ export function HowItWorks() {
     </section>
   );
 }
-

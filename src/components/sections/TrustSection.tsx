@@ -1,33 +1,33 @@
 "use client";
 
 import React from "react";
-import { CheckCircle2, ShieldAlert, Cpu, CreditCard, Sparkles, Database } from "lucide-react";
+import { CheckCircle2, ShieldCheck, Database, Calculator, Scale, ExternalLink } from "lucide-react";
 
 export function TrustSection() {
   const trustPillars = [
     {
       icon: Database,
-      title: "Facts Come From Data Sources",
+      title: "Authentic Merchant Data",
       description:
-        "Product prices, availability, titles, and specifications come from Channel3 retailer data or the controlled sample catalog—never AI invention or hallucinated specifications.",
+        "Product details, live pricing, and stock availability come directly from verified retailers via Channel3—never AI-invented specifications or placeholder prices.",
     },
     {
-      icon: Cpu,
-      title: "Deterministic Spending Enforcement",
+      icon: Calculator,
+      title: "Strict Budget Caps",
       description:
-        "Budgets and price caps are calculated and validated in deterministic server-side code. The LLM cannot alter prices, ignore caps, or approve over-budget baskets.",
+        "Financial limits and category allocations are computed and validated using deterministic code. The AI cannot alter your budget or recommend over-budget bundles.",
     },
     {
-      icon: CreditCard,
-      title: "Verified PayPal Sandbox Flow",
+      icon: Scale,
+      title: "Objective Trade-Offs",
       description:
-        "Checkout is only supported for the dedicated sample demo catalog. Orders are created and captured server-side, and success is shown only after verified capture.",
+        "Every recommendation highlights known limitations and missing information alongside strengths. Rankings are grounded in your requirements, not sponsored placements.",
     },
     {
-      icon: Sparkles,
-      title: "Explainable Recommendations",
+      icon: ExternalLink,
+      title: "Direct Retailer Links",
       description:
-        "Every recommended match clearly explains why it was chosen based on your stated needs and known attributes. Unknown details are explicitly labelled as unknown.",
+        "You always purchase directly from the authorized merchant. SpendPilot does not charge middleman markups or intercept payment credentials.",
     },
   ];
 
@@ -36,13 +36,13 @@ export function TrustSection() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="text-center max-w-2xl mx-auto mb-12 sm:mb-16">
           <span className="text-xs font-semibold uppercase tracking-wider text-[#35C979]">
-            Transparency & Principles
+            Transparency &amp; Principles
           </span>
           <h2 className="mt-2 text-2xl font-bold tracking-tight text-[#F5F5F5] sm:text-3xl md:text-4xl">
             Built for trust, not persuasion
           </h2>
           <p className="mt-3 text-sm sm:text-base text-[#A3A3A3]">
-            SpendPilot does not pressure you to buy or invent discounts. Our architecture separates conversational intelligence from authoritative financial logic.
+            SpendPilot does not pressure you to buy or invent discounts. Our architecture pairs conversational intelligence with verified, source-grounded commerce data.
           </p>
         </div>
 
@@ -78,13 +78,13 @@ export function TrustSection() {
         {/* Prototype Transparency Notice */}
         <div className="mt-10 rounded-xl border border-[#2a2a2a] bg-[#121212] p-5 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3">
-            <ShieldAlert className="h-5 w-5 text-[#F5B942] shrink-0 mt-0.5" />
+            <ShieldCheck className="h-5 w-5 text-[#35C979] shrink-0 mt-0.5" />
             <div>
               <h4 className="text-sm font-semibold text-[#F5F5F5]">
-                Prototype Boundary & Disclosure
+                PayPal AI Hackathon 2026 Prototype
               </h4>
               <p className="text-xs text-[#A3A3A3] mt-0.5">
-                SpendPilot is a hackathon prototype for the PayPal AI Hackathon 2026. External retailer items link to their authentic merchant stores. In-app PayPal checkouts use sandbox accounts on sample demo merchandise.
+                SpendPilot connects to the Channel3 product catalog and Google Gemini models with automatic server-side failover. All merchant links direct to official retailer storefronts.
               </p>
             </div>
           </div>
@@ -96,4 +96,3 @@ export function TrustSection() {
     </section>
   );
 }
-

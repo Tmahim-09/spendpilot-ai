@@ -28,11 +28,11 @@ export function SiteFooter() {
               </span>
             </div>
             <p className="text-xs text-[#888888] max-w-md leading-relaxed">
-              Budget-aware conversational commerce prototype engineered for the PayPal AI Hackathon 2026. Translates natural language into verified, source-backed product plans with deterministic spending limits.
+              Budget-aware conversational shopping assistant engineered for the PayPal AI Hackathon 2026. Translates natural language shopping goals into verified, source-grounded product plans with strict budget constraints.
             </p>
             <div className="flex items-center gap-2 text-[11px] text-[#35C979]">
               <ShieldCheck className="h-4 w-4" />
-              <span>PayPal Sandbox Verified Architecture</span>
+              <span>Grounded Merchant Commerce Architecture</span>
             </div>
           </div>
 
@@ -42,25 +42,25 @@ export function SiteFooter() {
               Technical Stack
             </h4>
             <ul className="space-y-2 text-xs text-[#888888]">
-              <li>Next.js App Router (React 19, TS)</li>
+              <li>Next.js App Router (React 19, TypeScript)</li>
               <li>Tailwind CSS v4 Design Tokens</li>
-              <li>Google Gemini API (Intent Parsing)</li>
-              <li>Channel3 API (Product Discovery)</li>
-              <li>PayPal Developer Platform (Sandbox)</li>
+              <li>Google Gemini API with Automatic Failover</li>
+              <li>Channel3 API Product Discovery</li>
+              <li>PayPal AI Hackathon 2026</li>
             </ul>
           </div>
 
           {/* Prototype Principles */}
           <div>
             <h4 className="text-xs font-semibold uppercase tracking-wider text-[#D4D4D4] mb-3">
-              Prototype Principles
+              Core Principles
             </h4>
             <ul className="space-y-2 text-xs text-[#888888]">
               <li>Deterministic budget validation</li>
-              <li>Grounded facts over hallucination</li>
-              <li>Explicit user approval on checkout</li>
-              <li>Zero credentials in browser code</li>
-              <li>Transparent demo store separation</li>
+              <li>Verified merchant data over hallucination</li>
+              <li>Dual mode: Single product &amp; Multi-item setup</li>
+              <li>Zero credentials in client-side code</li>
+              <li>Automatic Gemini model fallback routing</li>
             </ul>
           </div>
         </div>
@@ -72,12 +72,12 @@ export function SiteFooter() {
           </div>
 
           <div className="flex items-center gap-6">
-            <span className="hover:text-[#A3A3A3] transition-colors">
-              Phase 1: Shell & Visual Foundation
+            <span className="text-[#A3A3A3]">
+              Intelligent Shopping Intelligence &amp; Product Bundling
             </span>
             <span className="text-[#303030]">&bull;</span>
-            <span className="hover:text-[#A3A3A3] transition-colors">
-              Sandbox Test Mode
+            <span className="text-[#A3A3A3]">
+              Authentic Retailer Referral
             </span>
           </div>
         </div>

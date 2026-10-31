@@ -13,26 +13,34 @@ import {
   AlertCircle,
   Award,
 } from "lucide-react";
-import type { NormalizedProduct } from "@/types";
+import type { NormalizedProduct, CurrencyCode } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 
 interface ProductCardProps {
   product: NormalizedProduct;
+  budget?: number | null;
+  currency?: CurrencyCode;
 }
 
-export function ProductCard({ product }: ProductCardProps) {
+export function ProductCard({ product, budget = null, currency = "USD" }: ProductCardProps) {
   const [showOffers, setShowOffers] = useState(false);
   const [showSpecs, setShowSpecs] = useState(false);
   const [imgError, setImgError] = useState(false);
 
+  const productCurrency = product.currency || currency;
   const hasMultipleOffers = product.offers && product.offers.length > 1;
   const startingPrice =
-    product.priceMinor !== null ? formatCurrency(product.priceMinor, product.currency || "USD") : null;
+    product.priceMinor !== null ? formatCurrency(product.priceMinor, productCurrency) : null;
   const compareAtPrice =
-    product.compareAtPriceMinor ? formatCurrency(product.compareAtPriceMinor, product.currency || "USD") : null;
+    product.compareAtPriceMinor ? formatCurrency(product.compareAtPriceMinor, productCurrency) : null;
 
   const isRanked = typeof product.rank === "number";
   const isTopPick = product.rank === 1;
+
+  // Budget difference calculation if budget is provided
+  const budgetMinor = budget !== null ? Math.round(budget * 100) : null;
+  const underBudgetDiffMinor =
+    budgetMinor !== null && product.priceMinor !== null ? budgetMinor - product.priceMinor : null;
 
   return (
     <article
@@ -43,7 +51,7 @@ export function ProductCard({ product }: ProductCardProps) {
       }`}
     >
       <div>
-        {/* Top AI Rank & Fit Badge (if ranked by Gemini) */}
+        {/* Top AI Rank Badge */}
         {isRanked && (
           <div className="mb-3 flex items-center justify-between gap-2 pb-2.5 border-b border-[#222222]">
             <span
@@ -51,24 +59,23 @@ export function ProductCard({ product }: ProductCardProps) {
                 isTopPick
                   ? "border border-[#FF6A00]/40 bg-[#FF6A00]/15 text-[#FF8126]"
                   : product.rank === 2
-                  ? "border border-[#4B90FF]/40 bg-[#4B90FF]/15 text-[#7BB0FF]"
-                  : "border border-[#35C979]/40 bg-[#35C979]/15 text-[#54DC94]"
+                  ? "border border-[#4B90FF]/30 bg-[#4B90FF]/10 text-[#7BB0FF]"
+                  : "border border-[#303030] bg-[#1a1a1a] text-[#A3A3A3]"
               }`}
             >
               <Award className="h-3 w-3 shrink-0" />
               <span>
                 {isTopPick
-                  ? "AI Pick • Rank #1"
+                  ? "Top AI Match"
                   : product.rank === 2
-                  ? "AI Pick • Rank #2"
-                  : `AI Pick • Rank #${product.rank}`}
+                  ? "AI Match #2"
+                  : `AI Match #${product.rank}`}
               </span>
             </span>
 
-            {typeof product.fitScore === "number" && (
-              <span className="inline-flex items-center gap-1 rounded bg-[#181818] border border-[#2b2b2b] px-2 py-0.5 text-[11px] font-mono font-medium text-[#35C979] tabular-nums">
-                <Sparkles className="h-2.5 w-2.5 text-[#35C979]" />
-                {product.fitScore}% Fit
+            {underBudgetDiffMinor !== null && underBudgetDiffMinor >= 0 && (
+              <span className="text-[11px] font-mono text-[#35C979] font-medium tabular-nums">
+                {formatCurrency(underBudgetDiffMinor, productCurrency)} under budget
               </span>
             )}
           </div>
@@ -117,30 +124,38 @@ export function ProductCard({ product }: ProductCardProps) {
           {product.title}
         </h3>
 
-        {/* Pricing */}
-        <div className="mt-3 flex items-baseline gap-2">
-          {startingPrice ? (
-            <>
-              <span className="text-xl sm:text-2xl font-bold text-[#F5F5F5] tabular-nums">
-                {hasMultipleOffers ? `From ${startingPrice}` : startingPrice}
-              </span>
-              {compareAtPrice && (
-                <span className="text-xs text-[#737373] line-through tabular-nums">
-                  {compareAtPrice}
+        {/* Pricing & Budget Comparison */}
+        <div className="mt-3 flex flex-wrap items-baseline justify-between gap-1">
+          <div className="flex items-baseline gap-2">
+            {startingPrice ? (
+              <>
+                <span className="text-xl sm:text-2xl font-bold text-[#F5F5F5] tabular-nums">
+                  {hasMultipleOffers ? `From ${startingPrice}` : startingPrice}
                 </span>
-              )}
-            </>
-          ) : (
-            <span className="text-sm font-medium text-[#A3A3A3]">
-              Price available at merchant
+                {compareAtPrice && (
+                  <span className="text-xs text-[#737373] line-through tabular-nums">
+                    {compareAtPrice}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-sm font-medium text-[#A3A3A3]">
+                Price available at merchant
+              </span>
+            )}
+            <span className="text-[11px] text-[#737373]">
+              {productCurrency}
+            </span>
+          </div>
+
+          {budgetMinor !== null && (
+            <span className="text-[11px] text-[#737373] tabular-nums">
+              Budget: {formatCurrency(budgetMinor, productCurrency)}
             </span>
           )}
-          <span className="text-[11px] text-[#737373]">
-            {product.currency || "USD"}
-          </span>
         </div>
 
-        {/* Gemini AI Recommendation Explanation & Trade-Offs */}
+        {/* AI Recommendation Rationale & Trade-Offs */}
         {product.explanation && (
           <div className="mt-3.5 rounded-lg border border-[#2b2b2b] bg-[#141414] p-3 text-xs">
             <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#FF8126] mb-1">
@@ -207,7 +222,7 @@ export function ProductCard({ product }: ProductCardProps) {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 rounded bg-[#171717] px-2 py-1 text-[11px] text-[#69A8FF] hover:bg-[#202020] hover:text-[#9bc2ff]"
                   >
-                    <span>View</span>
+                    <span>View offer</span>
                     <ExternalLink className="h-2.5 w-2.5" />
                   </a>
                 </div>
@@ -259,7 +274,7 @@ export function ProductCard({ product }: ProductCardProps) {
         )}
       </div>
 
-      {/* Card Action: Buy from Retailer (Authentic Channel3 Redirect) */}
+      {/* Card Action: View Retailer Offer */}
       <div className="mt-5 pt-3 border-t border-[#202020]">
         <a
           href={product.retailerUrl}
@@ -267,13 +282,13 @@ export function ProductCard({ product }: ProductCardProps) {
           rel="noopener noreferrer"
           className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#FF6A00] px-3.5 py-2.5 text-xs font-semibold text-white shadow transition-all hover:bg-[#FF8126] active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF6A00]"
         >
-          <span>Buy from {product.retailerName || "Retailer"}</span>
+          <span>View retailer offer</span>
           <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
         </a>
 
         <div className="mt-2 flex items-center justify-between text-[10px] text-[#737373]">
           <span>Verified via Channel3</span>
-          <span>External Merchant Link</span>
+          <span>Direct merchant link</span>
         </div>
       </div>
     </article>

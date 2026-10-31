@@ -7,8 +7,6 @@ import { LiveProductResults } from "@/components/product-results/LiveProductResu
 import { SetupDecompositionReview } from "@/components/setup/SetupDecompositionReview";
 import { SetupBundleWorkspace } from "@/components/setup/SetupBundleWorkspace";
 import { HowItWorks } from "@/components/sections/HowItWorks";
-import { ProductPreview } from "@/components/sections/ProductPreview";
-import { SpendingControls } from "@/components/sections/SpendingControls";
 import { TrustSection } from "@/components/sections/TrustSection";
 import { SiteFooter } from "@/components/layout/SiteFooter";
 import { evaluateShoppingIntentGate } from "@/lib/validation/intent-gate";
@@ -553,10 +551,10 @@ export default function Home() {
                         AI Setup Architect
                       </span>
                       <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#F5F5F5]">
-                        Decomposing your setup requirements...
+                        Analyzing setup requirements...
                       </h2>
                       <p className="text-xs sm:text-sm text-[#888888] max-w-md mx-auto">
-                        Analyzing your request &ldquo;{query}&rdquo; into individual components with target budget allocations.
+                        Breaking down your request &ldquo;{query}&rdquo; into individual components with target budget allocations.
                       </p>
                     </div>
 
@@ -635,6 +633,7 @@ export default function Home() {
                 categories={setupCategories}
                 comparisons={setupComparisons}
                 onSelectProduct={handleSelectBundleProduct}
+                onAdjustRequirements={() => setSetupStage("review")}
                 currency={currency}
               />
             )}
@@ -702,12 +701,6 @@ export default function Home() {
 
         {/* How It Works: 3-step explanation */}
         <HowItWorks />
-
-        {/* Product Preview: Source-backed product demonstration */}
-        <ProductPreview />
-
-        {/* Spending Controls: Purchase Policy Engine explanation & simulator */}
-        <SpendingControls />
 
         {/* Trust & Transparency: Clear disclosures and principles */}
         <TrustSection />

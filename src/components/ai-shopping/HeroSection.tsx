@@ -3,7 +3,7 @@
 import React from "react";
 import Image from "next/image";
 import { ShoppingPrompt } from "./ShoppingPrompt";
-import { ShieldCheck, CheckCircle2 } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import type { CurrencyCode, ShoppingMode, PricePreference } from "@/types";
 
 interface HeroSectionProps {
@@ -66,40 +66,40 @@ export function HeroSection({
               className="h-4 w-4 object-contain"
               aria-hidden="true"
             />
-            <span>AI shopping, with your budget in control</span>
+            <span>AI shopping with your budget in control</span>
           </div>
 
           {/* Main Heading */}
           <h1 className="text-3xl font-extrabold tracking-tight text-[#F5F5F5] sm:text-5xl md:text-6xl max-w-3xl leading-[1.12]">
             Find what fits.{" "}
-            <span className="text-[#FF6A00]">Stay in control.</span>
+            <span className="text-[#FF6A00]">Know what you&apos;re buying.</span>
           </h1>
 
           {/* Subtitle */}
           <p className="mt-4 max-w-2xl text-base sm:text-lg text-[#A3A3A3] leading-relaxed">
-            SpendPilot turns natural-language requests into source-backed product recommendations, checks spending policies on the server, and puts you in control of every checkout.
+            Tell us what you need and your budget. We&apos;ll find relevant products, compare the options, and help you choose.
           </p>
 
           {/* Key Value Pillars Pills */}
           <div className="mt-5 flex flex-wrap items-center justify-center gap-y-2 gap-x-4 text-xs text-[#A3A3A3]">
             <span className="inline-flex items-center gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5 text-[#FF6A00]" />
-              Natural-Language Requests
+              Natural-Language Search
             </span>
             <span className="hidden sm:inline text-[#303030]">&bull;</span>
             <span className="inline-flex items-center gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5 text-[#35C979]" />
-              Source-Backed Facts
+              Verified Retailer Prices
+            </span>
+            <span className="hidden sm:inline text-[#303030]">&bull;</span>
+            <span className="inline-flex items-center gap-1.5">
+              <CheckCircle2 className="h-3.5 w-3.5 text-[#38BDF8]" />
+              Side-by-Side Comparison
             </span>
             <span className="hidden sm:inline text-[#303030]">&bull;</span>
             <span className="inline-flex items-center gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5 text-[#FF6A00]" />
-              Deterministic Spending Policy
-            </span>
-            <span className="hidden sm:inline text-[#303030]">&bull;</span>
-            <span className="inline-flex items-center gap-1.5">
-              <ShieldCheck className="h-3.5 w-3.5 text-[#69A8FF]" />
-              User-Approved PayPal Checkout
+              Strict Budget Caps
             </span>
           </div>
         </div>

@@ -5,7 +5,6 @@ import Image from "next/image";
 import {
   Layers,
   CheckCircle2,
-  AlertTriangle,
   ExternalLink,
   ShieldAlert,
   ArrowRightLeft,
@@ -15,6 +14,7 @@ import {
   Cpu,
   Info,
   Sparkles,
+  SlidersHorizontal,
 } from "lucide-react";
 import type {
   CurrencyCode,
@@ -31,6 +31,7 @@ interface SetupBundleWorkspaceProps {
   comparisons: SetupComparisonCategoryResult[];
   onSelectProduct: (requirementId: string, productId: string) => void;
   onExpandCategoryRange?: (requirementId: string) => void;
+  onAdjustRequirements?: () => void;
   currency?: CurrencyCode;
 }
 
@@ -41,6 +42,7 @@ export function SetupBundleWorkspace({
   comparisons = [],
   onSelectProduct,
   onExpandCategoryRange,
+  onAdjustRequirements,
   currency = "USD",
 }: SetupBundleWorkspaceProps) {
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -72,29 +74,39 @@ export function SetupBundleWorkspace({
     }
   };
 
-  const getBadgeStyles = (outcome?: string) => {
+  const handleOpenAllOffers = () => {
+    const urls = bundle.items
+      .map((i) => i.selectedProduct.retailerUrl)
+      .filter((url): url is string => Boolean(url && url.startsWith("http")));
+
+    urls.forEach((url) => {
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
+  };
+
+  const getSubtleBadgeStyles = (outcome?: string) => {
     switch (outcome) {
       case "verified_same_franchise_substitute":
       case "verified_substitute":
-        return "text-[#38BDF8] bg-[#38BDF8]/10 border border-[#38BDF8]/30";
+        return "text-[#7BB0FF] bg-[#4B90FF]/10 border border-[#4B90FF]/25";
       case "general_anime_theme":
-        return "text-[#A78BFA] bg-[#A78BFA]/10 border border-[#A78BFA]/30";
+        return "text-[#C084FC] bg-[#A855F7]/10 border border-[#A855F7]/25";
       case "uncertain":
       case "unrelated":
-        return "text-[#F5B942] bg-[#F5B942]/10 border border-[#F5B942]/30";
+        return "text-[#F5B942] bg-[#F5B942]/10 border border-[#F5B942]/25";
       case "direct_franchise_match":
       case "verified_character_match":
       case "verified_franchise_alias_match":
       case "direct_match":
       default:
-        return "text-[#35C979] bg-[#35C979]/10 border border-[#35C979]/30";
+        return "text-[#35C979] bg-[#35C979]/10 border border-[#35C979]/25";
     }
   };
 
   return (
-    <div id="bundle-workspace" className="w-full max-w-5xl mx-auto my-10 animate-fadeIn">
+    <div id="setup-workspace" className="w-full max-w-5xl mx-auto my-10 animate-fadeIn">
       {/* Workspace Container */}
-      <div className="rounded-3xl border border-[#303030] bg-[#0c0c0c] p-6 sm:p-8 shadow-2xl">
+      <div className="rounded-3xl border border-[#2b2b2b] bg-[#0c0c0c] p-6 sm:p-8 shadow-2xl">
         
         {/* Workspace Banner & Status */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 pb-6 border-b border-[#222222]">
@@ -104,7 +116,7 @@ export function SetupBundleWorkspace({
             </div>
             <div>
               <div className="flex items-center gap-2.5">
-                <h2 className="text-xl sm:text-2xl font-black text-[#F5F5F5] tracking-tight">
+                <h2 className="text-xl sm:text-2xl font-bold text-[#F5F5F5] tracking-tight">
                   Recommended Multi-Product Setup
                 </h2>
                 {bundle.isComplete ? (
@@ -114,35 +126,57 @@ export function SetupBundleWorkspace({
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 rounded-full bg-[#F5B942]/15 border border-[#F5B942]/30 px-2.5 py-0.5 text-xs font-semibold text-[#F5B942]">
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                    Partially matched setup ({bundle.missingRequirements.length} Unfilled)
+                    <Info className="h-3.5 w-3.5" />
+                    {bundle.items.length} of {bundle.items.length + bundle.missingRequirements.length} Matched
                   </span>
                 )}
               </div>
               <p className="text-xs text-[#8E8E8E] mt-1">
-                Every product is grounded in genuine Channel3 data. Switch alternatives to tailor your setup.
+                Every item is grounded in authentic retailer data. Switch alternatives below to tailor your setup.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {onAdjustRequirements && (
+              <button
+                type="button"
+                onClick={onAdjustRequirements}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[#303030] bg-[#141414] px-3.5 py-2 text-xs font-medium text-[#D4D4D4] hover:border-[#FF6A00]/60 hover:text-white transition-all focus:outline-none"
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5 text-[#A3A3A3]" />
+                <span>Adjust requirements</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={handleSavePlan}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-[#303030] bg-[#141414] px-4 py-2.5 text-xs font-semibold text-[#D4D4D4] hover:border-[#FF6A00]/60 hover:text-white transition-all focus:outline-none"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[#303030] bg-[#141414] px-3.5 py-2 text-xs font-medium text-[#D4D4D4] hover:border-[#FF6A00]/60 hover:text-white transition-all focus:outline-none"
             >
               {savedSuccess ? (
                 <>
-                  <BookmarkCheck className="h-4 w-4 text-[#35C979]" />
-                  <span className="text-[#35C979]">Plan Saved to Session</span>
+                  <BookmarkCheck className="h-3.5 w-3.5 text-[#35C979]" />
+                  <span className="text-[#35C979]">Plan Saved</span>
                 </>
               ) : (
                 <>
-                  <Bookmark className="h-4 w-4 text-[#FF6A00]" />
-                  <span>Save Setup Plan</span>
+                  <Bookmark className="h-3.5 w-3.5 text-[#FF6A00]" />
+                  <span>Save setup</span>
                 </>
               )}
             </button>
+
+            {bundle.items.length > 0 && (
+              <button
+                type="button"
+                onClick={handleOpenAllOffers}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#FF6A00] px-3.5 py-2 text-xs font-semibold text-white shadow hover:bg-[#FF8126] transition-all focus:outline-none"
+              >
+                <span>Open all retailer links</span>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -150,25 +184,25 @@ export function SetupBundleWorkspace({
         <div className="my-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="p-4 rounded-2xl border border-[#222222] bg-[#121212]">
             <span className="text-xs font-medium text-[#8E8E8E]">Total Setup Budget</span>
-            <div className="text-2xl font-black text-[#F5F5F5] mt-1 tabular-nums">
+            <div className="text-2xl font-bold text-[#F5F5F5] mt-1 tabular-nums">
               {formatMoney(bundle.totalBudgetMinor)}
             </div>
-            <div className="text-[11px] text-[#555] mt-0.5">Enforced upper limit</div>
+            <div className="text-[11px] text-[#737373] mt-0.5">Enforced maximum limit</div>
           </div>
 
-          <div className="p-4 rounded-2xl border border-[#262626] bg-[#141414]">
+          <div className="p-4 rounded-2xl border border-[#2b2b2b] bg-[#141414]">
             <span className="text-xs font-medium text-[#8E8E8E]">Product Subtotal</span>
-            <div className="text-2xl font-black text-[#FF6A00] mt-1 tabular-nums">
+            <div className="text-2xl font-bold text-[#FF6A00] mt-1 tabular-nums">
               {formatMoney(bundle.productSubtotalMinor)}
             </div>
             <div className="text-[11px] text-[#35C979] mt-0.5 font-medium">
-              Calculated on server ({bundle.items.length} items)
+              Verified ({bundle.items.length} active item{bundle.items.length === 1 ? "" : "s"})
             </div>
           </div>
 
           <div className="p-4 rounded-2xl border border-[#222222] bg-[#121212]">
             <span className="text-xs font-medium text-[#8E8E8E]">Remaining Budget</span>
-            <div className="text-2xl font-black text-[#35C979] mt-1 tabular-nums">
+            <div className="text-2xl font-bold text-[#35C979] mt-1 tabular-nums">
               {formatMoney(bundle.remainingBudgetMinor)}
             </div>
             <div className="text-[11px] text-[#737373] mt-0.5">Available for shipping / taxes</div>
@@ -192,12 +226,12 @@ export function SetupBundleWorkspace({
           </div>
         )}
 
-        {/* Diversity Warnings Advisory */}
+        {/* Diversity Warnings Advisory (if any) */}
         {bundle.diversityWarnings && bundle.diversityWarnings.length > 0 && (
           <div className="mb-6 p-4 rounded-2xl border border-[#2a2a2a] bg-[#121212] text-xs text-[#D4D4D4] flex items-start gap-3">
             <Info className="h-4 w-4 text-[#69A8FF] shrink-0 mt-0.5" />
             <div>
-              <div className="font-bold text-xs text-white">Bundle Theme &amp; Diversity Advisory</div>
+              <div className="font-semibold text-xs text-white">Bundle theme &amp; diversity note</div>
               <ul className="list-disc list-inside mt-1 space-y-0.5 text-[#A3A3A3]">
                 {bundle.diversityWarnings.map((w, idx) => (
                   <li key={idx}>{w}</li>
@@ -207,25 +241,39 @@ export function SetupBundleWorkspace({
           </div>
         )}
 
-        {/* Missing Requirements Callout if Incomplete */}
+        {/* Clean, Non-Alarming Incomplete Bundle State */}
         {!bundle.isComplete && bundle.missingRequirements.length > 0 && (
-          <div className="mb-8 p-4 rounded-2xl border border-[#F5B942]/30 bg-[#F5B942]/10 text-xs text-[#F5B942] flex items-start gap-3">
-            <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
-            <div>
-              <div className="font-bold text-sm">Partially Matched Setup Notice</div>
-              <p className="mt-1 text-[#D4D4D4]">
-                To maintain strict thematic fidelity, SpendPilot refused to substitute unrelated generic items for the following:
+          <div className="mb-8 p-5 rounded-2xl border border-[#332b22] bg-[#14120f] text-xs text-[#D4D4D4] flex items-start gap-3.5">
+            <div className="rounded-lg bg-[#FF6A00]/15 p-2 text-[#FF6A00] border border-[#FF6A00]/30 shrink-0">
+              <Sparkles className="h-4 w-4" />
+            </div>
+            <div className="space-y-1.5 flex-1">
+              <div className="font-semibold text-sm text-[#F5F5F5]">Some items still need a match.</div>
+              <p className="text-xs text-[#A3A3A3] leading-relaxed">
+                SpendPilot prioritized authentic, thematic matches and excluded unrelated generic items for:{" "}
+                <span className="text-[#FF8126] font-medium">
+                  {bundle.missingRequirements.join(", ")}
+                </span>
+                .
               </p>
-              <ul className="list-disc list-inside mt-1.5 space-y-0.5 font-semibold text-[#F5B942]">
-                {bundle.missingRequirements.map((reqName) => (
-                  <li key={reqName}>{reqName}</li>
-                ))}
-              </ul>
+              <div className="pt-2 flex flex-wrap gap-2 text-[11px]">
+                <span className="text-[#8E8E8E] py-1">Suggested steps:</span>
+                <button
+                  type="button"
+                  onClick={onAdjustRequirements}
+                  className="rounded-lg border border-[#333333] bg-[#1c1814] px-2.5 py-1 text-[#D4D4D4] hover:text-white hover:border-[#FF6A00]/50 transition-colors"
+                >
+                  Reallocate budget between items
+                </button>
+                <span className="rounded-lg border border-[#333333] bg-[#1c1814] px-2.5 py-1 text-[#A3A3A3]">
+                  Search item individually in Single Product mode
+                </span>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Category by Category Recommendations & Unfulfilled Requirements */}
+        {/* Category by Category Recommendations */}
         <div className="space-y-8">
           {(requirements.length > 0
             ? requirements
@@ -246,13 +294,13 @@ export function SetupBundleWorkspace({
               return (
                 <div
                   key={req.id}
-                  className="rounded-2xl border border-[#3a2818] bg-[#140f09] p-5 sm:p-6 transition-all"
+                  className="rounded-2xl border border-[#2b251f] bg-[#12100e] p-5 sm:p-6 transition-all"
                 >
                   {/* Category Header */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-[#291b10]">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-[#221c16]">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="h-5 w-5 rounded-full bg-[#F5B942]/20 text-[#F5B942] flex items-center justify-center text-xs font-bold">
+                        <span className="h-5 w-5 rounded-full bg-[#FF6A00]/20 text-[#FF8126] flex items-center justify-center text-xs font-semibold">
                           {catIdx + 1}
                         </span>
                         <h3 className="text-base sm:text-lg font-bold text-[#F5F5F5]">
@@ -265,58 +313,44 @@ export function SetupBundleWorkspace({
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#F5B942] bg-[#F5B942]/10 border border-[#F5B942]/30 px-2.5 py-1 rounded-full">
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        No Verified Theme Match
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#A3A3A3] bg-[#1a1714] border border-[#2d241c] px-2.5 py-1 rounded-full">
+                        Pending Match
                       </span>
                     </div>
                   </div>
 
-                  {/* Honest Unfulfilled Reason Callout */}
-                  <div className="my-4 p-4 rounded-xl border border-[#443015] bg-[#1a1208] text-xs">
-                    <p className="text-[#E5E5E5] leading-relaxed">
+                  {/* Clean Unfulfilled Explanation */}
+                  <div className="my-4 p-4 rounded-xl border border-[#2d241c] bg-[#16120e] text-xs">
+                    <p className="text-[#D4D4D4] leading-relaxed">
                       {comp?.recommendedReason ||
-                        `No verified ${req.requiredFranchises?.join(" / ") || "thematic"} ${req.name} products were found within the ${formatMoney(req.allocatedAmountMinor)} allocation.`}
+                        `No verified ${req.requiredFranchises?.join(" / ") || "matching"} ${req.name} items found within the ${formatMoney(req.allocatedAmountMinor)} allocation.`}
                     </p>
-                    <p className="mt-2 text-[#A3A3A3] text-[11px]">
-                      SpendPilot AI strict relevance gate refused unrelated items (e.g. generic solid colors or unrelated franchises) to protect your room theme.
+                    <p className="mt-2 text-[#8E8E8E] text-[11px]">
+                      SpendPilot avoided generic substitutes to preserve your setup criteria.
                     </p>
                   </div>
 
-                  {/* Explicit User Actions */}
-                  <div className="mt-4 pt-4 border-t border-[#291b10]">
-                    <div className="text-[11px] font-bold text-[#8E8E8E] uppercase tracking-wider mb-2.5">
-                      Available Actions:
-                    </div>
-                    <div className="flex flex-wrap gap-2">
+                  {/* Actionable Suggestions */}
+                  <div className="mt-4 pt-4 border-t border-[#221c16] flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] text-[#737373]">Actions:</span>
+                    {onExpandCategoryRange && (
                       <button
                         type="button"
-                        onClick={() => onExpandCategoryRange?.(req.id)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#383838] bg-[#1e1913] px-3 py-1.5 text-xs font-medium text-[#D4D4D4] hover:border-[#F5B942] hover:text-white transition-all"
+                        onClick={() => onExpandCategoryRange(req.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#333333] bg-[#1a1714] px-3 py-1.5 text-xs font-medium text-[#D4D4D4] hover:border-[#FF6A00] hover:text-white transition-all"
                       >
-                        <span>Search with alternative keywords</span>
+                        <span>Search with broader terms</span>
                       </button>
+                    )}
+                    {onAdjustRequirements && (
                       <button
                         type="button"
-                        onClick={() => onExpandCategoryRange?.(req.id)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#383838] bg-[#1e1913] px-3 py-1.5 text-xs font-medium text-[#D4D4D4] hover:border-[#F5B942] hover:text-white transition-all"
+                        onClick={onAdjustRequirements}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#333333] bg-[#1a1714] px-3 py-1.5 text-xs font-medium text-[#D4D4D4] hover:border-[#FF6A00] hover:text-white transition-all"
                       >
-                        <span>Explore in another format</span>
+                        <span>Reallocate budget</span>
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => onExpandCategoryRange?.(req.id)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#383838] bg-[#1e1913] px-3 py-1.5 text-xs font-medium text-[#D4D4D4] hover:border-[#F5B942] hover:text-white transition-all"
-                      >
-                        <span>Allow general anime decoration</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#383838] bg-[#141414] px-3 py-1.5 text-xs font-medium text-[#8E8E8E] hover:text-white transition-all"
-                      >
-                        <span>Leave requirement unfilled</span>
-                      </button>
-                    </div>
+                    )}
                   </div>
                 </div>
               );
@@ -344,10 +378,10 @@ export function SetupBundleWorkspace({
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap">
-                    {/* Relevance Badge */}
+                    {/* Subtle Relevance Pill */}
                     {item.relevanceBadge && (
                       <span
-                        className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${getBadgeStyles(
+                        className={`inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-0.5 rounded-full ${getSubtleBadgeStyles(
                           item.relevanceOutcome
                         )}`}
                       >
@@ -375,7 +409,7 @@ export function SetupBundleWorkspace({
                 {/* AI Rationale & Trade-offs */}
                 <div className="my-4 p-3.5 rounded-xl border border-[#1d1d1d] bg-[#0c0c0c] text-xs">
                   <div className="text-[#D4D4D4] font-medium leading-relaxed">
-                    <span className="text-[#FF6A00] font-bold">Why Recommended: </span>
+                    <span className="text-[#FF6A00] font-semibold">Why Recommended: </span>
                     {comp?.recommendedReason}
                   </div>
 
@@ -401,7 +435,7 @@ export function SetupBundleWorkspace({
                   )}
                 </div>
 
-                {/* The 2 Alternatives Side-by-Side (Max 2 distinct products) */}
+                {/* The 2 Alternatives Side-by-Side */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {alternatives.map((product) => {
                     const prodId = product.sourceProductId || product.title;
@@ -421,13 +455,13 @@ export function SetupBundleWorkspace({
                         <div className="flex items-center justify-between gap-2 mb-3">
                           <div className="flex items-center gap-1.5">
                             {isSelected && (
-                              <span className="inline-flex items-center gap-1 rounded-md bg-[#FF6A00] px-2 py-0.5 text-[11px] font-bold text-white shadow-sm">
+                              <span className="inline-flex items-center gap-1 rounded-md bg-[#FF6A00] px-2 py-0.5 text-[11px] font-semibold text-white shadow-sm">
                                 <Check className="h-3 w-3" />
                                 Selected Choice
                               </span>
                             )}
                             {isAiRecommended && !isSelected && (
-                              <span className="inline-flex items-center gap-1 rounded-md bg-[#FF6A00]/20 border border-[#FF6A00]/40 px-2 py-0.5 text-[11px] font-semibold text-[#FF6A00]">
+                              <span className="inline-flex items-center gap-1 rounded-md bg-[#FF6A00]/15 border border-[#FF6A00]/30 px-2 py-0.5 text-[11px] font-medium text-[#FF8126]">
                                 Top AI Match
                               </span>
                             )}
@@ -439,7 +473,7 @@ export function SetupBundleWorkspace({
                           </div>
 
                           <div className="text-right">
-                            <span className="text-sm font-extrabold text-white tabular-nums">
+                            <span className="text-sm font-bold text-white tabular-nums">
                               {product.priceMinor !== null ? formatMoney(product.priceMinor) : "Unlisted"}
                             </span>
                           </div>
@@ -464,7 +498,7 @@ export function SetupBundleWorkspace({
                           </div>
 
                           <div className="flex-1 min-w-0">
-                            <h4 className="text-xs font-bold text-[#F5F5F5] line-clamp-2 leading-snug">
+                            <h4 className="text-xs font-semibold text-[#F5F5F5] line-clamp-2 leading-snug">
                               {product.title}
                             </h4>
                             <p className="text-[11px] text-[#737373] mt-1">
@@ -488,7 +522,7 @@ export function SetupBundleWorkspace({
                         {/* Switch Action & Merchant Link */}
                         <div className="mt-3 pt-3 border-t border-[#1e1e1e] flex items-center justify-between gap-2">
                           {isSelected ? (
-                            <span className="text-xs text-[#35C979] font-semibold inline-flex items-center gap-1">
+                            <span className="text-xs text-[#35C979] font-medium inline-flex items-center gap-1">
                               <CheckCircle2 className="h-3.5 w-3.5" />
                               Active in Bundle
                             </span>
@@ -499,7 +533,7 @@ export function SetupBundleWorkspace({
                               className="inline-flex items-center gap-1.5 rounded-lg border border-[#333] bg-[#1a1a1a] px-3 py-1.5 text-xs font-medium text-[#D4D4D4] hover:border-[#FF6A00] hover:text-white transition-all"
                             >
                               <ArrowRightLeft className="h-3.5 w-3.5 text-[#FF6A00]" />
-                              <span>Switch to this Option</span>
+                              <span>Switch to this option</span>
                             </button>
                           )}
 
@@ -509,7 +543,7 @@ export function SetupBundleWorkspace({
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 text-[11px] text-[#8E8E8E] hover:text-[#FF6A00] transition-colors"
                           >
-                            <span>View Store</span>
+                            <span>View retailer offer</span>
                             <ExternalLink className="h-3 w-3" />
                           </a>
                         </div>
@@ -522,16 +556,16 @@ export function SetupBundleWorkspace({
           })}
         </div>
 
-        {/* Footer Disclosures (Prompt Section 7) */}
+        {/* Footer Disclosures */}
         <div className="mt-8 rounded-2xl border border-[#242424] bg-[#0e0e0e] p-4 text-xs text-[#8E8E8E] space-y-2">
           <div className="flex items-center gap-2 text-[#D4D4D4] font-semibold">
             <ShieldAlert className="h-4 w-4 text-[#F5B942] shrink-0" />
-            <span>Shipping & Tax Disclosures</span>
+            <span>Shipping &amp; Tax Disclosures</span>
           </div>
           <p>{bundle.shippingNotice}</p>
           <p>{bundle.taxNotice}</p>
           <p className="text-[11px] text-[#666]">
-            Every merchant link directs to the authorized vendor with genuine Channel3 tracking links. Prices and availability are re-confirmed on merchant checkout.
+            Every merchant link directs to the verified retailer. Prices and stock availability are confirmed on the retailer&apos;s site.
           </p>
         </div>
       </div>
