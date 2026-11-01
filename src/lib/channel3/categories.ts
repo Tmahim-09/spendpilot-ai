@@ -212,7 +212,36 @@ export async function resolveCategoryMetadata(
     return cached.data;
   }
 
-  // 3. Attempt Channel3 Category Search API
+  // 3. Keyword heuristic matching across taxonomy before external search
+  if (
+    normalized.includes("shoe") ||
+    normalized.includes("sneak") ||
+    normalized.includes("boot") ||
+    normalized.includes("footwear") ||
+    normalized.includes("air max") ||
+    normalized.includes("air force") ||
+    normalized.includes("jordan") ||
+    normalized.includes("yeezy")
+  ) {
+    return VERIFIED_CATEGORY_TAXONOMY.sneakers;
+  }
+  if (normalized.includes("headphone") || normalized.includes("earbud") || normalized.includes("headset") || normalized.includes("audio")) {
+    return VERIFIED_CATEGORY_TAXONOMY.headphones;
+  }
+  if (normalized.includes("laptop") || normalized.includes("macbook") || normalized.includes("notebook") || normalized.includes("thinkpad")) {
+    return VERIFIED_CATEGORY_TAXONOMY.laptops;
+  }
+  if (normalized.includes("phone") || normalized.includes("iphone") || normalized.includes("android") || normalized.includes("samsung")) {
+    return VERIFIED_CATEGORY_TAXONOMY.smartphones;
+  }
+  if (normalized.includes("cloth") || normalized.includes("shirt") || normalized.includes("hoodie") || normalized.includes("jacket") || normalized.includes("pant")) {
+    return VERIFIED_CATEGORY_TAXONOMY.clothing;
+  }
+  if (normalized.includes("desk") || normalized.includes("chair") || normalized.includes("decor") || normalized.includes("room") || normalized.includes("furniture")) {
+    return VERIFIED_CATEGORY_TAXONOMY.furniture;
+  }
+
+  // 4. Attempt Channel3 Category Search API
   try {
     const client = getChannel3Client();
     const searchRes = await client.categories.search({ query: normalized });
@@ -227,6 +256,18 @@ export async function resolveCategoryMetadata(
       // Check if top slug maps to our verified template
       if (VERIFIED_CATEGORY_TAXONOMY[topSlug]) {
         return VERIFIED_CATEGORY_TAXONOMY[topSlug];
+      }
+      if (topSlug.includes("shoe") || topSlug.includes("sneak") || topSlug.includes("footwear")) {
+        return VERIFIED_CATEGORY_TAXONOMY.sneakers;
+      }
+      if (topSlug.includes("audio") || topSlug.includes("headphone") || topSlug.includes("earphone")) {
+        return VERIFIED_CATEGORY_TAXONOMY.headphones;
+      }
+      if (topSlug.includes("laptop") || topSlug.includes("computer")) {
+        return VERIFIED_CATEGORY_TAXONOMY.laptops;
+      }
+      if (topSlug.includes("phone")) {
+        return VERIFIED_CATEGORY_TAXONOMY.smartphones;
       }
 
       // Retrieve full category details
@@ -251,27 +292,7 @@ export async function resolveCategoryMetadata(
       return resultMeta;
     }
   } catch {
-    // If Channel3 category call times out or is restricted, fallback to keyword matching
-  }
-
-  // 4. Keyword heuristic matching across taxonomy
-  if (normalized.includes("shoe") || normalized.includes("sneak") || normalized.includes("boot") || normalized.includes("footwear")) {
-    return VERIFIED_CATEGORY_TAXONOMY.sneakers;
-  }
-  if (normalized.includes("headphone") || normalized.includes("earbud") || normalized.includes("headset") || normalized.includes("audio")) {
-    return VERIFIED_CATEGORY_TAXONOMY.headphones;
-  }
-  if (normalized.includes("laptop") || normalized.includes("macbook") || normalized.includes("notebook") || normalized.includes("thinkpad")) {
-    return VERIFIED_CATEGORY_TAXONOMY.laptops;
-  }
-  if (normalized.includes("phone") || normalized.includes("iphone") || normalized.includes("android") || normalized.includes("samsung")) {
-    return VERIFIED_CATEGORY_TAXONOMY.smartphones;
-  }
-  if (normalized.includes("cloth") || normalized.includes("shirt") || normalized.includes("hoodie") || normalized.includes("jacket") || normalized.includes("pant")) {
-    return VERIFIED_CATEGORY_TAXONOMY.clothing;
-  }
-  if (normalized.includes("desk") || normalized.includes("chair") || normalized.includes("decor") || normalized.includes("room") || normalized.includes("furniture")) {
-    return VERIFIED_CATEGORY_TAXONOMY.furniture;
+    // If Channel3 category call times out or is restricted, fallback
   }
 
   return null;

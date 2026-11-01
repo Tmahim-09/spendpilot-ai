@@ -6,13 +6,13 @@ import { HeroSection } from "@/components/ai-shopping/HeroSection";
 import { LiveProductResults } from "@/components/product-results/LiveProductResults";
 import { SetupDecompositionReview } from "@/components/setup/SetupDecompositionReview";
 import { SetupBundleWorkspace } from "@/components/setup/SetupBundleWorkspace";
-import { GuidedConversationWorkspace } from "@/components/guided-shopping/GuidedConversationWorkspace";
+import { ContinuousChatWorkspace } from "@/components/chat/ContinuousChatWorkspace";
 import { ProductVariantConfigurator } from "@/components/guided-shopping/ProductVariantConfigurator";
 import { HowItWorks } from "@/components/sections/HowItWorks";
 import { TrustSection } from "@/components/sections/TrustSection";
 import { SiteFooter } from "@/components/layout/SiteFooter";
-import { evaluateShoppingIntentGate } from "@/lib/validation/intent-gate";
 import { calculateRecommendedBundle } from "@/lib/setup/bundle-calculator";
+import { createInitialSession } from "@/lib/ai/conversation-engine";
 import type {
   NormalizedProduct,
   CurrencyCode,
@@ -31,12 +31,9 @@ import type {
   SetupDecomposeResponsePayload,
   SetupSearchResponsePayload,
   SetupCompareResponsePayload,
-  ShoppingStage,
-  GuidedQuestion,
-  StructuredRequirement,
-  CollectedAnswer,
   ProductVariantSelection,
   StructuredRequirementSearchFilters,
+  AuthoritativeShoppingSession,
 } from "@/types";
 import { Sparkles, Search, Layers, ShieldAlert, RefreshCw } from "lucide-react";
 
@@ -49,14 +46,12 @@ export default function Home() {
   const [mode, setMode] = useState<ShoppingMode>("single");
   const [pricePreference, setPricePreference] = useState<PricePreference>("near_budget");
 
-  // Guided Shopping Interview State (Phase 4)
-  const [shoppingStage, setShoppingStage] = useState<ShoppingStage>("initial_request");
-  const [interviewQuestions, setInterviewQuestions] = useState<GuidedQuestion[]>([]);
-  const [interviewRequirements, setInterviewRequirements] = useState<StructuredRequirement[]>([]);
-  const [collectedAnswers, setCollectedAnswers] = useState<Record<string, CollectedAnswer>>({});
-  const [interviewAssistantMessage, setInterviewAssistantMessage] = useState<string>("");
-  const [isInterviewLoading, setIsInterviewLoading] = useState(false);
-  const [canSearchAfterInterview, setCanSearchAfterInterview] = useState(false);
+  // Conversational Chat Session State (Interactions API)
+  const [chatSession, setChatSession] = useState<AuthoritativeShoppingSession>(() =>
+    createInitialSession({})
+  );
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [chatStatusText, setChatStatusText] = useState<string | null>(null);
 
   // Variant Configuration State
   const [configuringProduct, setConfiguringProduct] = useState<NormalizedProduct | null>(null);
@@ -109,16 +104,19 @@ export default function Home() {
           const saved = window.sessionStorage.getItem("spendpilot_guided_shopping_session");
           if (saved) {
             const parsed = JSON.parse(saved);
-            if (parsed.query) setQuery(parsed.query);
-            if (parsed.budget) setBudget(parsed.budget);
-            if (parsed.currency) setCurrency(parsed.currency);
-            if (parsed.mode) setMode(parsed.mode);
-            if (parsed.collectedAnswers) setCollectedAnswers(parsed.collectedAnswers);
-            if (parsed.interviewQuestions) setInterviewQuestions(parsed.interviewQuestions);
-            if (parsed.interviewRequirements) setInterviewRequirements(parsed.interviewRequirements);
-            if (Array.isArray(parsed.configuredProductIds)) {
-              setConfiguredProductIds(new Set(parsed.configuredProductIds));
+            if (parsed.sessionId) {
+              setChatSession(parsed);
+              if (parsed.originalRequest) setQuery(parsed.originalRequest);
+              if (parsed.budget) setBudget(parsed.budget);
+              if (parsed.currency) setCurrency(parsed.currency);
+              if (parsed.mode) setMode(parsed.mode);
             }
+          } else {
+            setChatSession((prev) => ({
+              ...prev,
+              sessionId: `session_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
+              updatedAt: Date.now(),
+            }));
           }
         }
       } catch {
@@ -129,9 +127,9 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, []);
 
-  const scrollToInterview = () => {
+  const scrollToChat = () => {
     setTimeout(() => {
-      const el = document.getElementById("guided-interview");
+      const el = document.getElementById("spendpilot-chat-workspace");
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "start" });
       }
@@ -147,9 +145,140 @@ export default function Home() {
     }, 60);
   };
 
+  const handleResetSession = () => {
+    const fresh = createInitialSession({ currency });
+    setChatSession(fresh);
+    setHasSearched(false);
+    setProducts([]);
+    setComparison(null);
+    setSetupStage("idle");
+    try {
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem("spendpilot_guided_shopping_session");
+      }
+    } catch {
+      // Ignore
+    }
+  };
+
+  const handleCompareProducts = async (candidateProductIds: string[]) => {
+    setIsRankingAi(true);
+    setAiStatus("complete");
+    try {
+      const candidateProducts = products.filter((p) =>
+        candidateProductIds.includes(p.sourceProductId || p.title)
+      );
+      const toCompare = candidateProducts.length >= 2 ? candidateProducts : products.slice(0, 4);
+
+      const compRes = await fetch("/api/shopping/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: query || chatSession.originalRequest,
+          budget: budget || chatSession.budget,
+          currency,
+          products: toCompare,
+        }),
+      });
+      const compData = (await compRes.json()) as ShoppingRecommendResponsePayload;
+      if (compRes.ok && compData.success && compData.comparison) {
+        setComparison(compData.comparison);
+        setEvidenceFacts(compData.evidenceFacts || {});
+        setTopRecommendations(compData.topRecommendations || []);
+        setOtherMatches(compData.otherMatches || []);
+        setAiStatus("complete");
+      }
+    } catch {
+      setAiStatus("unavailable");
+    } finally {
+      setIsRankingAi(false);
+    }
+  };
+
+  const handleSendChatMessage = async (
+    messageText: string,
+    currentSessionState?: AuthoritativeShoppingSession
+  ) => {
+    const sessionToUse = currentSessionState || chatSession;
+    setIsChatLoading(true);
+    setChatStatusText("SpendPilot is thinking...");
+
+    const currentSummary = products.slice(0, 6).map((p) => ({
+      id: p.sourceProductId || p.title,
+      title: p.title,
+      price: p.priceMinor !== null ? p.priceMinor / 100 : null,
+      currency: p.currency,
+      brand: p.brand,
+      availability: p.availability,
+    }));
+
+    try {
+      const res = await fetch("/api/shopping/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: sessionToUse.sessionId,
+          message: messageText,
+          mode: sessionToUse.mode,
+          budget: sessionToUse.budget,
+          currency: sessionToUse.currency,
+          sessionState: sessionToUse,
+          currentProductIds: products.map((p) => p.sourceProductId || p.title),
+          currentProductsSummary: currentSummary,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Unable to process message.");
+      }
+
+      setChatSession(data.session);
+
+      try {
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(
+            "spendpilot_guided_shopping_session",
+            JSON.stringify(data.session)
+          );
+        }
+      } catch {
+        // Ignore session storage errors
+      }
+
+      if (data.shouldExecuteSearch) {
+        setChatStatusText("Searching verified Channel3 matches...");
+        await executeDirectSearch(
+          data.session.originalRequest || query || messageText,
+          data.session.budget || budget,
+          data.session.currency || currency,
+          data.session.mode || mode,
+          pricePreference,
+          data.requirements?.[0]?.searchFilters
+        );
+      } else if (data.shouldExecuteComparison && data.comparisonRequestedProductIds?.length) {
+        setChatStatusText("Comparing candidate products...");
+        await handleCompareProducts(data.comparisonRequestedProductIds);
+      } else if (data.variantConfiguration?.productId) {
+        const prodToConfig = products.find(
+          (p) => (p.sourceProductId || p.title) === data.variantConfiguration.productId
+        );
+        if (prodToConfig) {
+          setConfiguringProduct(prodToConfig);
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error communicating with assistant.";
+      setError(msg);
+    } finally {
+      setIsChatLoading(false);
+      setChatStatusText(null);
+    }
+  };
+
   /**
    * Initial submission handler from prompt composer.
-   * Starts the Guided Shopping interview to collect and confirm missing requirements.
+   * Starts the continuous conversational shopping experience.
    */
   const handleSearch = async (
     searchQuery: string,
@@ -173,210 +302,16 @@ export default function Home() {
     setComparison(null);
     setSetupStage("idle");
 
-    // Step 1: Lightweight Zero-LLM Intent Gate
-    const intentGate = evaluateShoppingIntentGate(searchQuery);
-    if (!intentGate.isShopping) {
-      setPlayfulNotice({
-        message:
-          intentGate.playfulResponse ||
-          "I calculate budgets, not punchlines. Tell me what you're looking to buy!",
-        suggestedProducts: intentGate.suggestedProducts || [],
-      });
-      setShoppingStage("initial_request");
-      setInterviewQuestions([]);
-      scrollToResults();
-      return;
-    }
+    const initialSession = createInitialSession({
+      initialQuery: searchQuery,
+      mode: searchMode,
+      budget: searchBudget,
+      currency: searchCurrency,
+    });
+    setChatSession(initialSession);
 
-    setPlayfulNotice(null);
-
-    // Step 2: Trigger Guided Shopping Interview
-    setShoppingStage("understanding_request");
-    setIsInterviewLoading(true);
-
-    try {
-      const interviewRes = await fetch("/api/shopping/interview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requestText: searchQuery,
-          mode: searchMode,
-          budget: searchBudget,
-          currency: searchCurrency,
-          answers: {},
-        }),
-      });
-
-      const interviewData = await interviewRes.json();
-      if (!interviewRes.ok || !interviewData.success) {
-        throw new Error(interviewData.error || "Unable to start guided shopping interview.");
-      }
-
-      setInterviewQuestions(interviewData.questions || []);
-      setInterviewRequirements(interviewData.requirements || []);
-      setInterviewAssistantMessage(interviewData.message || "");
-      setCanSearchAfterInterview(Boolean(interviewData.canSearch));
-      setCollectedAnswers({});
-
-      // Set stage: If questions exist and canSearch is false, go to needs_clarification
-      if (interviewData.questions && interviewData.questions.length > 0 && !interviewData.canSearch) {
-        setShoppingStage("needs_clarification");
-        scrollToInterview();
-      } else {
-        setShoppingStage("requirements_review");
-        scrollToInterview();
-      }
-    } catch {
-      // Fallback: If interview fails, proceed directly to search
-      setShoppingStage("ready_to_search");
-      executeDirectSearch(searchQuery, searchBudget, searchCurrency, searchMode, searchPricePreference);
-    } finally {
-      setIsInterviewLoading(false);
-    }
-  };
-
-  /**
-   * Handles user answering a question chip/selector in the guided conversation
-   */
-  const handleAnswerQuestion = async (
-    questionId: string,
-    attribute: string,
-    value: string,
-    displayValue: string,
-    isAiSelected = false
-  ) => {
-    const updatedAnswers = {
-      ...collectedAnswers,
-      [questionId]: {
-        questionId,
-        attribute,
-        value,
-        displayValue,
-        isAiSelected,
-        answeredAt: Date.now(),
-      },
-    };
-    setCollectedAnswers(updatedAnswers);
-    setIsInterviewLoading(true);
-
-    try {
-      const res = await fetch("/api/shopping/interview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requestText: query || "",
-          mode,
-          budget,
-          currency,
-          answers: updatedAnswers,
-        }),
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        setInterviewQuestions(data.questions || []);
-        setInterviewRequirements(data.requirements || []);
-        setInterviewAssistantMessage(data.message || "");
-        setCanSearchAfterInterview(Boolean(data.canSearch));
-
-        if (data.canSearch) {
-          setShoppingStage("requirements_review");
-        }
-      }
-    } catch {
-      // Keep existing state
-    } finally {
-      setIsInterviewLoading(false);
-    }
-  };
-
-  /**
-   * Handles skipping an optional preference question
-   */
-  const handleSkipQuestion = async (questionId: string, attribute: string) => {
-    const updatedAnswers = {
-      ...collectedAnswers,
-      [questionId]: {
-        questionId,
-        attribute,
-        value: "Skipped",
-        displayValue: "No preference",
-        isSkipped: true,
-        answeredAt: Date.now(),
-      },
-    };
-    setCollectedAnswers(updatedAnswers);
-    setIsInterviewLoading(true);
-
-    try {
-      const res = await fetch("/api/shopping/interview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requestText: query || "",
-          mode,
-          budget,
-          currency,
-          answers: updatedAnswers,
-        }),
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        setInterviewQuestions(data.questions || []);
-        setInterviewRequirements(data.requirements || []);
-        setInterviewAssistantMessage(data.message || "");
-        setCanSearchAfterInterview(Boolean(data.canSearch));
-
-        if (data.canSearch) {
-          setShoppingStage("requirements_review");
-        }
-      }
-    } catch {
-      // Keep existing state
-    } finally {
-      setIsInterviewLoading(false);
-    }
-  };
-
-  /**
-   * Handles editing a previously answered attribute
-   */
-  const handleEditAnswer = async (questionId: string) => {
-    const updated = { ...collectedAnswers };
-    delete updated[questionId];
-    setCollectedAnswers(updated);
-    setHasSearched(false);
-    setProducts([]);
-    setComparison(null);
-    setIsInterviewLoading(true);
-
-    try {
-      const res = await fetch("/api/shopping/interview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requestText: query || "",
-          mode,
-          budget,
-          currency,
-          answers: updated,
-        }),
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        setInterviewQuestions(data.questions || []);
-        setInterviewRequirements(data.requirements || []);
-        setInterviewAssistantMessage(data.message || "");
-        setCanSearchAfterInterview(Boolean(data.canSearch));
-        setShoppingStage(data.canSearch ? "requirements_review" : "needs_clarification");
-      }
-    } catch {
-      // Keep state
-    } finally {
-      setIsInterviewLoading(false);
-    }
+    await handleSendChatMessage(searchQuery, initialSession);
+    scrollToChat();
   };
 
   /**
@@ -392,7 +327,6 @@ export default function Home() {
     searchFilters?: StructuredRequirementSearchFilters
   ) => {
     const currentId = ++activeSearchId.current;
-    setShoppingStage("searching_products");
 
     // ─────────────────────────────────────────────────────────────
     // BRANCH A: MULTI-PRODUCT SETUP MODE
@@ -511,6 +445,11 @@ export default function Home() {
 
       const retrievedProducts = searchData.products || [];
       setProducts(retrievedProducts);
+      setChatSession((prev) => ({
+        ...prev,
+        stage: "product_selection",
+        retrievedProductIds: retrievedProducts.map((p) => p.sourceProductId || p.title),
+      }));
       setCached(Boolean(searchData.cached));
       setIsSearchingProducts(false);
 
@@ -570,15 +509,15 @@ export default function Home() {
    * Action when user confirms the reviewed shopping specifications
    */
   const handleConfirmAndSearch = () => {
-    const filters = interviewRequirements[0]?.searchFilters;
-    executeDirectSearch(query!, budget, currency, mode, pricePreference, filters);
-  };
-
-  /**
-   * Action when user chooses to browse without answering interview questions
-   */
-  const handleBrowseWithoutDetails = () => {
-    executeDirectSearch(query!, budget, currency, mode, pricePreference, undefined);
+    const filters = chatSession.requirements[0]?.searchFilters;
+    executeDirectSearch(
+      chatSession.originalRequest || query!,
+      chatSession.budget || budget,
+      chatSession.currency || currency,
+      chatSession.mode || mode,
+      pricePreference,
+      filters
+    );
   };
 
   /**
@@ -751,12 +690,6 @@ export default function Home() {
     handleSearch(suggestedPrompt, budget, currency, mode, pricePreference);
   };
 
-  // Determine whether to display the Guided Shopping Interview workspace
-  const isGuidedInterviewActive =
-    (shoppingStage === "needs_clarification" || shoppingStage === "requirements_review") &&
-    !hasSearched &&
-    setupStage === "idle";
-
   return (
     <div className="flex min-h-screen flex-col bg-[#080808] text-[#D4D4D4]">
       {/* Header with supplied logo asset and navigation */}
@@ -767,7 +700,7 @@ export default function Home() {
         {/* Hero Section: Dual-mode AI prompt composer */}
         <HeroSection
           onSearch={handleSearch}
-          isLoading={isSearchingProducts || isInterviewLoading || setupStage === "decomposing" || setupStage === "searching"}
+          isLoading={isSearchingProducts || isChatLoading || setupStage === "decomposing" || setupStage === "searching"}
           initialPrompt={query || ""}
           initialBudget={budget ? String(budget) : ""}
           initialCurrency={currency}
@@ -776,30 +709,17 @@ export default function Home() {
         />
 
         {/* ─────────────────────────────────────────────────────────────
-            GUIDED SHOPPING INTERVIEW CONVERSATION (PHASE 4)
+            CONTINUOUS CONVERSATIONAL SHOPPING WORKSPACE (GEMINI INTERACTIONS API)
            ───────────────────────────────────────────────────────────── */}
-        {isGuidedInterviewActive && (
-          <GuidedConversationWorkspace
-            stage={shoppingStage}
-            mode={mode}
-            query={query || ""}
-            budget={budget}
+        {chatSession.messages.length > 0 && (
+          <ContinuousChatWorkspace
+            session={chatSession}
+            isLoading={isChatLoading || isSearchingProducts || isRankingAi}
+            activeStatusText={chatStatusText}
+            onSendMessage={handleSendChatMessage}
+            onExecuteSearch={handleConfirmAndSearch}
+            onResetSession={handleResetSession}
             currency={currency}
-            assistantMessage={interviewAssistantMessage}
-            questions={interviewQuestions}
-            requirements={interviewRequirements}
-            answers={collectedAnswers}
-            canSearch={canSearchAfterInterview}
-            isLoading={isInterviewLoading}
-            onAnswerQuestion={handleAnswerQuestion}
-            onSkipQuestion={handleSkipQuestion}
-            onEditAnswer={handleEditAnswer}
-            onConfirmAndSearch={handleConfirmAndSearch}
-            onBrowseWithoutDetails={handleBrowseWithoutDetails}
-            onResetInterview={() => {
-              setCollectedAnswers({});
-              setShoppingStage("initial_request");
-            }}
           />
         )}
 
@@ -983,11 +903,11 @@ export default function Home() {
           <ProductVariantConfigurator
             product={configuringProduct}
             initialSelections={{
-              ...(collectedAnswers["q-shoe-size"]?.value
-                ? { Size: String(collectedAnswers["q-shoe-size"].value) }
+              ...(chatSession.answers["shoe_size"]?.value || chatSession.answers["size"]?.value
+                ? { Size: String(chatSession.answers["shoe_size"]?.value || chatSession.answers["size"]?.value) }
                 : {}),
-              ...(collectedAnswers["q-color"]?.value && collectedAnswers["q-color"].value !== "No preference"
-                ? { Color: String(collectedAnswers["q-color"].value) }
+              ...(chatSession.answers["color"]?.value && chatSession.answers["color"].value !== "No preference"
+                ? { Color: String(chatSession.answers["color"].value) }
                 : {}),
               ...(configuredVariants[configuringProduct.sourceProductId || configuringProduct.title]?.selectedOptions || {}),
             }}

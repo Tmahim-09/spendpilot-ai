@@ -8,7 +8,6 @@ import {
 
 import {
   resolveCategoryMetadata,
-  VERIFIED_CATEGORY_TAXONOMY,
   formatAttributeOptions,
 } from "../src/lib/channel3/categories.ts";
 

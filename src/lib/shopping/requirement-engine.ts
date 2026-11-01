@@ -445,6 +445,30 @@ async function analyzeSingleProductRequirements(params: {
     }
   }
 
+  const isAmbiguousQuery =
+    (categorySlug === "other" || categoryName === "Product") &&
+    Object.keys(allKnownAttrs).length === 0 &&
+    originalRequest.trim().split(/\s+/).length <= 2 &&
+    !/\b(buy|laptop|phone|shoe|shoes|sneaker|headphones?|monitor|watch|tv|tablet|charger|case|bag)\b/i.test(originalRequest);
+
+  if (isAmbiguousQuery && questions.length === 0) {
+    questions.push({
+      id: "q-product-type",
+      attribute: "product-type",
+      label: `What kind of ${originalRequest.trim()} product are you looking for?`,
+      description: "Specify a product type such as phone, laptop, tablet, or accessories.",
+      inputType: "single_select",
+      options: [
+        { id: "opt-1", label: "Phone / Smartphone", value: "phone" },
+        { id: "opt-2", label: "Laptop / Computer", value: "laptop" },
+        { id: "opt-3", label: "Tablet", value: "tablet" },
+        { id: "opt-4", label: "Accessories", value: "accessories" },
+      ],
+      importance: "required_before_search",
+      allowSkip: false,
+    });
+  }
+
   // Filter out questions that have already been answered or skipped by the user
   const remainingQuestions = questions
     .filter((q) => {

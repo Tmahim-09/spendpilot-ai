@@ -720,3 +720,145 @@ export interface ProductVariantResponsePayload {
   error?: string;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CONVERSATIONAL SHOPPING AGENT & INTERACTIONS API TYPES
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type DomainScope =
+  | "shopping_related"
+  | "shopping_follow_up"
+  | "product_information"
+  | "ambiguous_intent"
+  | "out_of_scope";
+
+export type ConversationalAction =
+  | "continue_conversation"
+  | "ask_follow_up"
+  | "show_requirement_summary"
+  | "request_confirmation"
+  | "search_products"
+  | "compare_products"
+  | "refine_search"
+  | "configure_variant"
+  | "confirm_configuration"
+  | "out_of_scope"
+  | "clarify_intent";
+
+export type AttributeOrigin =
+  | "user_explicit"
+  | "user_confirmed"
+  | "ai_suggested"
+  | "application_default";
+
+export type ChatMessageRole = "user" | "assistant" | "system";
+
+export interface ChatMessage {
+  id: string;
+  role: ChatMessageRole;
+  content: string;
+  createdAt: number;
+  suggestedReplies?: string[];
+  questions?: GuidedQuestion[];
+  actionProposed?: ConversationalAction;
+  scope?: DomainScope;
+  productsReferenced?: string[];
+  modelUsed?: string;
+}
+
+export interface ConversationalActionContract {
+  scope: DomainScope;
+  action: ConversationalAction;
+  assistantMessage: string;
+  requirementsUpdate?: {
+    productCategory?: string;
+    budget?: {
+      maximum?: number | null;
+      currency?: CurrencyCode;
+    };
+    attributes?: Record<string, string | number | boolean | string[]>;
+  };
+  questions?: Array<{
+    id: string;
+    attribute: string;
+    question: string;
+    inputType: QuestionInputType;
+    options?: QuestionOption[];
+    required?: boolean;
+    allowSkip?: boolean;
+  }>;
+  suggestedReplies?: string[];
+  readyForSearch: boolean;
+  requiresConfirmation: boolean;
+  referencedProductIds?: string[];
+  variantSelection?: {
+    productId?: string;
+    selectedOptions?: Record<string, string>;
+  };
+}
+
+export interface AuthoritativeShoppingSession {
+  sessionId: string;
+  stage: ShoppingStage;
+  originalRequest: string;
+  mode: ShoppingMode;
+  budget: number | null;
+  currency: CurrencyCode;
+  intentSummary: string;
+  requirements: StructuredRequirement[];
+  pendingQuestions: GuidedQuestion[];
+  answers: Record<string, CollectedAnswer>;
+  attributeOrigins: Record<string, AttributeOrigin>;
+  messages: ChatMessage[];
+  previousInteractionId?: string | null;
+  storeInteractions?: boolean;
+  canSearch: boolean;
+  retrievedProductIds?: string[];
+  selectedProductId?: string | null;
+  selectedVariants?: Record<string, ProductVariantSelection>;
+  lastAction?: ConversationalAction;
+  updatedAt: number;
+}
+
+export interface ChatRequestPayload {
+  sessionId: string;
+  message: string;
+  mode?: ShoppingMode;
+  budget?: number | null;
+  currency?: CurrencyCode;
+  sessionState?: Partial<AuthoritativeShoppingSession>;
+  currentProductIds?: string[];
+  currentProductsSummary?: Array<{
+    id: string;
+    title: string;
+    price: number | null;
+    currency: string;
+    brand?: string | null;
+    availability?: string;
+    keySpecs?: Record<string, string>;
+  }>;
+}
+
+export interface ChatResponsePayload {
+  success: boolean;
+  sessionId: string;
+  message: string;
+  action: ConversationalAction;
+  scope: DomainScope;
+  requirements: StructuredRequirement[];
+  questions: GuidedQuestion[];
+  suggestedReplies: string[];
+  canSearch: boolean;
+  shouldExecuteSearch: boolean;
+  shouldExecuteComparison: boolean;
+  comparisonRequestedProductIds?: string[];
+  variantConfiguration?: {
+    productId: string;
+    selectedOptions: Record<string, string>;
+  } | null;
+  session: AuthoritativeShoppingSession;
+  modelUsed?: string;
+  usedFallback?: boolean;
+  previousInteractionId?: string | null;
+  error?: string;
+}
+
