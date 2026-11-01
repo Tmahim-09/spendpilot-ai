@@ -9,12 +9,14 @@ import {
   evaluateDomainScope,
   SPENDPILOT_REDIRECT_MESSAGE,
 } from "./domain-guard.ts";
+import { formatMinorUnits, minorToMajorUnits } from "../money.ts";
 import type {
   AuthoritativeShoppingSession,
   ConversationalActionContract,
   DomainScope,
   ConversationalAction,
-  QuestionInputType,
+  QuestionOption,
+  SingleNextQuestion,
 } from "../../types/index.ts";
 
 export const SPENDPILOT_SYSTEM_INSTRUCTION = `You are SpendPilot AI, an elite conversational personal shopping assistant for the PayPal AI Hackathon 2026.
@@ -27,10 +29,10 @@ PERMANENT IDENTITY & ROLE:
 
 CONVERSATION PRINCIPLES:
 1. Speak naturally, warmly, and concisely as a knowledgeable shopping specialist.
-2. Ask questions ONE turn at a time. Never dump long questionnaires. Ask at most 1 or 2 closely related questions.
-3. NEVER repeat an answered question, and NEVER ask for information already mentioned in the prompt.
+2. Ask questions ONE turn at a time using 'nextQuestion'. NEVER dump multiple questions simultaneously.
+3. NEVER repeat an answered question, and NEVER ask for information already mentioned in the prompt or confirmed in session.
 4. Allow optional preferences to be skipped ("No preference", "You decide").
-5. When all essential specifications are known, summarize the requirements concisely and propose "request_confirmation" before searching.
+5. When all essential specifications are known (e.g. for headphones: connectivity, form factor, ANC), do NOT ask for repeated confirmation or say you are keeping requirements ready. Acknowledge user specifications warmly and set action to "search_products" with readyForSearch: true so search begins immediately.
 6. When active products are present in session, answer questions about them using ONLY verified listing facts. Do not invent specs or ratings.
 7. Always return a valid JSON object matching the action contract schema.`;
 
@@ -78,6 +80,33 @@ export const CONVERSATIONAL_ACTION_SCHEMA = {
         attributes: {
           type: "object",
         },
+      },
+    },
+    nextQuestion: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        attributeKey: { type: "string" },
+        text: { type: "string" },
+        inputType: {
+          type: "string",
+          enum: ["single_select", "multi_select", "size_picker", "color_picker", "text_input", "boolean_toggle"],
+        },
+        options: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              label: { type: "string" },
+              value: { type: "string" },
+              description: { type: "string" },
+            },
+            required: ["id", "label", "value"],
+          },
+        },
+        required: { type: "boolean" },
+        allowSkip: { type: "boolean" },
       },
     },
     questions: {
@@ -170,7 +199,8 @@ export function buildCompactSessionContext(
   parts.push(`Shopping Mode: ${session.mode}`);
   parts.push(`Currency: ${session.currency}`);
   if (session.budget) {
-    parts.push(`Budget: ${session.currency} ${session.budget}`);
+    const major = minorToMajorUnits(session.budget);
+    parts.push(`Budget: ${formatMinorUnits(session.budget, session.currency)} (${major} ${session.currency}, ${session.budget} minor units)`);
   }
   if (session.intentSummary) {
     parts.push(`Intent Summary: ${session.intentSummary}`);
@@ -178,11 +208,22 @@ export function buildCompactSessionContext(
   parts.push(`Current Stage: ${session.stage}`);
 
   // Known attributes
-  const knownEntries = Object.entries(session.answers)
-    .filter(([, a]) => !a.isSkipped && a.value !== undefined)
-    .map(([k, a]) => `${k} (${a.attribute}): ${a.displayValue || a.value} [origin: ${session.attributeOrigins[k] || "user_explicit"}]`);
+  const knownEntries: string[] = [];
+  if (session.canonicalAttributes && Object.keys(session.canonicalAttributes).length > 0) {
+    for (const attr of Object.values(session.canonicalAttributes)) {
+      if (attr.status !== "skipped") {
+        knownEntries.push(`${attr.label}: ${attr.displayValue}`);
+      }
+    }
+  } else {
+    for (const [k, a] of Object.entries(session.answers)) {
+      if (!a.isSkipped && a.value !== undefined) {
+        knownEntries.push(`${a.attribute || k}: ${a.displayValue || a.value}`);
+      }
+    }
+  }
   if (knownEntries.length > 0) {
-    parts.push(`Known Requirements & Answers:\n- ${knownEntries.join("\n- ")}`);
+    parts.push(`Known Requirements & Preferences:\n- ${knownEntries.join("\n- ")}`);
   }
 
   // Active products in results
@@ -362,8 +403,7 @@ Respond with appropriate conversational message and next proposed shopping actio
     contract: {
       scope: guardResult.scope,
       action: "ask_follow_up",
-      assistantMessage:
-        "I'm keeping your shopping requirements ready. Tell me any additional preferences or confirm if you'd like to search verified options.",
+      assistantMessage: "Let's find the best options for you. Could you share your preferred style or features?",
       readyForSearch: false,
       requiresConfirmation: false,
     },
@@ -378,13 +418,15 @@ Respond with appropriate conversational message and next proposed shopping actio
  * Prevents arbitrary model execution and ensures out-of-scope prompts are blocked.
  */
 export function sanitizeAndValidateActionContract(
-  raw: Partial<ConversationalActionContract>,
+  raw: Record<string, unknown> | Partial<ConversationalActionContract>,
   userMessage: string,
   hasActiveProducts: boolean
 ): ConversationalActionContract {
-  let scope: DomainScope = (raw.scope as DomainScope) || "shopping_related";
-  let action: ConversationalAction = (raw.action as ConversationalAction) || "continue_conversation";
-  let assistantMessage = typeof raw.assistantMessage === "string" ? raw.assistantMessage.trim() : "";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const payload = (raw || {}) as Record<string, any>;
+  let scope: DomainScope = (payload.scope as DomainScope) || "shopping_related";
+  let action: ConversationalAction = (payload.action as ConversationalAction) || "continue_conversation";
+  let assistantMessage = typeof payload.assistantMessage === "string" ? payload.assistantMessage.trim() : "";
 
   // 1. If scope is out_of_scope or prompt fails domain guard: enforce redirect
   const guard = evaluateDomainScope(userMessage, hasActiveProducts);
@@ -405,43 +447,104 @@ export function sanitizeAndValidateActionContract(
         : "I'm ready to help you find the right product within your budget. What details can I help with?";
   }
 
-  // 2. Sanitize questions
-  const sanitizedQuestions = Array.isArray(raw.questions)
-    ? raw.questions
-        .filter((q) => q && typeof q.question === "string" && typeof q.attribute === "string")
-        .slice(0, 3)
-        .map((q) => ({
-          id: q.id || `q-${q.attribute.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-          attribute: q.attribute,
-          question: q.question,
-          inputType: (q.inputType || "single_select") as QuestionInputType,
-          options: Array.isArray(q.options)
-            ? q.options.map((o) => ({
-                id: o.id || `opt-${o.value}`,
-                label: o.label || o.value,
-                value: o.value,
-                description: o.description,
-              }))
-            : [],
-          required: Boolean(q.required),
-          allowSkip: q.allowSkip !== false,
-        }))
+  // 2. Validate and sanitize nextQuestion (strictly ONE question)
+  let nextQuestion: SingleNextQuestion | null = null;
+
+  if (payload.nextQuestion && typeof payload.nextQuestion.text === "string" && payload.nextQuestion.text.trim()) {
+    const rawQ = payload.nextQuestion;
+    const attrKey = rawQ.attributeKey || rawQ.id || "preference";
+    const seenOptions = new Set<string>();
+    const sanitizedOptions: QuestionOption[] = [];
+
+    for (const opt of rawQ.options || []) {
+      const norm = (opt.label || opt.value || "").trim().toLowerCase();
+      if (!norm || seenOptions.has(norm)) continue;
+      seenOptions.add(norm);
+      sanitizedOptions.push({
+        id: opt.id || `opt-${sanitizedOptions.length + 1}`,
+        label: opt.label || opt.value,
+        value: opt.value || opt.label,
+        description: opt.description,
+      });
+    }
+
+    nextQuestion = {
+      id: rawQ.id || `q_${attrKey.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
+      attributeKey: attrKey,
+      text: rawQ.text.trim(),
+      inputType: rawQ.inputType || "single_select",
+      options: sanitizedOptions,
+      required: Boolean(rawQ.required),
+      allowSkip: rawQ.allowSkip !== false,
+    };
+  } else if (Array.isArray(payload.questions) && payload.questions.length > 0) {
+    const rawList = payload.questions as Array<Record<string, unknown>>;
+    const firstQ = rawList.find(
+      (q) => q && typeof (q.question || q.label || q.text) === "string" && String(q.question || q.label || q.text).trim().length > 0
+    );
+    if (firstQ) {
+      const qText = String(firstQ.question || firstQ.label || firstQ.text || "").trim();
+      const attrKey = String(firstQ.attribute || firstQ.id || "preference");
+      const seenOptions = new Set<string>();
+      const sanitizedOptions: QuestionOption[] = [];
+
+      const rawOptions = (Array.isArray(firstQ.options) ? firstQ.options : []) as Array<Record<string, unknown>>;
+      for (const opt of rawOptions) {
+        const optLabel = typeof opt.label === "string" ? opt.label : typeof opt.value === "string" ? opt.value : "";
+        const optValue = typeof opt.value === "string" ? opt.value : optLabel;
+        const norm = optLabel.trim().toLowerCase();
+        if (!norm || seenOptions.has(norm)) continue;
+        seenOptions.add(norm);
+        sanitizedOptions.push({
+          id: String(opt.id || `opt-${sanitizedOptions.length + 1}`),
+          label: optLabel,
+          value: optValue,
+          description: typeof opt.description === "string" ? opt.description : undefined,
+        });
+      }
+
+      nextQuestion = {
+        id: String(firstQ.id || `q_${attrKey.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`),
+        attributeKey: attrKey,
+        text: qText,
+        inputType: (typeof firstQ.inputType === "string" ? firstQ.inputType : "single_select") as "single_select",
+        options: sanitizedOptions,
+        required: Boolean(firstQ.required || firstQ.importance === "required_before_search"),
+        allowSkip: firstQ.allowSkip !== false,
+      };
+    }
+  }
+
+  // Provide at most 1 item in questions for backwards compatibility
+  const sanitizedQuestions = nextQuestion
+    ? [
+        {
+          id: nextQuestion.id,
+          attribute: nextQuestion.attributeKey,
+          question: nextQuestion.text,
+          inputType: nextQuestion.inputType,
+          options: nextQuestion.options,
+          required: nextQuestion.required,
+          allowSkip: nextQuestion.allowSkip,
+        },
+      ]
     : [];
 
-  const suggestedReplies = Array.isArray(raw.suggestedReplies)
-    ? raw.suggestedReplies.filter((r) => typeof r === "string" && r.trim().length > 0).slice(0, 4)
+  const suggestedReplies = Array.isArray(payload.suggestedReplies)
+    ? payload.suggestedReplies.filter((r: unknown) => typeof r === "string" && r.trim().length > 0).slice(0, 4)
     : [];
 
   return {
     scope,
     action,
     assistantMessage,
-    requirementsUpdate: raw.requirementsUpdate,
+    requirementsUpdate: payload.requirementsUpdate,
+    nextQuestion,
     questions: sanitizedQuestions,
     suggestedReplies,
-    readyForSearch: Boolean(raw.readyForSearch),
-    requiresConfirmation: Boolean(raw.requiresConfirmation),
-    referencedProductIds: Array.isArray(raw.referencedProductIds) ? raw.referencedProductIds : [],
-    variantSelection: raw.variantSelection,
+    readyForSearch: Boolean(payload.readyForSearch),
+    requiresConfirmation: Boolean(payload.requiresConfirmation),
+    referencedProductIds: Array.isArray(payload.referencedProductIds) ? payload.referencedProductIds : [],
+    variantSelection: payload.variantSelection,
   };
 }

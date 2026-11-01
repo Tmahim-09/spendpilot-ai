@@ -22,7 +22,7 @@ import {
   Layers,
   ArrowRight,
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatSafeBudget } from "@/lib/utils";
 
 interface LiveProductResultsProps {
   query: string | null;
@@ -283,7 +283,7 @@ export function LiveProductResults({
             </h3>
             <p className="text-xs sm:text-sm text-[#A3A3A3] max-w-md mx-auto mb-6">
               We couldn&apos;t find verified products matching &ldquo;{query}&rdquo;
-              {budget ? ` under ${formatCurrency(budget * 100, currency)}` : ""}. Try using broader search terms or increasing your budget limit.
+              {budget ? ` under ${formatSafeBudget(budget, currency)}` : ""}. Try using broader search terms or increasing your budget limit.
             </p>
             {onRetry && (
               <button
@@ -341,7 +341,7 @@ export function LiveProductResults({
 
               {isRangeExpanded && (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-2.5 py-0.5 text-xs font-semibold text-[#FF8126]">
-                  <span>Expanded Price Range (All items &le; {formatCurrency((budget || 0) * 100, currency)})</span>
+                  <span>Expanded Price Range (All items &le; {formatSafeBudget(budget, currency)})</span>
                 </span>
               )}
             </div>
@@ -356,7 +356,7 @@ export function LiveProductResults({
                 <>
                   {" "}with starting prices under{" "}
                   <strong className="text-[#35C979] tabular-nums">
-                    {formatCurrency(budget * 100, currency)}
+                    {formatSafeBudget(budget, currency)}
                   </strong>
                 </>
               ) : ""}

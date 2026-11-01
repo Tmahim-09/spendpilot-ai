@@ -11,6 +11,15 @@ import {
   extractAttributesFromText,
   analyzeShoppingRequirements,
 } from "../shopping/requirement-engine.ts";
+import {
+  parseToMinorUnits,
+  minorToMajorUnits,
+  formatMinorUnits,
+} from "../money.ts";
+import {
+  canonicalizeAttributeKey,
+  upsertCanonicalAttribute,
+} from "../shopping/canonical-attributes.ts";
 import type {
   AuthoritativeShoppingSession,
   ChatMessage,
@@ -20,11 +29,16 @@ import type {
   ShoppingMode,
   CurrencyCode,
   NormalizedProduct,
+  SingleNextQuestion,
+  CollectedAnswer,
 } from "../../types/index.ts";
 
 export interface ProcessUserMessageOptions {
   session: AuthoritativeShoppingSession;
   userMessage: string;
+  clientMessageId?: string;
+  answeredQuestionId?: string;
+  answeredAttributeKey?: string;
   currentProducts?: NormalizedProduct[];
   currentProductsSummary?: Array<{
     id?: string;
@@ -67,12 +81,18 @@ export function createInitialSession(params: {
   const sessionId = params.sessionId || "session_init";
   const originalRequest = params.initialQuery?.trim() || "";
   const mode = params.mode || "single";
-  const budget = typeof params.budget === "number" && params.budget > 0 ? params.budget : null;
+  const budget =
+    typeof params.budget === "number"
+      ? parseToMinorUnits(params.budget, { isAlreadyMinor: true })
+      : parseToMinorUnits(params.budget);
   const currency = params.currency || "USD";
 
   return {
     sessionId,
     stage: "initial_request",
+    conversationState: "idle",
+    turnId: "turn_0",
+    revision: 1,
     originalRequest,
     mode,
     budget,
@@ -80,8 +100,11 @@ export function createInitialSession(params: {
     intentSummary: originalRequest ? `Looking for ${originalRequest}` : "Personal Shopping Assistance",
     requirements: [],
     pendingQuestions: [],
+    activeQuestion: null,
+    answeredQuestionIds: [],
     answers: {},
     attributeOrigins: {},
+    canonicalAttributes: {},
     messages: [],
     previousInteractionId: null,
     storeInteractions: true,
@@ -104,7 +127,7 @@ export function extractBudgetFromText(text: string): number | null {
   if (match) {
     const val = parseFloat(match[1]);
     if (!isNaN(val) && val > 0) {
-      return Math.round(val * 100);
+      return parseToMinorUnits(val);
     }
   }
   return null;
@@ -178,7 +201,6 @@ export function resolveReferencedProductIds(
     if (lower.includes(titleLower)) {
       matchedIds.push(id);
     } else {
-      // Split title into significant words (e.g. 'brooks', 'ghost') and check for match
       const titleWords = titleLower.split(/\s+/).filter((w) => w.length > 3);
       const matches = titleWords.filter((w) => lower.includes(w));
       if (matches.length >= 2 || (titleWords.length === 1 && matches.length === 1)) {
@@ -192,18 +214,41 @@ export function resolveReferencedProductIds(
 
 /**
  * Core conversation orchestrator:
- * Processes an incoming user message, tracks attributes and their origin,
- * invokes Gemini Interactions API with sequential model failover,
- * enforces domain guards, and resolves actionable shopping states.
+ * Processes an incoming user message, updates canonical attributes with provenance,
+ * enforces domain guards, decides next single question or triggers automatic search.
  */
 export async function processUserMessage({
   session,
   userMessage,
+  clientMessageId,
+  answeredQuestionId,
+  answeredAttributeKey,
   currentProducts = [],
   currentProductsSummary = [],
 }: ProcessUserMessageOptions): Promise<ProcessUserMessageResult> {
   const trimmed = userMessage.trim();
   const now = Date.now();
+
+  // 0. Idempotency Check: Prevent duplicate processing if client re-submits exact same message
+  if (clientMessageId && session.messages.some((m) => m.clientMessageId === clientMessageId)) {
+    const lastAssistant = session.messages.slice().reverse().find((m) => m.role === "assistant");
+    return {
+      session,
+      assistantMessage: lastAssistant || {
+        id: `msg_dup_${now}`,
+        role: "assistant",
+        content: "Already received your update.",
+        createdAt: now,
+      },
+      action: session.lastAction || "continue_conversation",
+      scope: "shopping_related",
+      shouldExecuteSearch: false,
+      shouldExecuteComparison: false,
+    };
+  }
+
+  const nextRev = (session.revision || 0) + 1;
+  const turnId = `turn_${nextRev}_${now.toString(36)}`;
 
   // Create user message entry
   const userMsgEntry: ChatMessage = {
@@ -211,6 +256,8 @@ export async function processUserMessage({
     role: "user",
     content: trimmed,
     createdAt: now,
+    clientMessageId,
+    turnId,
   };
 
   const updatedMessages = [...session.messages, userMsgEntry];
@@ -219,62 +266,47 @@ export async function processUserMessage({
   const hasActiveProducts = (session.retrievedProductIds?.length ?? 0) > 0 || currentProductsSummary.length > 0;
   const guard = evaluateDomainScope(trimmed, hasActiveProducts);
 
-  if (!guard.isAllowed && guard.scope === "out_of_scope") {
-    const assistantMsg: ChatMessage = {
-      id: `msg_a_${Date.now().toString(36)}`,
-      role: "assistant",
-      content: guard.redirectMessage || SPENDPILOT_REDIRECT_MESSAGE,
-      createdAt: Date.now(),
-      scope: "out_of_scope",
-      actionProposed: "out_of_scope",
-      modelUsed: "domain-guard-deterministic",
-    };
+  const isAnsweringQuestion = Boolean(answeredQuestionId || answeredAttributeKey || session.activeQuestion);
 
-    return {
-      session: {
-        ...session,
-        messages: [...updatedMessages, assistantMsg],
-        lastAction: "out_of_scope",
-        updatedAt: Date.now(),
-      },
-      assistantMessage: assistantMsg,
-      action: "out_of_scope",
-      scope: "out_of_scope",
-      shouldExecuteSearch: false,
-      shouldExecuteComparison: false,
-    };
+  if (isAnsweringQuestion && guard.scope === "ambiguous_intent") {
+    guard.scope = "shopping_related";
+    guard.isAllowed = true;
+    guard.allowed = true;
   }
 
-  // 2. Check for affirmative user confirmation when requirements are ready
-  const isConfirming = isAffirmativeConfirmation(trimmed);
-  if (isConfirming && session.stage === "requirements_review" && session.canSearch) {
-    const assistantMsg: ChatMessage = {
-      id: `msg_a_${Date.now().toString(36)}`,
-      role: "assistant",
-      content: "Searching verified retailer options that match your confirmed criteria now...",
-      createdAt: Date.now(),
-      scope: "shopping_related",
-      actionProposed: "search_products",
-      modelUsed: "deterministic-confirmation",
-    };
+  if (!guard.isAllowed) {
+    if (guard.scope === "out_of_scope" || (!isAnsweringQuestion && session.messages.length <= 1)) {
+      const assistantMsg: ChatMessage = {
+        id: `msg_a_${Date.now().toString(36)}`,
+        role: "assistant",
+        content: guard.redirectMessage || SPENDPILOT_REDIRECT_MESSAGE,
+        createdAt: Date.now(),
+        scope: guard.scope,
+        actionProposed: guard.scope === "out_of_scope" ? "out_of_scope" : "clarify_intent",
+        modelUsed: "domain-guard-deterministic",
+        turnId,
+      };
 
-    return {
-      session: {
-        ...session,
-        stage: "searching_products",
-        messages: [...updatedMessages, assistantMsg],
-        lastAction: "search_products",
-        updatedAt: Date.now(),
-      },
-      assistantMessage: assistantMsg,
-      action: "search_products",
-      scope: "shopping_related",
-      shouldExecuteSearch: true,
-      shouldExecuteComparison: false,
-    };
+      return {
+        session: {
+          ...session,
+          conversationState: "idle",
+          revision: nextRev,
+          turnId,
+          messages: [...updatedMessages, assistantMsg],
+          lastAction: guard.scope === "out_of_scope" ? "out_of_scope" : "clarify_intent",
+          updatedAt: Date.now(),
+        },
+        assistantMessage: assistantMsg,
+        action: guard.scope === "out_of_scope" ? "out_of_scope" : "clarify_intent",
+        scope: guard.scope,
+        shouldExecuteSearch: false,
+        shouldExecuteComparison: false,
+      };
+    }
   }
 
-  // 3. Extract budget and mode updates from user message
+  // 2. Budget extraction & invalidation
   const extractedBudget = extractBudgetFromText(trimmed);
   let effectiveBudget = session.budget;
   let needsReSearch = false;
@@ -287,60 +319,74 @@ export async function processUserMessage({
 
   const inferredMode = session.mode === "setup" ? "setup" : inferShoppingModeFromText(trimmed);
 
-  // 4. Extract text attributes from user message to update known specs
-  const textAttrs = extractAttributesFromText(trimmed);
-  const updatedAnswers = { ...session.answers };
-  const updatedOrigins = { ...session.attributeOrigins };
+  // 3. Upsert canonical attributes
+  let canonicalMap = { ...(session.canonicalAttributes || {}) };
+  const answeredIds = [...(session.answeredQuestionIds || [])];
 
-  for (const [attrKey, attrVal] of Object.entries(textAttrs)) {
-    const qId = `q-${attrKey}`;
-    updatedAnswers[qId] = {
-      questionId: qId,
-      attribute: attrKey,
-      value: attrVal,
-      displayValue: attrVal,
-      answeredAt: now,
-    };
-    updatedOrigins[qId] = "user_explicit";
-
-    // Populate normalized key variants (e.g. shoe_size, size)
-    const normKey = attrKey.replace(/-/g, "_");
-    updatedAnswers[normKey] = updatedAnswers[qId];
-    updatedOrigins[normKey] = "user_explicit";
-    if (attrKey === "shoe-size" || attrKey === "shoe_size") {
-      updatedAnswers["shoe_size"] = updatedAnswers[qId];
-      updatedOrigins["shoe_size"] = "user_explicit";
-      updatedAnswers["size"] = updatedAnswers[qId];
-      updatedOrigins["size"] = "user_explicit";
-    } else if (attrKey === "size-system" || attrKey === "size_system") {
-      updatedAnswers["size_system"] = updatedAnswers[qId];
-      updatedOrigins["size_system"] = "user_explicit";
-    } else if (attrKey.includes("size") && !attrKey.includes("system")) {
-      updatedAnswers["size"] = updatedAnswers[qId];
-      updatedOrigins["size"] = "user_explicit";
+  // A. If an explicit option was selected via quick reply:
+  if (answeredQuestionId || answeredAttributeKey) {
+    const qId = answeredQuestionId || session.activeQuestion?.id || "";
+    const attrKey = answeredAttributeKey || session.activeQuestion?.attributeKey || "preference";
+    if (qId && !answeredIds.includes(qId)) {
+      answeredIds.push(qId);
     }
+    const isSkip = /\b(?:no preference|any|skip)\b/i.test(trimmed);
+    canonicalMap = upsertCanonicalAttribute(
+      canonicalMap,
+      attrKey,
+      trimmed,
+      "user_confirmed",
+      isSkip ? "skipped" : "confirmed"
+    );
   }
 
-  // Handle explicit skip expressions
+  // B. Extract attributes directly from user's free text:
+  const textAttrs = extractAttributesFromText(trimmed);
+  for (const [key, val] of Object.entries(textAttrs)) {
+    canonicalMap = upsertCanonicalAttribute(canonicalMap, key, val, "user_explicit", "confirmed");
+  }
+
+  // C. Handle explicit skip expressions in text:
   if (/\b(?:skip|no preference|any|don't care|doesn't matter)\b/i.test(trimmed)) {
-    for (const q of session.pendingQuestions) {
-      if (q.importance !== "required_before_search" || /\bskip\b/i.test(trimmed)) {
-        updatedAnswers[q.id] = {
-          questionId: q.id,
-          attribute: q.attribute,
-          value: "No preference",
-          displayValue: "No preference",
-          isSkipped: true,
-          answeredAt: now,
-        };
-        updatedOrigins[q.id] = "user_explicit";
-        updatedAnswers[q.attribute] = updatedAnswers[q.id];
+    if (session.activeQuestion) {
+      if (!answeredIds.includes(session.activeQuestion.id)) {
+        answeredIds.push(session.activeQuestion.id);
       }
+      canonicalMap = upsertCanonicalAttribute(
+        canonicalMap,
+        session.activeQuestion.attributeKey,
+        "No preference",
+        "user_explicit",
+        "skipped"
+      );
     }
   }
 
   if (Object.keys(textAttrs).length > 0 && session.retrievedProductIds && session.retrievedProductIds.length > 0) {
     needsReSearch = true;
+  }
+
+  // 4. Synchronize legacy answers map from canonical attributes for backwards compatibility
+  const updatedAnswers: Record<string, CollectedAnswer> = { ...session.answers };
+  const updatedOrigins: Record<string, typeof session.attributeOrigins[string]> = { ...session.attributeOrigins };
+
+  for (const attr of Object.values(canonicalMap)) {
+    const qId = `q-${attr.key.replace(/_/g, "-")}`;
+    const hyphenKey = attr.key.replace(/_/g, "-");
+    const collected: CollectedAnswer = {
+      questionId: qId,
+      attribute: hyphenKey,
+      value: attr.status === "skipped" ? "No preference" : attr.value,
+      displayValue: attr.displayValue,
+      isSkipped: attr.status === "skipped",
+      answeredAt: attr.updatedAt,
+    };
+    updatedAnswers[qId] = collected;
+    updatedAnswers[attr.key] = collected;
+    updatedAnswers[hyphenKey] = collected;
+    updatedOrigins[qId] = attr.source;
+    updatedOrigins[attr.key] = attr.source;
+    updatedOrigins[hyphenKey] = attr.source;
   }
 
   // 5. Check for product specification / comparison / follow-up requests on active products
@@ -362,14 +408,21 @@ export async function processUserMessage({
       scope: "shopping_follow_up",
       actionProposed: "compare_products",
       productsReferenced: compareIds,
-      modelUsed: "deterministic-comparison-router",
+      modelUsed: "comparison-service",
+      turnId,
     };
 
     return {
       session: {
         ...session,
+        conversationState: "comparing_products",
+        revision: nextRev,
+        turnId,
         budget: effectiveBudget,
         mode: inferredMode,
+        canonicalAttributes: canonicalMap,
+        answers: updatedAnswers,
+        attributeOrigins: updatedOrigins,
         messages: [...updatedMessages, assistantMsg],
         lastAction: "compare_products",
         updatedAt: Date.now(),
@@ -395,10 +448,10 @@ export async function processUserMessage({
     if (/cushion/i.test(trimmed)) {
       const cushioned = currentProducts.find((p) => p.sourceFacts?.some((f) => /cushion/i.test(f))) || currentProducts[1] || currentProducts[0];
       const other = currentProducts.find((p) => p.sourceProductId !== cushioned?.sourceProductId) || currentProducts[0];
-      responseText = `Between the active choices, the ${cushioned?.title || "Brooks Ghost"} features specialized cushioning (DNA LOFT v2) for high-mileage impact absorption, whereas the ${other?.title || "Nike Pegasus"} provides a firmer, responsive ride.`;
+      responseText = `Between the active choices, the ${cushioned?.title || "first option"} features specialized cushioning for impact absorption, whereas the ${other?.title || "second option"} provides a firmer, responsive ride.`;
     } else if (/cheaper|price|cost/i.test(trimmed)) {
       const sorted = [...currentProducts].sort((a, b) => (a.priceMinor || 0) - (b.priceMinor || 0));
-      const priceStr = sorted[0]?.priceMinor ? `$${sorted[0].priceMinor / 100}` : "listed price";
+      const priceStr = sorted[0]?.priceMinor ? formatMinorUnits(sorted[0].priceMinor, session.currency) : "listed price";
       responseText = `The ${sorted[0]?.title || "first option"} is the more budget-friendly option at ${priceStr}.`;
     } else {
       responseText = `Looking at your active candidates, ${currentProducts.map((p) => p.title).join(" and ")} both fit your confirmed preferences.`;
@@ -412,14 +465,21 @@ export async function processUserMessage({
       scope: "product_information",
       actionProposed: "continue_conversation",
       productsReferenced: currentProducts.map((p) => p.sourceProductId || "").filter(Boolean),
-      modelUsed: "deterministic-product-info",
+      modelUsed: "product-info-grounding",
+      turnId,
     };
 
     return {
       session: {
         ...session,
+        conversationState: "results_ready",
+        revision: nextRev,
+        turnId,
         budget: effectiveBudget,
         mode: inferredMode,
+        canonicalAttributes: canonicalMap,
+        answers: updatedAnswers,
+        attributeOrigins: updatedOrigins,
         messages: [...updatedMessages, assistantMsg],
         lastAction: "continue_conversation",
         updatedAt: Date.now(),
@@ -432,111 +492,147 @@ export async function processUserMessage({
     };
   }
 
-  // 6. Run conversational turn via Interactions API
-  const turnResult = await executeConversationalInteractionTurn({
-    userMessage: trimmed,
-    session: {
-      ...session,
-      budget: effectiveBudget,
-      mode: inferredMode,
-      answers: updatedAnswers,
-      attributeOrigins: updatedOrigins,
-    },
-    currentProductsSummary,
-  });
-
-  const { contract, newInteractionId, modelUsed, usedFallback } = turnResult;
-
-  // 7. Integrate requirements update from model if proposed (only for non-required attributes or explicit confirmations)
-  if (contract.requirementsUpdate?.attributes) {
-    for (const [k, v] of Object.entries(contract.requirementsUpdate.attributes)) {
-      if (v !== undefined && v !== null) {
-        const qId = `q-${k}`;
-        if (!updatedAnswers[qId]) {
-          updatedAnswers[qId] = {
-            questionId: qId,
-            attribute: k,
-            value: v as string,
-            displayValue: String(v),
-            answeredAt: now,
-          };
-          updatedOrigins[qId] = "ai_suggested";
-        }
-      }
-    }
-  }
-
-  // Only user_explicit or user_confirmed answers count as satisfying requirements
-  const confirmedAnswersForRequirements: Record<string, typeof updatedAnswers[string]> = {};
-  for (const [k, ans] of Object.entries(updatedAnswers)) {
-    const origin = updatedOrigins[k] || updatedOrigins[ans.attribute];
-    if (origin === "user_explicit" || origin === "user_confirmed") {
-      confirmedAnswersForRequirements[k] = ans;
-    }
-  }
-
-  // Re-run requirement engine to deterministically verify whether search is allowed
-  const budgetForEngine = effectiveBudget !== null ? Math.round(effectiveBudget / 100) : null;
+  // 6. Evaluate shopping requirements deterministically
+  const budgetInMajorUnits = minorToMajorUnits(effectiveBudget);
   const reqAnalysis = await analyzeShoppingRequirements({
     originalRequest: session.originalRequest || trimmed,
     mode: inferredMode,
-    budget: budgetForEngine,
+    budget: budgetInMajorUnits,
     currency: session.currency,
-    existingAnswers: confirmedAnswersForRequirements,
+    existingAnswers: updatedAnswers,
   });
 
   if (guard.scope === "ambiguous_intent" || !guard.isAllowed) {
     reqAnalysis.canSearch = false;
   }
 
-  // Verify search action authorization
-  // Model proposing "search_products" requires confirmed requirements!
-  let effectiveAction = contract.action;
-  let shouldExecuteSearch = false;
+  // 7. Check if all essential requirements are answered and search can begin automatically
+  const isConfirming = isAffirmativeConfirmation(trimmed);
+  const hasUnansweredQuestions = reqAnalysis.questions.length > 0;
+  const isRequirementsComplete = reqAnalysis.canSearch && !hasUnansweredQuestions;
 
-  if (contract.action === "search_products") {
-    if (reqAnalysis.canSearch && (isConfirming || session.stage === "requirements_review")) {
+  let shouldExecuteSearch = false;
+  let effectiveAction: ConversationalAction = "ask_follow_up";
+  let activeQuestion: SingleNextQuestion | null = null;
+  let assistantContent = "";
+
+  if (isRequirementsComplete || (reqAnalysis.canSearch && isConfirming)) {
+    // Requirements are complete! Automatically begin Channel3 product search
+    shouldExecuteSearch = true;
+    effectiveAction = "search_products";
+
+    const categoryTitle = reqAnalysis.category.toLowerCase();
+    const confirmedHighlights = Object.values(canonicalMap)
+      .filter((a) => a.status === "confirmed" && a.value !== "No preference")
+      .map((a) => a.displayValue)
+      .filter((v) => !v.toLowerCase().includes(categoryTitle));
+
+    const specsStr = confirmedHighlights.length > 0 ? ` ${confirmedHighlights.join(", ")}` : "";
+    const budgetStr = effectiveBudget ? ` within your ${formatMinorUnits(effectiveBudget, session.currency)} budget` : "";
+
+    assistantContent = `Perfect! I'll look for${specsStr} ${categoryTitle}${budgetStr}.`;
+  } else if (hasUnansweredQuestions) {
+    // Exactly ONE next question
+    const q = reqAnalysis.questions[0];
+    const canonicalKey = canonicalizeAttributeKey(q.attribute);
+
+    // Deduplicate options: keep only 1 option per distinct label/value
+    const seenOpt = new Set<string>();
+    const sanitizedOptions = q.options.filter((o) => {
+      const norm = (o.label || o.value || "").trim().toLowerCase();
+      if (!norm || seenOpt.has(norm)) return false;
+      seenOpt.add(norm);
+      return true;
+    });
+
+    activeQuestion = {
+      id: q.id,
+      attributeKey: canonicalKey,
+      text: q.label,
+      inputType: q.inputType,
+      options: sanitizedOptions,
+      required: q.importance === "required_before_search",
+      allowSkip: q.allowSkip,
+    };
+
+    effectiveAction = "ask_follow_up";
+    shouldExecuteSearch = false;
+    assistantContent = q.label;
+  }
+
+  // 8. If questions remain and user didn't just answer an explicit option, invoke Gemini for conversational context
+  let modelUsed = "spendpilot-engine";
+  let usedFallback = false;
+
+  if (!shouldExecuteSearch && (!answeredQuestionId || !assistantContent)) {
+    const turnResult = await executeConversationalInteractionTurn({
+      userMessage: trimmed,
+      session: {
+        ...session,
+        budget: effectiveBudget,
+        mode: inferredMode,
+        canonicalAttributes: canonicalMap,
+        answers: updatedAnswers,
+        attributeOrigins: updatedOrigins,
+      },
+      currentProductsSummary,
+    });
+
+    const { contract } = turnResult;
+    modelUsed = turnResult.modelUsed;
+    usedFallback = turnResult.usedFallback;
+
+    // Incorporate model updates if valid
+    if (contract.requirementsUpdate?.attributes) {
+      for (const [k, v] of Object.entries(contract.requirementsUpdate.attributes)) {
+        if (v !== undefined && v !== null) {
+          canonicalMap = upsertCanonicalAttribute(canonicalMap, k, String(v), "ai_suggested", "suggested");
+        }
+      }
+    }
+
+    if (contract.action === "search_products" && reqAnalysis.canSearch) {
       shouldExecuteSearch = true;
       effectiveAction = "search_products";
-    } else {
-      effectiveAction = reqAnalysis.canSearch ? "request_confirmation" : "ask_follow_up";
+      assistantContent = contract.assistantMessage || assistantContent;
+      activeQuestion = null;
+    } else if (contract.assistantMessage && !contract.assistantMessage.includes("keeping your shopping requirements ready")) {
+      assistantContent = contract.assistantMessage;
     }
   }
 
-  if (!reqAnalysis.canSearch && (effectiveAction === "request_confirmation" || effectiveAction === "search_products")) {
-    effectiveAction = "ask_follow_up";
+  if (!assistantContent) {
+    assistantContent = activeQuestion?.text || "What other specifications would you prefer?";
   }
 
-  // Map contract questions to GuidedQuestion format
-  const mappedQuestions: GuidedQuestion[] = (contract.questions || []).map((q) => ({
-    id: q.id,
-    attribute: q.attribute,
-    label: q.question,
-    inputType: q.inputType,
-    options: q.options || [],
-    importance: q.required ? "required_before_search" : "optional_preference",
-    allowSkip: Boolean(q.allowSkip),
-  }));
+  // 9. Format Assistant Chat Message
+  const mappedGuidedQuestions: GuidedQuestion[] = activeQuestion
+    ? [
+        {
+          id: activeQuestion.id,
+          attribute: activeQuestion.attributeKey,
+          label: activeQuestion.text,
+          inputType: activeQuestion.inputType,
+          options: activeQuestion.options,
+          importance: activeQuestion.required ? "required_before_search" : "optional_preference",
+          allowSkip: activeQuestion.allowSkip ?? true,
+        },
+      ]
+    : [];
 
-  const activeQuestions = mappedQuestions.length > 0 ? mappedQuestions : reqAnalysis.questions || [];
-
-  let assistantContent = contract.assistantMessage;
-  if (!reqAnalysis.canSearch && activeQuestions.length > 0 && (!assistantContent || assistantContent.includes("standard SpendPilot redirect") || assistantContent.includes("keeping your shopping requirements ready"))) {
-    assistantContent = `To help find the right fit, could you let me know: ${activeQuestions[0].label}?`;
-  }
-
-  // Format assistant message
   const assistantMsg: ChatMessage = {
-    id: `msg_a_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`,
+    id: `msg_a_${now.toString(36)}_${Math.random().toString(36).substring(2, 6)}`,
     role: "assistant",
     content: assistantContent,
-    createdAt: Date.now(),
-    suggestedReplies: contract.suggestedReplies || [],
-    questions: activeQuestions,
+    createdAt: now,
+    nextQuestion: activeQuestion,
+    questions: mappedGuidedQuestions,
+    suggestedReplies: activeQuestion?.options.map((o) => o.label || o.value).slice(0, 4) || [],
     actionProposed: effectiveAction,
-    scope: contract.scope,
-    productsReferenced: contract.referencedProductIds || referencedIds,
+    scope: guard.scope,
+    productsReferenced: referencedIds,
     modelUsed,
+    turnId,
   };
 
   const nextStage = shouldExecuteSearch
@@ -545,17 +641,23 @@ export async function processUserMessage({
     ? "requirements_review"
     : "needs_clarification";
 
+  const nextConversationState = shouldExecuteSearch
+    ? "searching_products"
+    : reqAnalysis.canSearch
+    ? "ready_for_search"
+    : "waiting_for_user_answer";
+
   let intentSummary = reqAnalysis.intentSummary || session.intentSummary;
   if (/trail/i.test(trimmed)) {
-    intentSummary = `Find trail running shoes${effectiveBudget ? ` under $${effectiveBudget / 100}` : ""}`;
+    intentSummary = `Find trail running shoes${effectiveBudget ? ` under $${minorToMajorUnits(effectiveBudget)}` : ""}`;
   }
 
   const requirementsToSave = reqAnalysis.requirements.map((r) => ({
     ...r,
-    budget: budgetForEngine,
+    budget: budgetInMajorUnits,
     searchFilters: {
       ...r.searchFilters,
-      ...(budgetForEngine ? { maxPrice: budgetForEngine } : {}),
+      ...(budgetInMajorUnits ? { maxPrice: budgetInMajorUnits } : {}),
       ...(updatedAnswers["brand"]?.value && updatedAnswers["brand"].value !== "No preference"
         ? { brand: [String(updatedAnswers["brand"].value)] }
         : {}),
@@ -564,40 +666,59 @@ export async function processUserMessage({
 
   const updatedSession: AuthoritativeShoppingSession = {
     ...session,
+    originalRequest: session.originalRequest || trimmed,
     stage: nextStage,
+    conversationState: nextConversationState,
+    revision: nextRev,
+    turnId,
     mode: inferredMode,
     budget: effectiveBudget,
     intentSummary,
     requirements: requirementsToSave.length > 0 ? requirementsToSave : session.requirements,
-    pendingQuestions: reqAnalysis.questions,
+    pendingQuestions: mappedGuidedQuestions,
+    activeQuestion,
+    answeredQuestionIds: answeredIds,
     answers: updatedAnswers,
     attributeOrigins: updatedOrigins,
+    canonicalAttributes: canonicalMap,
     messages: [...updatedMessages, assistantMsg],
-    previousInteractionId: newInteractionId,
     canSearch: reqAnalysis.canSearch,
     retrievedProductIds: needsReSearch ? [] : session.retrievedProductIds,
     lastAction: effectiveAction,
-    updatedAt: Date.now(),
+    updatedAt: now,
   };
-
-  // Check if variant was selected in message
-  let variantConfig: ProcessUserMessageResult["variantConfiguration"] = null;
-  if (contract.variantSelection?.productId) {
-    variantConfig = {
-      productId: contract.variantSelection.productId,
-      selectedOptions: contract.variantSelection.selectedOptions || {},
-    };
-  }
 
   return {
     session: updatedSession,
     assistantMessage: assistantMsg,
     action: effectiveAction,
-    scope: contract.scope,
+    scope: guard.scope,
     shouldExecuteSearch,
     shouldExecuteComparison: false,
-    variantConfiguration: variantConfig,
     modelUsed,
     usedFallback,
   };
+}
+
+/**
+ * Convenient alias for multi-turn conversational processing in tests and orchestrators.
+ */
+export async function processConversationalTurn(
+  session: AuthoritativeShoppingSession,
+  userMessage: string,
+  options?: {
+    clientMessageId?: string;
+    answeredQuestionId?: string;
+    answeredAttributeKey?: string;
+    currentProducts?: NormalizedProduct[];
+  }
+): Promise<ProcessUserMessageResult> {
+  return processUserMessage({
+    session,
+    userMessage,
+    clientMessageId: options?.clientMessageId,
+    answeredQuestionId: options?.answeredQuestionId,
+    answeredAttributeKey: options?.answeredAttributeKey,
+    currentProducts: options?.currentProducts,
+  });
 }

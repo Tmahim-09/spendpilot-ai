@@ -18,13 +18,16 @@ import type {
   AuthoritativeShoppingSession,
   CurrencyCode,
 } from "@/types";
-import { formatCurrency } from "@/lib/utils";
+import { formatMinorUnits } from "@/lib/money";
 
 interface ContinuousChatWorkspaceProps {
   session: AuthoritativeShoppingSession;
   isLoading: boolean;
   activeStatusText?: string | null;
-  onSendMessage: (message: string) => void;
+  onSendMessage: (
+    message: string,
+    meta?: { questionId?: string; attributeKey?: string; clientMessageId?: string }
+  ) => void;
   onExecuteSearch: () => void;
   onResetSession?: () => void;
   currency?: CurrencyCode;
@@ -40,11 +43,14 @@ export function ContinuousChatWorkspace({
   currency = "USD",
 }: ContinuousChatWorkspaceProps) {
   const [inputText, setInputText] = useState("");
-  const [isRequirementsOpen, setIsRequirementsOpen] = useState(false);
+  const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
+  const [disabledQuestionIds, setDisabledQuestionIds] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-scroll to bottom of messages
+  const messageCounter = useRef(0);
+
+  // Auto-scroll to bottom of messages on updates
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -57,16 +63,36 @@ export function ContinuousChatWorkspace({
     e.preventDefault();
     const text = inputText.trim();
     if (!text || isLoading) return;
-    onSendMessage(text);
+    messageCounter.current += 1;
+    const clientMessageId = `msg_u_submit_${messageCounter.current}`;
+    onSendMessage(text, { clientMessageId });
     setInputText("");
   };
 
-  const handleQuickReply = (reply: string) => {
+  const handleQuickReply = (
+    value: string,
+    label: string,
+    questionId?: string,
+    attributeKey?: string
+  ) => {
     if (isLoading) return;
-    onSendMessage(reply);
+    if (questionId) {
+      setDisabledQuestionIds((prev) => new Set(prev).add(questionId));
+    }
+    messageCounter.current += 1;
+    const clientMessageId = `msg_u_${messageCounter.current}_${questionId || "opt"}`;
+    onSendMessage(label || value, {
+      questionId,
+      attributeKey,
+      clientMessageId,
+    });
   };
 
-  const answeredCount = Object.keys(session.answers).length;
+  const canonicalAttrs = session.canonicalAttributes
+    ? Object.values(session.canonicalAttributes).filter((a) => a.status !== "skipped")
+    : [];
+
+  const preferenceCount = canonicalAttrs.length + (session.budget ? 1 : 0);
   const canSearch = session.canSearch;
 
   return (
@@ -74,7 +100,7 @@ export function ContinuousChatWorkspace({
       <div className="flex flex-col h-[650px] sm:h-[720px] rounded-2xl border border-[#262626] bg-[#0a0a0a] shadow-2xl overflow-hidden relative">
         
         {/* ─────────────────────────────────────────────────────────────
-            HEADER & REQUIREMENTS ACCORDION
+            HEADER & "YOUR PREFERENCES" DRAWER
            ───────────────────────────────────────────────────────────── */}
         <div className="border-b border-[#202020] bg-[#0e0e0e]/95 backdrop-blur-md px-4 py-3 z-10">
           <div className="flex items-center justify-between gap-3">
@@ -91,40 +117,36 @@ export function ContinuousChatWorkspace({
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-bold text-[#F5F5F5] tracking-tight">
-                    SpendPilot Assistant
+                    SpendPilot
                   </h3>
-                  <span className="inline-flex items-center gap-1 rounded-full border border-[#FF6A00]/30 bg-[#FF6A00]/10 px-2 py-0.5 text-[10px] font-semibold text-[#FF8126]">
-                    <Sparkles className="h-2.5 w-2.5" />
-                    Shopping Only
-                  </span>
                 </div>
                 <p className="text-[11px] text-[#737373] truncate max-w-xs sm:max-w-md">
-                  {session.intentSummary || "Natural conversational product discovery"}
+                  {session.intentSummary || "Personal shopping assistance within budget"}
                 </p>
               </div>
             </div>
 
             {/* Header Right Actions */}
             <div className="flex items-center gap-2">
-              {/* Requirements Toggle */}
+              {/* Preferences Toggle */}
               <button
                 type="button"
-                onClick={() => setIsRequirementsOpen((prev) => !prev)}
+                onClick={() => setIsPreferencesOpen((prev) => !prev)}
                 className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
-                  isRequirementsOpen
+                  isPreferencesOpen
                     ? "border-[#FF6A00]/60 bg-[#FF6A00]/10 text-[#FF8126]"
                     : "border-[#303030] bg-[#141414] text-[#A3A3A3] hover:border-[#404040]"
                 }`}
-                title="View structured requirements"
+                title="View your confirmed preferences"
               >
                 <SlidersHorizontal className="h-3 w-3" />
-                <span className="hidden sm:inline">Requirements</span>
-                {answeredCount > 0 && (
+                <span className="hidden sm:inline">Your preferences</span>
+                {preferenceCount > 0 && (
                   <span className="h-4 w-4 rounded-full bg-[#262626] text-[10px] flex items-center justify-center text-[#D4D4D4]">
-                    {answeredCount}
+                    {preferenceCount}
                   </span>
                 )}
-                {isRequirementsOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                {isPreferencesOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
               </button>
 
               {/* Reset Session Button */}
@@ -141,11 +163,11 @@ export function ContinuousChatWorkspace({
             </div>
           </div>
 
-          {/* Collapsible Requirements Summary Drawer */}
-          {isRequirementsOpen && (
+          {/* Collapsible Clean Preferences Summary Drawer */}
+          {isPreferencesOpen && (
             <div className="mt-3 pt-3 border-t border-[#1c1c1c] text-xs space-y-2.5 animate-fadeIn">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[#888888] font-medium">Session Specifications:</span>
+                <span className="text-[#888888] font-medium">Your preferences</span>
                 <span
                   className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                     canSearch
@@ -153,30 +175,33 @@ export function ContinuousChatWorkspace({
                       : "border border-[#F59E0B]/30 bg-[#F59E0B]/10 text-[#F59E0B]"
                   }`}
                 >
-                  {canSearch ? "Ready to Search" : "Clarifying Details"}
+                  {canSearch ? "Ready to Search" : "Preferences in progress"}
                 </span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
                 <div className="rounded-lg border border-[#202020] bg-[#121212] p-2">
-                  <span className="text-[#666666] block text-[10px]">Mode</span>
-                  <span className="text-[#E5E5E5] font-semibold capitalize">{session.mode}</span>
-                </div>
-                <div className="rounded-lg border border-[#202020] bg-[#121212] p-2">
-                  <span className="text-[#666666] block text-[10px]">Budget Cap</span>
+                  <span className="text-[#666666] block text-[10px]">Budget</span>
                   <span className="text-[#35C979] font-bold">
-                    {session.budget ? formatCurrency(session.budget * 100, currency) : "Not capped"}
+                    {formatMinorUnits(session.budget, currency)}
                   </span>
                 </div>
-                <div className="rounded-lg border border-[#202020] bg-[#121212] p-2 col-span-2">
-                  <span className="text-[#666666] block text-[10px]">Known Attributes</span>
-                  <span className="text-[#D4D4D4] truncate block">
-                    {Object.values(session.answers)
-                      .filter((a) => !a.isSkipped && a.value !== undefined)
-                      .map((a) => `${a.attribute}: ${a.displayValue || a.value}`)
-                      .join(", ") || "None yet"}
-                  </span>
-                </div>
+
+                {canonicalAttrs.length > 0 ? (
+                  canonicalAttrs.map((attr) => (
+                    <div key={attr.key} className="rounded-lg border border-[#202020] bg-[#121212] p-2">
+                      <span className="text-[#666666] block text-[10px]">{attr.label}</span>
+                      <span className="text-[#E5E5E5] font-semibold truncate block">
+                        {attr.displayValue}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-[#202020] bg-[#121212] p-2 col-span-2 sm:col-span-3">
+                    <span className="text-[#666666] block text-[10px]">Specifications</span>
+                    <span className="text-[#888888] block text-[11px]">Tell SpendPilot what you&apos;re looking for.</span>
+                  </div>
+                )}
               </div>
 
               {canSearch && (
@@ -186,7 +211,7 @@ export function ContinuousChatWorkspace({
                   className="w-full mt-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#FF6A00] py-1.5 text-xs font-bold text-white hover:bg-[#ff7b1a] transition-colors shadow-md shadow-[#FF6A00]/20"
                 >
                   <Search className="h-3.5 w-3.5" />
-                  <span>Search Verified Channel3 Products Now</span>
+                  <span>Search Verified Options Now</span>
                 </button>
               )}
             </div>
@@ -202,17 +227,17 @@ export function ContinuousChatWorkspace({
               <div className="h-12 w-12 rounded-2xl border border-[#FF6A00]/40 bg-[#161210] p-2 flex items-center justify-center text-[#FF8126]">
                 <Bot className="h-6 w-6" />
               </div>
-              <h4 className="text-base font-bold text-[#F5F5F5]">SpendPilot Shopping Assistant</h4>
+              <h4 className="text-base font-bold text-[#F5F5F5]">SpendPilot Assistant</h4>
               <p className="text-xs text-[#888888] max-w-md">
-                Tell me what you&apos;re looking to buy. I&apos;ll help you clarify specifications, compare options, and stay strictly within your budget.
+                Tell me what you&apos;re looking to buy. I&apos;ll help you find the right fit, compare specifications, and stay strictly within your budget.
               </p>
               <div className="flex flex-wrap justify-center gap-2 pt-2">
-                {["Running sneakers under $150", "Laptop for programming under $1000", "Gaming PC setup for 1440p"].map(
+                {["Wireless headphones under $150", "Running sneakers under $150", "Laptop for programming under $1000"].map(
                   (ex) => (
                     <button
                       key={ex}
                       type="button"
-                      onClick={() => handleQuickReply(ex)}
+                      onClick={() => handleQuickReply(ex, ex)}
                       className="rounded-full border border-[#262626] bg-[#121212] px-3 py-1 text-xs text-[#A3A3A3] hover:border-[#FF6A00]/50 hover:text-[#FF8126] transition-colors"
                     >
                       &ldquo;{ex}&rdquo;
@@ -222,8 +247,16 @@ export function ContinuousChatWorkspace({
               </div>
             </div>
           ) : (
-            session.messages.map((msg) => {
+            session.messages.map((msg, idx) => {
               const isAssistant = msg.role === "assistant";
+              const isLastAssistant = isAssistant && idx === session.messages.length - 1;
+
+              // Derive single next question (prefer nextQuestion, then questions[0])
+              const activeQuestion = msg.nextQuestion || (msg.questions && msg.questions[0]) || null;
+              const isQuestionAnswered = activeQuestion
+                ? disabledQuestionIds.has(activeQuestion.id) || (session.answeredQuestionIds?.includes(activeQuestion.id))
+                : true;
+
               return (
                 <div
                   key={msg.id}
@@ -250,64 +283,33 @@ export function ContinuousChatWorkspace({
                       }`}
                     >
                       <p className="whitespace-pre-wrap">{msg.content}</p>
-
-                      {/* Display Model Badge if available */}
-                      {isAssistant && msg.modelUsed && (
-                        <div className="mt-2 pt-1.5 border-t border-[#1f1f1f] flex items-center justify-between text-[10px] text-[#666666]">
-                          <span className="capitalize">{msg.actionProposed?.replace(/_/g, " ") || "conversation"}</span>
-                          <span className="font-mono">{msg.modelUsed}</span>
-                        </div>
-                      )}
                     </div>
 
-                    {/* Inline Questions (chips / selectors) */}
-                    {isAssistant && msg.questions && msg.questions.length > 0 && (
-                      <div className="space-y-2 pt-1 pl-1">
-                        {msg.questions.map((q) => (
-                          <div key={q.id} className="space-y-1.5">
-                            <span className="text-[11px] font-semibold text-[#FF8126] flex items-center gap-1">
-                              <Sparkles className="h-2.5 w-2.5" />
-                              {q.label}
-                            </span>
-                            <div className="flex flex-wrap gap-1.5">
-                              {q.options?.map((opt) => (
-                                <button
-                                  key={opt.id}
-                                  type="button"
-                                  onClick={() => handleQuickReply(opt.label || opt.value)}
-                                  className="rounded-lg border border-[#2a2a2a] bg-[#161616] px-2.5 py-1 text-xs text-[#D4D4D4] hover:border-[#FF6A00] hover:text-[#FF8126] transition-all"
-                                >
-                                  {opt.label}
-                                </button>
-                              ))}
-                              {q.allowSkip && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleQuickReply(`No preference for ${q.attribute}`)}
-                                  className="rounded-lg border border-[#242424] bg-[#101010] px-2 py-1 text-xs text-[#737373] hover:text-[#A3A3A3] transition-colors"
-                                >
-                                  No preference
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Inline Suggested Quick Replies */}
-                    {isAssistant && msg.suggestedReplies && msg.suggestedReplies.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 pt-1 pl-1">
-                        {msg.suggestedReplies.map((reply, rIdx) => (
-                          <button
-                            key={rIdx}
-                            type="button"
-                            onClick={() => handleQuickReply(reply)}
-                            className="rounded-full border border-[#2f2f2f] bg-[#141414] px-3 py-1 text-xs text-[#D4D4D4] hover:border-[#FF6A00]/60 hover:text-[#FF8126] transition-colors"
-                          >
-                            {reply}
-                          </button>
-                        ))}
+                    {/* Exactly ONE inline question, shown ONLY on the active last assistant message */}
+                    {isLastAssistant && activeQuestion && !isQuestionAnswered && (
+                      <div className="space-y-1.5 pt-1 pl-1 animate-fadeIn">
+                        <div className="flex flex-wrap gap-1.5">
+                          {activeQuestion.options?.map((opt) => (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              disabled={isLoading}
+                              onClick={() =>
+                                handleQuickReply(
+                                  opt.value,
+                                  opt.label,
+                                  activeQuestion.id,
+                                  "attributeKey" in activeQuestion
+                                    ? activeQuestion.attributeKey
+                                    : (activeQuestion as { attribute: string }).attribute
+                                )
+                              }
+                              className="rounded-lg border border-[#2a2a2a] bg-[#161616] px-3 py-1.5 text-xs font-medium text-[#D4D4D4] hover:border-[#FF6A00] hover:text-[#FF8126] disabled:opacity-50 transition-all shadow-sm"
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -326,14 +328,14 @@ export function ContinuousChatWorkspace({
           {isLoading && (
             <div className="flex items-center gap-2.5 text-xs text-[#FF8126] py-2 animate-fadeIn">
               <div className="h-7 w-7 rounded-xl border border-[#FF6A00]/40 bg-[#161210] p-1 shrink-0 flex items-center justify-center">
-                <Sparkles className="h-3.5 w-3.5 animate-spin" />
+                <Sparkles className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
               </div>
               <div className="rounded-2xl border border-[#262626] bg-[#121212] px-3.5 py-2 flex items-center gap-2">
                 <span>{activeStatusText || "SpendPilot is thinking..."}</span>
-                <span className="flex gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#FF6A00] animate-bounce" />
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#FF6A00] animate-bounce [animation-delay:0.2s]" />
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#FF6A00] animate-bounce [animation-delay:0.4s]" />
+                <span className="flex gap-1" aria-hidden="true">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#FF6A00] animate-bounce motion-reduce:animate-none" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#FF6A00] animate-bounce motion-reduce:animate-none [animation-delay:0.2s]" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#FF6A00] animate-bounce motion-reduce:animate-none [animation-delay:0.4s]" />
                 </span>
               </div>
             </div>
@@ -343,13 +345,13 @@ export function ContinuousChatWorkspace({
         </div>
 
         {/* ─────────────────────────────────────────────────────────────
-            BOTTOM CONFIRMATION ACTION BANNER (WHEN READY)
+            BOTTOM ACTION BANNER (WHEN READY)
            ───────────────────────────────────────────────────────────── */}
         {canSearch && !isLoading && (
-          <div className="border-t border-[#202020] bg-[#111111] px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
+          <div className="border-t border-[#202020] bg-[#111111] px-4 py-2.5 flex items-center justify-between gap-3 text-xs animate-fadeIn">
             <div className="flex items-center gap-2 text-[#35C979]">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
-              <span className="font-medium text-[#E5E5E5] hidden sm:inline">Requirements ready!</span>
+              <span className="font-medium text-[#E5E5E5] hidden sm:inline">Preferences complete!</span>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -388,8 +390,8 @@ export function ContinuousChatWorkspace({
             </button>
           </form>
           <div className="flex items-center justify-between mt-2 px-1 text-[11px] text-[#555555]">
-            <span>Enter to send &bull; Genuine product shopping domain only</span>
-            <span>Gemini Interactions API</span>
+            <span>Enter to send &bull; Shift+Enter for new line</span>
+            <span>SpendPilot AI</span>
           </div>
         </div>
 

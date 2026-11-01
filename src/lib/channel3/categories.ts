@@ -195,14 +195,16 @@ export async function resolveCategoryMetadata(
   const normalized = queryOrSlug.trim().toLowerCase();
   
   // 1. Direct match in verified taxonomy
-  for (const [key, meta] of Object.entries(VERIFIED_CATEGORY_TAXONOMY)) {
-    if (
-      normalized === key ||
-      normalized.includes(key) ||
-      key.includes(normalized) ||
-      meta.title.toLowerCase().includes(normalized)
-    ) {
-      return meta;
+  if (normalized.length >= 2) {
+    for (const [key, meta] of Object.entries(VERIFIED_CATEGORY_TAXONOMY)) {
+      if (
+        normalized === key ||
+        normalized.includes(key) ||
+        (normalized.length >= 3 && key.includes(normalized)) ||
+        meta.title.toLowerCase().includes(normalized)
+      ) {
+        return meta;
+      }
     }
   }
 
@@ -225,7 +227,14 @@ export async function resolveCategoryMetadata(
   ) {
     return VERIFIED_CATEGORY_TAXONOMY.sneakers;
   }
-  if (normalized.includes("headphone") || normalized.includes("earbud") || normalized.includes("headset") || normalized.includes("audio")) {
+  if (
+    normalized.includes("headphone") ||
+    normalized.includes("earbud") ||
+    normalized.includes("headset") ||
+    normalized.includes("audio") ||
+    normalized.includes("over-ear") ||
+    normalized.includes("in-ear")
+  ) {
     return VERIFIED_CATEGORY_TAXONOMY.headphones;
   }
   if (normalized.includes("laptop") || normalized.includes("macbook") || normalized.includes("notebook") || normalized.includes("thinkpad")) {

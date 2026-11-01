@@ -13,6 +13,7 @@ import { TrustSection } from "@/components/sections/TrustSection";
 import { SiteFooter } from "@/components/layout/SiteFooter";
 import { calculateRecommendedBundle } from "@/lib/setup/bundle-calculator";
 import { createInitialSession } from "@/lib/ai/conversation-engine";
+import { parseToMinorUnits, minorToMajorUnits } from "@/lib/money";
 import type {
   NormalizedProduct,
   CurrencyCode,
@@ -170,12 +171,13 @@ export default function Home() {
       );
       const toCompare = candidateProducts.length >= 2 ? candidateProducts : products.slice(0, 4);
 
+      const majorBudget = minorToMajorUnits(budget || chatSession.budget);
       const compRes = await fetch("/api/shopping/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: query || chatSession.originalRequest,
-          budget: budget || chatSession.budget,
+          budget: majorBudget,
           currency,
           products: toCompare,
         }),
@@ -197,11 +199,28 @@ export default function Home() {
 
   const handleSendChatMessage = async (
     messageText: string,
-    currentSessionState?: AuthoritativeShoppingSession
+    metaOrSession?:
+      | AuthoritativeShoppingSession
+      | { questionId?: string; attributeKey?: string; clientMessageId?: string },
+    explicitSession?: AuthoritativeShoppingSession
   ) => {
-    const sessionToUse = currentSessionState || chatSession;
+    let sessionToUse = chatSession;
+    let meta: { questionId?: string; attributeKey?: string; clientMessageId?: string } | undefined;
+
+    if (metaOrSession && "sessionId" in metaOrSession) {
+      sessionToUse = metaOrSession;
+    } else if (metaOrSession) {
+      meta = metaOrSession;
+      if (explicitSession) sessionToUse = explicitSession;
+    }
+
     setIsChatLoading(true);
-    setChatStatusText("SpendPilot is thinking...");
+
+    if (sessionToUse.messages.length === 0) {
+      setChatStatusText("Understanding what you're looking for...");
+    } else {
+      setChatStatusText("Got it. Narrowing down your options...");
+    }
 
     const currentSummary = products.slice(0, 6).map((p) => ({
       id: p.sourceProductId || p.title,
@@ -219,6 +238,9 @@ export default function Home() {
         body: JSON.stringify({
           sessionId: sessionToUse.sessionId,
           message: messageText,
+          clientMessageId: meta?.clientMessageId,
+          answeredQuestionId: meta?.questionId,
+          answeredAttributeKey: meta?.attributeKey,
           mode: sessionToUse.mode,
           budget: sessionToUse.budget,
           currency: sessionToUse.currency,
@@ -247,9 +269,13 @@ export default function Home() {
       }
 
       if (data.shouldExecuteSearch) {
-        setChatStatusText("Searching verified Channel3 matches...");
+        const queryTerm = data.session.originalRequest || query || messageText;
+        const cat = data.requirements?.[0]?.categorySlug || "products";
+        const catName = cat.includes("headphone") ? "headphones" : cat.includes("sneak") ? "sneakers" : "products";
+        setChatStatusText(`Finding ${catName} that match your preferences...`);
+
         await executeDirectSearch(
-          data.session.originalRequest || query || messageText,
+          queryTerm,
           data.session.budget || budget,
           data.session.currency || currency,
           data.session.mode || mode,
@@ -257,7 +283,7 @@ export default function Home() {
           data.requirements?.[0]?.searchFilters
         );
       } else if (data.shouldExecuteComparison && data.comparisonRequestedProductIds?.length) {
-        setChatStatusText("Comparing candidate products...");
+        setChatStatusText("Comparing the best matches...");
         await handleCompareProducts(data.comparisonRequestedProductIds);
       } else if (data.variantConfiguration?.productId) {
         const prodToConfig = products.find(
@@ -287,8 +313,9 @@ export default function Home() {
     searchMode: ShoppingMode = "single",
     searchPricePreference: PricePreference = "near_budget"
   ) => {
+    const minorBudget = parseToMinorUnits(searchBudget);
     setQuery(searchQuery);
-    setBudget(searchBudget);
+    setBudget(minorBudget);
     setCurrency(searchCurrency);
     setMode(searchMode);
     setPricePreference(searchPricePreference);
@@ -305,7 +332,7 @@ export default function Home() {
     const initialSession = createInitialSession({
       initialQuery: searchQuery,
       mode: searchMode,
-      budget: searchBudget,
+      budget: minorBudget,
       currency: searchCurrency,
     });
     setChatSession(initialSession);
@@ -327,6 +354,7 @@ export default function Home() {
     searchFilters?: StructuredRequirementSearchFilters
   ) => {
     const currentId = ++activeSearchId.current;
+    const majorBudget = minorToMajorUnits(searchBudget);
 
     // ─────────────────────────────────────────────────────────────
     // BRANCH A: MULTI-PRODUCT SETUP MODE
@@ -358,7 +386,7 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             query: searchQuery,
-            totalBudget: searchBudget,
+            totalBudget: majorBudget,
             currency: searchCurrency,
           }),
         });
@@ -402,7 +430,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: searchQuery,
-          budget: searchBudget,
+          budget: majorBudget,
           currency: searchCurrency,
           mode: "single",
           pricePreference: searchPricePreference,
@@ -469,7 +497,7 @@ export default function Home() {
           body: JSON.stringify({
             query: searchQuery,
             products: retrievedProducts,
-            budget: searchBudget,
+            budget: majorBudget,
             currency: searchCurrency,
           }),
         });
@@ -645,7 +673,7 @@ export default function Home() {
 
   const handleRetry = () => {
     if (query) {
-      handleSearch(query, budget, currency, mode, pricePreference);
+      handleSearch(query, minorToMajorUnits(budget), currency, mode, pricePreference);
     }
   };
 
@@ -654,13 +682,14 @@ export default function Home() {
     setIsRefining(true);
 
     try {
+      const majorBudget = minorToMajorUnits(budget);
       const recRes = await fetch("/api/shopping/recommend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query,
           products,
-          budget,
+          budget: majorBudget,
           currency,
           priorityOverride: priorityText,
         }),
@@ -687,7 +716,7 @@ export default function Home() {
   };
 
   const handleSelectPrompt = (suggestedPrompt: string) => {
-    handleSearch(suggestedPrompt, budget, currency, mode, pricePreference);
+    handleSearch(suggestedPrompt, minorToMajorUnits(budget), currency, mode, pricePreference);
   };
 
   return (
@@ -847,9 +876,9 @@ export default function Home() {
                       type="button"
                       onClick={() => {
                         if (setupRequirements.length > 0) {
-                          handleConfirmSetup(setupRequirements, budget || 0);
+                          handleConfirmSetup(setupRequirements, minorToMajorUnits(budget) || 0);
                         } else if (query) {
-                          handleSearch(query, budget, currency, "setup", pricePreference);
+                          handleSearch(query, minorToMajorUnits(budget), currency, "setup", pricePreference);
                         }
                       }}
                       className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-[#F05B5B] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#ff7070] transition-colors"

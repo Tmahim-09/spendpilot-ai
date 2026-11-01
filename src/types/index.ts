@@ -750,6 +750,39 @@ export type AttributeOrigin =
   | "ai_suggested"
   | "application_default";
 
+export type ConversationStageState =
+  | "idle"
+  | "processing_user_message"
+  | "generating_follow_up"
+  | "waiting_for_user_answer"
+  | "updating_requirements"
+  | "ready_for_search"
+  | "searching_products"
+  | "comparing_products"
+  | "results_ready"
+  | "configuring_variant"
+  | "error";
+
+export interface CanonicalShoppingAttribute {
+  key: string;
+  label: string;
+  value: string | string[];
+  displayValue: string;
+  source: AttributeOrigin;
+  status: "confirmed" | "suggested" | "skipped";
+  updatedAt: number;
+}
+
+export interface SingleNextQuestion {
+  id: string;
+  attributeKey: string;
+  text: string;
+  inputType: QuestionInputType;
+  options: QuestionOption[];
+  required: boolean;
+  allowSkip?: boolean;
+}
+
 export type ChatMessageRole = "user" | "assistant" | "system";
 
 export interface ChatMessage {
@@ -759,10 +792,13 @@ export interface ChatMessage {
   createdAt: number;
   suggestedReplies?: string[];
   questions?: GuidedQuestion[];
+  nextQuestion?: SingleNextQuestion | null;
   actionProposed?: ConversationalAction;
   scope?: DomainScope;
   productsReferenced?: string[];
   modelUsed?: string;
+  clientMessageId?: string;
+  turnId?: string;
 }
 
 export interface ConversationalActionContract {
@@ -777,6 +813,7 @@ export interface ConversationalActionContract {
     };
     attributes?: Record<string, string | number | boolean | string[]>;
   };
+  nextQuestion?: SingleNextQuestion | null;
   questions?: Array<{
     id: string;
     attribute: string;
@@ -788,7 +825,7 @@ export interface ConversationalActionContract {
   }>;
   suggestedReplies?: string[];
   readyForSearch: boolean;
-  requiresConfirmation: boolean;
+  requiresConfirmation?: boolean;
   referencedProductIds?: string[];
   variantSelection?: {
     productId?: string;
@@ -799,15 +836,21 @@ export interface ConversationalActionContract {
 export interface AuthoritativeShoppingSession {
   sessionId: string;
   stage: ShoppingStage;
+  conversationState?: ConversationStageState;
+  turnId?: string;
+  revision?: number;
   originalRequest: string;
   mode: ShoppingMode;
-  budget: number | null;
+  budget: number | null; // Stored strictly in integer minor units (cents)
   currency: CurrencyCode;
   intentSummary: string;
   requirements: StructuredRequirement[];
   pendingQuestions: GuidedQuestion[];
+  activeQuestion?: SingleNextQuestion | null;
+  answeredQuestionIds?: string[];
   answers: Record<string, CollectedAnswer>;
   attributeOrigins: Record<string, AttributeOrigin>;
+  canonicalAttributes?: Record<string, CanonicalShoppingAttribute>;
   messages: ChatMessage[];
   previousInteractionId?: string | null;
   storeInteractions?: boolean;
@@ -822,8 +865,11 @@ export interface AuthoritativeShoppingSession {
 export interface ChatRequestPayload {
   sessionId: string;
   message: string;
+  clientMessageId?: string;
+  answeredQuestionId?: string;
+  answeredAttributeKey?: string;
   mode?: ShoppingMode;
-  budget?: number | null;
+  budget?: number | null; // In minor units (cents) or major if from legacy
   currency?: CurrencyCode;
   sessionState?: Partial<AuthoritativeShoppingSession>;
   currentProductIds?: string[];
@@ -841,10 +887,13 @@ export interface ChatRequestPayload {
 export interface ChatResponsePayload {
   success: boolean;
   sessionId: string;
+  turnId?: string;
+  revision?: number;
   message: string;
   action: ConversationalAction;
   scope: DomainScope;
   requirements: StructuredRequirement[];
+  nextQuestion?: SingleNextQuestion | null;
   questions: GuidedQuestion[];
   suggestedReplies: string[];
   canSearch: boolean;

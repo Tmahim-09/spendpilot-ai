@@ -27,24 +27,31 @@ export function extractAttributesFromText(text: string): Record<string, string> 
   const lower = text.toLowerCase();
   const extracted: Record<string, string> = {};
 
-  // 1. Shoe Size extraction (e.g., "size 10", "size 10.5", "11.5 US", "size 9.5 mens")
-  const shoeSizeMatch = lower.match(/\b(?:size|sz)\s*([0-9]{1,2}(?:\.[0-9])?)\b/i) ||
+  // 1. Shoe Size extraction (e.g., "size 10", "size 10.5", "11.5 US", "size 9.5 mens", "shoe size is 10.5")
+  const shoeSizeMatch =
+    lower.match(/\b(?:size|sz)(?:\s*(?:is|:))?\s*([0-9]{1,2}(?:\.[0-9])?)\b/i) ||
     lower.match(/\b([0-9]{1,2}(?:\.[0-9])?)\s*(?:us|uk|eu)\b/i);
   if (shoeSizeMatch) {
     extracted["shoe-size"] = shoeSizeMatch[1];
+    extracted["shoe_size"] = shoeSizeMatch[1];
+    extracted["size"] = shoeSizeMatch[1];
   }
 
   // 2. Sizing System extraction
   if (lower.includes("women's") || lower.includes("womens") || lower.includes("women")) {
     extracted["size-system"] = "US Women's";
+    extracted["size_system"] = "US Women's";
     extracted["gender"] = "female";
   } else if (lower.includes("men's") || lower.includes("mens") || lower.includes("men")) {
     extracted["size-system"] = "US Men's";
+    extracted["size_system"] = "US Men's";
     extracted["gender"] = "male";
   } else if (lower.includes("uk size") || lower.includes(" uk")) {
     extracted["size-system"] = "UK";
+    extracted["size_system"] = "UK";
   } else if (lower.includes("eu size") || lower.includes(" eu")) {
     extracted["size-system"] = "EU";
+    extracted["size_system"] = "EU";
   }
 
   // 3. Color extraction
@@ -62,12 +69,16 @@ export function extractAttributesFromText(text: string): Record<string, string> 
   // 4. Operating System (for Laptops / Tech)
   if (lower.includes("macbook") || lower.includes("macos") || lower.includes("apple")) {
     extracted["operating-system"] = "macOS";
+    extracted["operating_system"] = "macOS";
   } else if (lower.includes("windows") || lower.includes("pc")) {
     extracted["operating-system"] = "Windows 11";
+    extracted["operating_system"] = "Windows 11";
   } else if (lower.includes("chromebook") || lower.includes("chromeos")) {
     extracted["operating-system"] = "ChromeOS";
+    extracted["operating_system"] = "ChromeOS";
   } else if (lower.includes("linux")) {
     extracted["operating-system"] = "Linux Friendly";
+    extracted["operating_system"] = "Linux Friendly";
   }
 
   // 5. Connectivity (for Headphones)
@@ -78,15 +89,21 @@ export function extractAttributesFromText(text: string): Record<string, string> 
   }
 
   // 6. Noise Cancellation
-  if (lower.includes("noise cancel") || lower.includes("anc")) {
+  if (lower.includes("noise cancel") || lower.includes("anc") || lower.includes("active noise")) {
     extracted["noise-cancellation"] = "Active Noise Cancelling (ANC)";
+    extracted["noise_cancellation"] = "Active Noise Cancelling (ANC)";
+  } else if (lower.includes("not necessary") || lower.includes("no anc") || lower.includes("passive")) {
+    extracted["noise-cancellation"] = "Standard / Passive";
+    extracted["noise_cancellation"] = "Standard / Passive";
   }
 
   // 7. Form factor (Headphones)
-  if (lower.includes("over-ear") || lower.includes("over ear")) {
+  if (lower.includes("over-ear") || lower.includes("over ear") || lower.includes("overear")) {
     extracted["form-factor"] = "Over-Ear";
-  } else if (lower.includes("earbud") || lower.includes("in-ear") || lower.includes("in ear")) {
+    extracted["form_factor"] = "Over-Ear";
+  } else if (lower.includes("earbud") || lower.includes("in-ear") || lower.includes("in ear") || lower.includes("inear")) {
     extracted["form-factor"] = "In-Ear / Earbuds";
+    extracted["form_factor"] = "In-Ear / Earbuds";
   }
 
   // 8. Storage capacity
@@ -132,7 +149,14 @@ export async function analyzeShoppingRequirements(params: {
   const allKnownAttrs: Record<string, string> = { ...textAttrs };
   for (const [k, ans] of Object.entries(existingAnswers)) {
     if (ans && !ans.isSkipped && ans.value !== undefined && ans.value !== null) {
-      allKnownAttrs[ans.attribute || k] = String(ans.value ?? ans.displayValue);
+      const val = String(ans.value ?? ans.displayValue);
+      const attr = ans.attribute || k;
+      allKnownAttrs[attr] = val;
+      allKnownAttrs[attr.replace(/-/g, "_")] = val;
+      allKnownAttrs[attr.replace(/_/g, "-")] = val;
+      allKnownAttrs[k] = val;
+      allKnownAttrs[k.replace(/-/g, "_")] = val;
+      allKnownAttrs[k.replace(/_/g, "-")] = val;
     }
   }
 
@@ -265,17 +289,17 @@ async function analyzeSingleProductRequirements(params: {
     }
   } else if (categorySlug === "headphones") {
     // 1. Form factor
-    if (!allKnownAttrs["form-factor"]) {
-      optionalMissing.push("form-factor");
+    if (!allKnownAttrs["form-factor"] && !allKnownAttrs["form_factor"]) {
+      optionalMissing.push("form_factor");
       questions.push({
         id: "q-form-factor",
-        attribute: "form-factor",
-        label: "What style of headphones do you prefer?",
+        attribute: "form_factor",
+        label: "Do you prefer over-ear headphones or earbuds?",
         description: "Choose your preferred fit.",
         inputType: "single_select",
         options: [
-          { id: "ff-overear", label: "Over-Ear (Cushioned cups)", value: "Over-Ear" },
-          { id: "ff-inear", label: "In-Ear / Earbuds (Compact)", value: "In-Ear / Earbuds" },
+          { id: "ff-overear", label: "Over-ear", value: "Over-Ear" },
+          { id: "ff-inear", label: "In-ear / Earbuds", value: "In-Ear / Earbuds" },
           { id: "ff-any", label: "No preference", value: "No preference" },
         ],
         importance: "optional_preference",
@@ -295,8 +319,8 @@ async function analyzeSingleProductRequirements(params: {
         inputType: "single_select",
         options: [
           { id: "conn-wireless", label: "Wireless (Bluetooth)", value: "Wireless (Bluetooth)" },
-          { id: "conn-wired", label: "Wired (3.5mm audio jack)", value: "Wired (3.5mm / USB)" },
-          { id: "conn-any", label: "Either / No preference", value: "No preference" },
+          { id: "conn-wired", label: "Wired (3.5mm / USB)", value: "Wired (3.5mm / USB)" },
+          { id: "conn-any", label: "No preference", value: "No preference" },
         ],
         importance: "optional_preference",
         allowSkip: true,
@@ -305,17 +329,17 @@ async function analyzeSingleProductRequirements(params: {
     }
 
     // 3. Noise Cancellation
-    if (!allKnownAttrs["noise-cancellation"]) {
-      optionalMissing.push("noise-cancellation");
+    if (!allKnownAttrs["noise-cancellation"] && !allKnownAttrs["noise_cancellation"]) {
+      optionalMissing.push("noise_cancellation");
       questions.push({
         id: "q-noise-cancellation",
-        attribute: "noise-cancellation",
-        label: "Do you require Active Noise Cancellation (ANC)?",
+        attribute: "noise_cancellation",
+        label: "Would you like Active Noise Cancellation (ANC)?",
         description: "ANC helps block background ambient chatter and commuting noise.",
         inputType: "single_select",
         options: [
           { id: "anc-yes", label: "Yes, ANC is important", value: "Active Noise Cancelling (ANC)" },
-          { id: "anc-no", label: "Standard / Not necessary", value: "Standard / Passive" },
+          { id: "anc-no", label: "Not necessary", value: "Standard / Passive" },
           { id: "anc-any", label: "No preference", value: "No preference" },
         ],
         importance: "optional_preference",
@@ -472,13 +496,21 @@ async function analyzeSingleProductRequirements(params: {
   // Filter out questions that have already been answered or skipped by the user
   const remainingQuestions = questions
     .filter((q) => {
-      const existing = existingAnswers[q.id] || existingAnswers[q.attribute];
+      const normAttr = q.attribute.replace(/-/g, "_");
+      const hyphenAttr = q.attribute.replace(/_/g, "-");
+      const existing =
+        existingAnswers[q.id] ||
+        existingAnswers[q.attribute] ||
+        existingAnswers[normAttr] ||
+        existingAnswers[hyphenAttr] ||
+        existingAnswers[`q-${q.attribute}`] ||
+        existingAnswers[`q-${normAttr}`] ||
+        existingAnswers[`q-${hyphenAttr}`];
       if (existing && (existing.isSkipped || existing.value !== undefined)) {
         return false;
       }
       return true;
-    })
-    .slice(0, 3); // Max 3 questions per round as mandated by PRD Section 6
+    });
 
   // Check if search can begin:
   // Can search if there are NO required_before_search questions remaining,

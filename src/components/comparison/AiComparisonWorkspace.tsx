@@ -24,7 +24,7 @@ import type {
   CurrencyCode,
   AssessmentRating,
 } from "@/types";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatSafeBudget } from "@/lib/utils";
 
 interface AiComparisonWorkspaceProps {
   query: string;
@@ -135,7 +135,7 @@ export function AiComparisonWorkspace({
               </span>
               {budget && (
                 <span className="text-xs text-[#35C979] bg-[#141c14] border border-[#35C979]/30 px-2.5 py-0.5 rounded-full font-mono font-medium">
-                  Budget: {formatCurrency(budget * 100, currency)}
+                  Budget: {formatSafeBudget(budget, currency)}
                 </span>
               )}
             </div>
