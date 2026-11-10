@@ -298,7 +298,11 @@ export function isAffirmativeConfirmation(text: string): boolean {
     lower.includes("sounds good") ||
     lower.includes("looks good") ||
     lower.includes("let's do it") ||
-    lower.includes("start search")
+    lower.includes("start search") ||
+    lower.includes("search now") ||
+    lower.includes("search again") ||
+    lower === "search" ||
+    lower.includes("find now")
   );
 }
 
@@ -861,9 +865,13 @@ export async function processUserMessage({
       shouldExecuteSearch = true;
       effectiveAction = "search_products";
       activeQuestion = null;
-      if (!assistantContent || isDelegatedOrNoPreference(trimmed)) {
-        const categoryTitle = reqAnalysis.category ? reqAnalysis.category.toLowerCase() : "product";
-        assistantContent = `As you have very little preference, it will be a bit tough to suggest the single best match, but I'll recommend the top-rated all-around ${categoryTitle} options. You can always add your preferences whenever you feel like it, and we can search again!`;
+      if (!assistantContent || isDelegatedOrNoPreference(trimmed) || /\?\s*$/.test(assistantContent.trim())) {
+        if (isDelegatedOrNoPreference(trimmed)) {
+          const categoryTitle = reqAnalysis.category ? reqAnalysis.category.toLowerCase() : "product";
+          assistantContent = `As you have very little preference, it will be a bit tough to suggest the single best match, but I'll recommend the top-rated all-around ${categoryTitle} options. You can always add your preferences whenever you feel like it, and we can search again!`;
+        } else {
+          assistantContent = "Searching for verified products matching your preferences.";
+        }
       }
     } else if (contract.nextQuestion) {
       activeQuestion = contract.nextQuestion;

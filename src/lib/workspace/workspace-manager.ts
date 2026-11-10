@@ -47,6 +47,34 @@ export function findItemInWorkspace(
 }
 
 /**
+ * Retrieves the currently active shopping item in the workspace.
+ */
+export function getActiveWorkspaceItem(
+  workspace: ShoppingWorkspace | undefined | null
+): ShoppingItem | null {
+  if (!workspace || !workspace.activeItemId) return null;
+  const found = findItemInWorkspace(workspace, workspace.activeItemId);
+  return found?.item || null;
+}
+
+/**
+ * Sets the active shopping item and activates its parent group.
+ */
+export function setActiveWorkspaceItem(
+  workspace: ShoppingWorkspace,
+  itemId: string
+): ShoppingWorkspace {
+  const found = findItemInWorkspace(workspace, itemId);
+  if (!found) return workspace;
+  return {
+    ...workspace,
+    activeItemId: itemId,
+    activeGroupId: found.group.id,
+    updatedAt: Date.now(),
+  };
+}
+
+/**
  * Appends an independent shopping item.
  * If an active independent group exists, it appends to it; otherwise it creates one.
  */

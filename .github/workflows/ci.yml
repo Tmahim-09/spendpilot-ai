@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, "release/*" ]
   pull_request:
     branches: [ main ]
 
@@ -36,8 +36,11 @@ jobs:
           CHANNEL3_API_KEY: test-dummy-ch3-key
           PAYPAL_CLIENT_ID: test-paypal-client-id
           PAYPAL_CLIENT_SECRET: test-paypal-client-secret
+          PAYPAL_CHECKOUT_SIGNING_SECRET: test-signing-secret-ci-32-bytes-minimum-key!
 
       - name: Build Next.js application
         run: npm run build
         env:
           NEXT_PUBLIC_PAYPAL_CLIENT_ID: test-paypal-client-id
+          PAYPAL_CHECKOUT_SIGNING_SECRET: test-signing-secret-ci-32-bytes-minimum-key!
+

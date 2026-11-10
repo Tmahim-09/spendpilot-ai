@@ -24,3 +24,4 @@ We will acknowledge receipt of your vulnerability report within 48 hours and wor
 - **Authoritative Payment Verification**: Product pricing and merchant recipient IDs are calculated and validated strictly on the server before dispatching orders to the PayPal Orders v2 API.
 - **PayPal Sandbox Only**: The application defaults to and enforces PayPal Sandbox mode (`https://api-m.sandbox.paypal.com`). Live credentials and live transactions are never executed.
 - **Input Validation**: All incoming API requests are validated with schema checks to reject unexpected inputs, malformed types, and parameter manipulation.
+

@@ -39,6 +39,7 @@ describe("SpendPilot AI: PayPal Multi-Seller Sandbox Architecture (Criteria 1 - 
     process.env.PAYPAL_DEMO_SELLER_A_EMAIL = "seller_a@spendpilot.test";
     process.env.PAYPAL_DEMO_SELLER_B_MERCHANT_ID = "MERCHANT_SELLER_B_456";
     process.env.PAYPAL_DEMO_SELLER_B_EMAIL = "seller_b@spendpilot.test";
+    process.env.PAYPAL_CHECKOUT_SIGNING_SECRET = "test_signing_secret_for_checkout_verification_only_32_bytes";
   });
 
   afterEach(() => {

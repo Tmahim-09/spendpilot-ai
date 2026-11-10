@@ -1,39 +1,81 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { runAiComparison } from "@/lib/ai/gemini-comparison";
 import { filterEligibleCandidates } from "@/lib/shopping/eligibility-gate";
 import type {
-  ShoppingRecommendRequestPayload,
   ShoppingRecommendResponsePayload,
   NormalizedProduct,
+  CanonicalShoppingAttribute,
 } from "@/types";
+
+const normalizedProductSchema = z
+  .object({
+    sourceProductId: z.string().optional(),
+    title: z.string().min(1, "Product title cannot be empty"),
+    priceMinor: z.number().nullable().optional(),
+    currency: z.enum(["USD", "EUR", "GBP"]).optional(),
+    brand: z.string().nullable().optional(),
+    imageUrl: z.string().optional(),
+    retailerName: z.string().optional(),
+    retailerUrl: z.string().optional(),
+    rating: z.number().nullable().optional(),
+    reviewCount: z.number().nullable().optional(),
+    availability: z.string().optional(),
+    features: z.array(z.string()).optional(),
+    specifications: z.record(z.string(), z.unknown()).optional(),
+    offers: z.array(z.any()).optional(),
+    selectedOffer: z.any().optional(),
+  })
+  .passthrough();
+
+export const shoppingRecommendRequestSchema = z.object({
+  query: z.string().trim().min(1, "Query is required"),
+  products: z.array(normalizedProductSchema).min(1, "At least one product is required for recommendation"),
+  budget: z.number().nullable().optional(),
+  currency: z.enum(["USD", "EUR", "GBP"]).optional(),
+  priorityOverride: z.string().optional(),
+  canonicalAttributes: z.record(z.string(), z.any()).optional(),
+  intent: z.any().optional(),
+});
 
 export async function POST(request: NextRequest) {
   const t0 = performance.now();
   const requestId = `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
   try {
-    const body = (await request.json().catch(() => null)) as Partial<ShoppingRecommendRequestPayload> | null;
+    const rawBody = await request.json().catch(() => null);
 
-    if (!body || typeof body !== "object") {
+    if (!rawBody || typeof rawBody !== "object") {
       return NextResponse.json(
         { success: false, error: "Invalid JSON request payload." },
         { status: 400 }
       );
     }
 
+    const validation = shoppingRecommendRequestSchema.safeParse(rawBody);
+    if (!validation.success) {
+      const issues = validation.error.issues
+        .map((i) => `${i.path.join(".")}: ${i.message}`)
+        .join("; ");
+      return NextResponse.json(
+        { success: false, error: `Invalid recommend request: ${issues}` },
+        { status: 400 }
+      );
+    }
+
     const {
-      query = "",
-      products = [],
+      query,
+      products,
       budget = null,
       currency = "USD",
       priorityOverride,
       canonicalAttributes,
-    } = body;
+    } = validation.data;
 
     // Filter candidate products against active hard requirements
     const eligibility = filterEligibleCandidates({
-      products: products as NormalizedProduct[],
-      canonicalAttributes,
+      products: products as unknown as NormalizedProduct[],
+      canonicalAttributes: canonicalAttributes as Record<string, CanonicalShoppingAttribute> | undefined,
       budgetCents: budget ? Math.round(budget * 100) : null,
       currency,
     });

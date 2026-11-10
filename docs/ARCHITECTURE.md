@@ -23,7 +23,7 @@ flowchart TD
         SearchAPI["/api/products/search\n(Price Policy & Grounded Search)"]
         VariantAPI["/api/products/variants\n(Variant Matrix Resolver)"]
         PayPalCreateAPI["/api/paypal/create-order\n(Multi-Capture Intent Builder)"]
-        PayPalCaptureAPI["/api/paypal/capture-order\n(Atomic Split Capture Verifier)"]
+        PayPalCaptureAPI["/api/paypal/capture-order\n(Multi-Seller Split Capture Verifier)"]
     end
 
     subgraph Services ["Core Server Services & State Controllers"]
@@ -158,3 +158,4 @@ sequenceDiagram
 4. **Defense in Depth**:
    - HTTP Security Headers (`X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: SAMEORIGIN`).
    - Rate limiting and input validation on all mutation endpoints.
+

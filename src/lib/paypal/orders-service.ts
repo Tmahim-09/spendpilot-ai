@@ -375,21 +375,44 @@ function normalizeOrderCaptures(
     const referenceId: string = unit.reference_id || "";
     const merchantId: string = unit.payee?.merchant_id || "";
 
-    // Identify seller by reference_id prefix or merchantId
-    let sellerId: DemoSellerId = "seller_a";
-    if (referenceId.startsWith("seller_b") || merchantId === registeredSellers.seller_b.merchantId) {
-      sellerId = "seller_b";
+    // Strictly reconcile seller identity against order context and registered sellers
+    let matchedSellerId: DemoSellerId | null = null;
+    let mismatchError: string | null = null;
+
+    if (referenceId.startsWith("seller_a")) {
+      if (merchantId && merchantId !== registeredSellers.seller_a.merchantId) {
+        mismatchError = `Payee merchant ID mismatch for Seller A (expected ${registeredSellers.seller_a.merchantId}, received ${merchantId}).`;
+      } else {
+        matchedSellerId = "seller_a";
+      }
+    } else if (referenceId.startsWith("seller_b")) {
+      if (merchantId && merchantId !== registeredSellers.seller_b.merchantId) {
+        mismatchError = `Payee merchant ID mismatch for Seller B (expected ${registeredSellers.seller_b.merchantId}, received ${merchantId}).`;
+      } else {
+        matchedSellerId = "seller_b";
+      }
+    } else if (merchantId === registeredSellers.seller_a.merchantId) {
+      matchedSellerId = "seller_a";
+    } else if (merchantId === registeredSellers.seller_b.merchantId) {
+      matchedSellerId = "seller_b";
+    } else {
+      mismatchError = `Unknown purchase unit reference '${referenceId}' and unregistered payee merchant ID '${merchantId}'.`;
     }
 
-    const sellerConfig = registeredSellers[sellerId];
+    const sellerConfig = matchedSellerId ? registeredSellers[matchedSellerId] : null;
     const unitAmountMinor = Math.round(parseFloat(unit.amount?.value || "0") * 100);
 
     const captureItem = unit.payments?.captures?.[0];
     let captureStatus: CaptureStatus = "FAILED";
     let captureId: string | undefined = undefined;
-    let errorMessage: string | undefined = undefined;
+    let errorMessage: string | undefined = mismatchError || undefined;
 
-    if (captureItem) {
+    if (mismatchError) {
+      captureStatus = "FAILED";
+      if (captureItem?.id) {
+        captureId = captureItem.id;
+      }
+    } else if (captureItem) {
       captureId = captureItem.id;
       const rawStatus = (captureItem.status || "").toUpperCase();
       if (rawStatus === "COMPLETED") {
@@ -409,9 +432,9 @@ function normalizeOrderCaptures(
     }
 
     sellerCaptures.push({
-      sellerId,
-      sellerName: sellerConfig.displayName,
-      merchantId: merchantId || sellerConfig.merchantId,
+      sellerId: matchedSellerId || "unknown",
+      sellerName: sellerConfig?.displayName || `Unknown Seller (${referenceId || merchantId || "N/A"})`,
+      merchantId: merchantId || sellerConfig?.merchantId || "unknown",
       referenceId,
       subtotalMinor: unitAmountMinor,
       currency: unit.amount?.currency_code || "USD",

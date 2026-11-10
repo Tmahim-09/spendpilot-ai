@@ -53,7 +53,7 @@ Popup closes. The verified receipt screen appears, highlighting the distinct Cap
 **Narrator**:
 > *"Now for the payment innovation. Often, your ideal setup comes from multiple distinct sellers. Normally, that means multiple separate transactions.*  
 > *With SpendPilot's PayPal Orders v2 integration, we construct a server-authoritative multi-seller order with separate purchase units.*  
-> *The buyer approves once through PayPal's secure modal. On the backend, SpendPilot executes split captures atomically. Both sellers receive their allocated funds with independent transaction receipts."*
+> *The buyer approves once through PayPal's secure modal. On the backend, SpendPilot executes split captures across both merchants from that single approval. Both sellers receive their allocated funds with independent transaction receipts."*
 
 ---
 
@@ -62,3 +62,4 @@ Popup closes. The verified receipt screen appears, highlighting the distinct Cap
 **Narrator**:
 > *"SpendPilot AI transforms e-commerce from high-friction searching into effortless conversational discovery, backed by real retail data and seamless PayPal multi-seller checkout.*  
 > *Thank you, judges!"*
+

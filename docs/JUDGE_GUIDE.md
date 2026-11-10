@@ -10,7 +10,7 @@ SpendPilot AI is a conversational shopping companion built for the **PayPal AI H
 
 1. **Conversational Understanding**: Shoppers express complex multi-attribute needs in natural language without filling out rigid filter forms.
 2. **Grounded Product Discovery & Comparison**: Powered by Channel3, SpendPilot retrieves genuine multi-merchant offers, extracts technical specs, and generates side-by-side trade-off comparisons without hallucinations.
-3. **Multi-Seller Checkout**: SpendPilot demonstrates multi-merchant cart checkout where a single buyer approval atomically pays multiple independent sellers via the PayPal Orders v2 API.
+3. **Multi-Seller Checkout**: SpendPilot demonstrates multi-merchant cart checkout where a single buyer approval pays multiple independent sellers via the PayPal Orders v2 API.
 
 ---
 
@@ -68,7 +68,7 @@ SpendPilot AI is a conversational shopping companion built for the **PayPal AI H
      - **Password**: *(Sandbox buyer password)*
    - Click **Complete Purchase**.
 5. **Observe**:
-   - SpendPilot's server captures the order atomically.
+   - SpendPilot's server captures the split purchase units for each merchant.
    - The verified receipt displays separate capture transactions for Seller A and Seller B, proving genuine multi-seller split execution.
 
 ---
@@ -120,3 +120,4 @@ npm test
 npm run dev
 # Open http://localhost:3000 in your browser
 ```
+

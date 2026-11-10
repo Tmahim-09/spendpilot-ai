@@ -58,7 +58,7 @@ export type CaptureStatus =
   | "PENDING";
 
 export interface SellerCaptureResult {
-  sellerId: DemoSellerId;
+  sellerId: DemoSellerId | "unknown";
   sellerName: string;
   merchantId: string;
   referenceId: string;

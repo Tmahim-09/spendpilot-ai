@@ -21,7 +21,9 @@ import {
   getNextUnresolvedItem,
   addIndependentItem,
   calculateWorkspaceBudgetSummary,
+  getActiveWorkspaceItem,
 } from "@/lib/workspace/workspace-manager";
+import type { ShoppingItem } from "@/lib/workspace/types";
 import { saveWorkspaceToStorage } from "@/lib/workspace/workspace-storage";
 import {
   getProgressMessage,
@@ -196,6 +198,8 @@ export default function Home() {
       // Ignore
     }
   }, [chatSession.workspace]);
+
+
 
   const handleResetSession = useCallback(() => {
     const fresh = createInitialSession({ currency, welcomeMessage: getRandomWelcomeMessage() });
@@ -378,6 +382,10 @@ export default function Home() {
         setChatStatusText(comparingMsg);
         setIsRankingAi(true);
 
+        let finalRecComparison: AiComparisonResult | null = null;
+        let finalRecEvidence: Record<string, EvidenceFact> = {};
+        let finalAllProducts: NormalizedProduct[] = retrievedProducts;
+
         try {
           const recRes = await fetch("/api/shopping/recommend", {
             method: "POST",
@@ -395,11 +403,14 @@ export default function Home() {
           if (currentId !== activeSearchId.current) return;
 
           if (recRes.ok && recData.success && recData.comparison) {
-            setComparison(recData.comparison);
-            setEvidenceFacts(recData.evidenceFacts || {});
+            finalRecComparison = recData.comparison;
+            finalRecEvidence = recData.evidenceFacts || {};
             if (recData.allProducts && recData.allProducts.length > 0) {
-              setProducts(recData.allProducts);
+              finalAllProducts = recData.allProducts;
             }
+            setComparison(finalRecComparison);
+            setEvidenceFacts(finalRecEvidence);
+            setProducts(finalAllProducts);
           }
         } catch {
           // AI comparison failure: product catalog remains visible without pretending comparison succeeded
@@ -415,6 +426,42 @@ export default function Home() {
         const finalMsg = getProgressMessage("completed", searchQuery, reqCategory, { isWinter });
 
         setChatSession((prev) => {
+          let ws = prev.workspace;
+          if (ws) {
+            let targetItemId = ws.activeItemId;
+            if (!targetItemId || ws.groups.length === 0) {
+              ws = addIndependentItem(ws, {
+                productRequest: searchQuery,
+                category: reqCategory || "general",
+                displayName: searchQuery,
+              });
+              targetItemId = ws.activeItemId;
+            }
+
+            if (targetItemId) {
+              const updatedGroups = ws.groups.map((g) => ({
+                ...g,
+                items: g.items.map((i) => {
+                  if (i.id === targetItemId) {
+                    return {
+                      ...i,
+                      searchId: `search_${currentId}`,
+                      searchFingerprint: `${searchQuery}_${majorBudget || 0}_${searchCurrency}`,
+                      searchStatus: "completed" as const,
+                      candidates: finalAllProducts,
+                      comparison: finalRecComparison,
+                      evidenceFacts: finalRecEvidence,
+                      status: (i.status === "selected" ? "selected" : "results_ready") as ShoppingItem["status"],
+                    };
+                  }
+                  return i;
+                }),
+              }));
+              ws = { ...ws, groups: updatedGroups, updatedAt: Date.now() };
+              saveWorkspaceToStorage(ws);
+            }
+          }
+
           const hasRecentIntro = prev.messages.slice(-3).some(
             (m) =>
               m.role === "assistant" &&
@@ -424,8 +471,9 @@ export default function Home() {
           );
           return {
             ...prev,
+            workspace: ws,
             stage: "product_selection",
-            retrievedProductIds: retrievedProducts.map((p) => p.sourceProductId || p.title),
+            retrievedProductIds: finalAllProducts.map((p) => p.sourceProductId || p.title),
             messages: hasRecentIntro
               ? prev.messages
               : [
@@ -439,11 +487,6 @@ export default function Home() {
               ],
           };
         });
-
-        // Ensure showcase section is smoothly visible and accessible once products & comparison are ready
-        setTimeout(() => {
-          scrollToShowcase();
-        }, 150);
       } catch {
         if (currentId !== activeSearchId.current) return;
         setProducts([]);
@@ -453,7 +496,7 @@ export default function Home() {
         setSearchError("Failed to connect to product search service. Please try again.");
       }
     },
-    [chatSession.canonicalAttributes, chatSession.shoppingBrief, scrollToShowcase]
+    [chatSession.canonicalAttributes, chatSession.shoppingBrief]
   );
 
   const handleSendChatMessage = useCallback(
@@ -580,7 +623,12 @@ export default function Home() {
         setChatStatusText(understandingMsg);
       }
 
-      const currentSummary = products.slice(0, 6).map((p) => ({
+      const activeItem = getActiveWorkspaceItem(sessionToUse.workspace);
+      const relevantCandidates = activeItem?.candidates?.length
+        ? activeItem.candidates
+        : (sessionToUse.workspace?.groups?.length ? [] : products);
+
+      const currentSummary = relevantCandidates.slice(0, 6).map((p) => ({
         id: p.sourceProductId || p.title,
         title: p.title,
         price: p.priceMinor !== null ? p.priceMinor / 100 : null,
@@ -612,7 +660,7 @@ export default function Home() {
             budget: effectiveBudget,
             currency: effectiveCurrency,
           },
-          currentProductIds: products.map((p) => p.sourceProductId || p.title),
+          currentProductIds: relevantCandidates.map((p) => p.sourceProductId || p.title),
           currentProductsSummary: currentSummary,
         };
 
@@ -711,6 +759,28 @@ export default function Home() {
                     shouldSearchAfterStream = false;
                     setSearchProgress(null);
                   }
+                } else if (event.type === "error") {
+                  shouldSearchAfterStream = false;
+                  setIsChatLoading(false);
+                  setSearchProgress(null);
+                  const friendlyError =
+                    "I encountered a temporary connection issue. Your preferences have been saved. Please reply or click below to try again.";
+                  setChatSession((prev) => {
+                    const msgs = prev.messages.filter((m) => m.id !== placeholderAssistantId);
+                    return {
+                      ...prev,
+                      messages: [
+                        ...msgs,
+                        {
+                          id: `msg_err_${Date.now()}`,
+                          role: "assistant",
+                          content: friendlyError,
+                          createdAt: Date.now(),
+                        },
+                      ],
+                    };
+                  });
+                  return;
                 }
               } catch {
                 // Ignore partial JSON parse errors
@@ -812,7 +882,20 @@ export default function Home() {
           }
         }
       } catch {
-        // Keep existing conversational state
+        setSearchProgress(null);
+        setChatSession((prev) => ({
+          ...prev,
+          messages: [
+            ...prev.messages,
+            {
+              id: `msg_err_${Date.now()}`,
+              role: "assistant",
+              content:
+                "I encountered a temporary connection issue. Your preferences have been preserved. Please reply or click below to try again.",
+              createdAt: Date.now(),
+            },
+          ],
+        }));
       } finally {
         setIsChatLoading(false);
         setChatStatusText(null);
@@ -873,22 +956,25 @@ export default function Home() {
       })
     );
 
-    // Sync updated selection and color image to shopping workspace / cart if already added
+    // Sync updated selection, options, and color image to shopping workspace / cart if already added
     setChatSession((prev) => {
       let ws = prev.workspace;
       let hasUpdatedWs = false;
       if (ws && ws.groups) {
+        const activeItemId = ws.activeItemId;
         const newGroups = ws.groups.map((group) => ({
           ...group,
           items: group.items.map((item) => {
             const isMatch =
-              item.selectedProduct &&
-              (item.selectedProduct.sourceProductId === selection.productId ||
-                item.selectedProduct.title === selection.title);
+              (item.selectedProduct &&
+                (item.selectedProduct.sourceProductId === selection.productId ||
+                  item.selectedProduct.title === selection.title)) ||
+              (activeItemId && item.id === activeItemId);
             if (isMatch && item.selectedProduct) {
               hasUpdatedWs = true;
               return {
                 ...item,
+                selectedVariant: (selection.selectedOptions as Record<string, string>) || item.selectedVariant,
                 selectedProduct: {
                   ...item.selectedProduct,
                   title: selection.title || item.selectedProduct.title,
@@ -923,6 +1009,50 @@ export default function Home() {
     setProducts((prev) =>
       prev.map((p) => ((p.sourceProductId || p.title) === pid ? updated : p))
     );
+
+    // Persist selected offer onto matching item in workspace and localStorage
+    setChatSession((prev) => {
+      const ws = prev.workspace;
+      if (!ws || !ws.groups) return prev;
+      let hasUpdated = false;
+      const activeItemId = ws.activeItemId;
+
+      const newGroups = ws.groups.map((group) => ({
+        ...group,
+        items: group.items.map((item) => {
+          const isSelectedMatch =
+            item.selectedProduct &&
+            ((item.selectedProduct.sourceProductId && item.selectedProduct.sourceProductId === pid) ||
+              item.selectedProduct.title === product.title);
+          const isActiveItemMatch = activeItemId ? item.id === activeItemId : false;
+
+          if (isSelectedMatch || (isActiveItemMatch && item.status === "selected")) {
+            hasUpdated = true;
+            return {
+              ...item,
+              selectedOffer: offer,
+              selectedProduct: item.selectedProduct
+                ? {
+                    ...item.selectedProduct,
+                    priceMinor: offer.priceMinor,
+                    retailerUrl: offer.url,
+                    retailerName: offer.domain || item.selectedProduct.retailerName,
+                    selectedOffer: offer,
+                  }
+                : null,
+            };
+          }
+          return item;
+        }),
+      }));
+
+      if (hasUpdated) {
+        const nextWs = { ...ws, groups: newGroups, updatedAt: Date.now() };
+        saveWorkspaceToStorage(nextWs);
+        return { ...prev, workspace: nextWs };
+      }
+      return prev;
+    });
   };
 
   const handleRefinePriority = async (priorityText: string) => {
@@ -1067,6 +1197,21 @@ export default function Home() {
     0
   );
 
+  const activeWorkspaceItem = getActiveWorkspaceItem(currentWorkspace);
+  const activeItemCandidates = activeWorkspaceItem?.candidates;
+  const activeItemComparison = activeWorkspaceItem?.comparison;
+  const activeItemEvidence = activeWorkspaceItem?.evidenceFacts;
+
+  // Use active item scoped data when available, otherwise fall back to top-level state
+  const displayedProducts = (activeItemCandidates && activeItemCandidates.length > 0)
+    ? activeItemCandidates
+    : (activeWorkspaceItem ? [] : products);
+  const displayedComparison = activeItemComparison ?? comparison;
+  const displayedEvidenceFacts = (activeItemEvidence && Object.keys(activeItemEvidence).length > 0)
+    ? activeItemEvidence
+    : evidenceFacts;
+  const displayedHasSearched = hasSearched || displayedProducts.length > 0;
+
   return (
     <div className="flex min-h-screen flex-col bg-transparent text-zinc-900 dark:text-[#E4E4E7]">
       {/* Site Header with Brand Logo, Centered Rounded Navbar, and Cart Button */}
@@ -1097,25 +1242,25 @@ export default function Home() {
             onBudgetChange={(b) => {
               setChatSession((prev) => ({ ...prev, budget: b }));
             }}
-            hasProductResults={products.length > 0}
-            productCount={products.length}
+            hasProductResults={displayedProducts.length > 0}
+            productCount={displayedProducts.length}
             onViewProducts={scrollToShowcase}
           />
         </section>
 
         {/* Dedicated Product Showcasing Section (Separate section below chat) */}
-        {hasSearched && (products.length > 0 || isSearchingProducts || searchError) && (
+        {displayedHasSearched && (displayedProducts.length > 0 || isSearchingProducts || searchError) && (
           <LiveProductResults
-            query={chatSession.originalRequest || "products"}
+            query={activeWorkspaceItem?.productRequest || chatSession.originalRequest || "products"}
             budget={minorToMajorUnits(chatSession.budget)}
             currency={chatSession.currency || currency}
-            products={products}
-            comparison={comparison}
-            evidenceFacts={evidenceFacts}
+            products={displayedProducts}
+            comparison={displayedComparison}
+            evidenceFacts={displayedEvidenceFacts}
             isSearchingProducts={isSearchingProducts}
             isRankingAi={isRankingAi}
             isRefining={isRefining}
-            aiStatus={comparison ? "complete" : isRankingAi ? "partial" : "unavailable"}
+            aiStatus={displayedComparison ? "complete" : isRankingAi ? "partial" : "unavailable"}
             error={searchError}
             onRetry={handleConfirmAndSearch}
             onSearchAgain={handleConfirmAndSearch}

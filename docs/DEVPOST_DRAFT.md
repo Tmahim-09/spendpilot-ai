@@ -22,7 +22,7 @@ SpendPilot AI bridges conversational intelligence, verified retail data, and mul
 - **Grounded Retrieval via Channel3**: Queries real-time e-commerce catalogs to retrieve verified merchant offers, exact prices, stock availability, and retailer direct links.
 - **Side-by-Side Spec Comparison**: Canonicalizes conflicting technical specs across retailers into clean comparison tables, highlighting trade-offs and best-match recommendations.
 - **Persistent Shopping Workspace**: Enables multi-task shopping, isolating different product categories (e.g., chairs vs. headphones) so previous specifications don't contaminate new searches.
-- **PayPal Multi-Seller Sandbox Checkout**: Demonstrates server-authoritative multi-seller split orders where a buyer approves one purchase and separate payments are captured atomically across multiple independent merchants.
+- **PayPal Multi-Seller Sandbox Checkout**: Demonstrates server-authoritative multi-seller split orders where a buyer approves one purchase and separate payments are captured across multiple independent merchants.
 
 ---
 
@@ -41,7 +41,7 @@ SpendPilot AI bridges conversational intelligence, verified retail data, and mul
 ### 3. Server-Authoritative Multi-Seller Checkout via PayPal Orders v2
 - Utilizes `@paypal/paypal-js` on the frontend for official PayPal buttons, backed by server-authoritative Next.js API endpoints (`/api/paypal/create-order` and `/api/paypal/capture-order`).
 - Implements multiple `purchase_units` with designated payee merchant accounts (`SpendPilot Audio Lab`, `SpendPilot Workspace Gear`).
-- Executes atomic split captures, returning independent capture IDs and payment allocations on a verified sandbox receipt.
+- Executes split captures from a single buyer authorization, returning independent capture IDs and payment allocations on a verified sandbox receipt.
 
 ---
 
@@ -65,3 +65,4 @@ SpendPilot AI bridges conversational intelligence, verified retail data, and mul
 - **Catalog & Pricing**: Channel3 SDK (`@channel3/sdk`)
 - **Payments**: PayPal Developer Platform (Orders v2 REST API, `@paypal/paypal-js`)
 - **Deployment**: Vercel (Edge-ready Node.js runtime)
+

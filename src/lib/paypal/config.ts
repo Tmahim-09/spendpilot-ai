@@ -7,9 +7,9 @@ const SANDBOX_BASE_URL = "https://api-m.sandbox.paypal.com";
  * Ensures we are strictly running in the PayPal Sandbox environment.
  * The demo must remain Sandbox-only and never silently switch to production.
  */
-export function assertSandboxEnvironment(): string {
+export function assertSandboxEnvironment(overrideBase?: string): string {
   const env = (process.env.PAYPAL_ENV || "sandbox").toLowerCase();
-  const rawBase = process.env.PAYPAL_API_BASE || SANDBOX_BASE_URL;
+  const rawBase = (overrideBase || process.env.PAYPAL_API_BASE || SANDBOX_BASE_URL).trim();
 
   if (env !== "sandbox") {
     throw new Error(
@@ -17,14 +17,41 @@ export function assertSandboxEnvironment(): string {
     );
   }
 
-  // Ensure base URL matches official PayPal Sandbox domain
-  if (!rawBase.includes("sandbox.paypal.com")) {
+  try {
+    const parsedUrl = new URL(rawBase);
+    if (parsedUrl.protocol !== "https:") {
+      throw new Error(
+        `Security Violation: PAYPAL_API_BASE must use HTTPS protocol, received '${parsedUrl.protocol}'.`
+      );
+    }
+    if (parsedUrl.hostname !== "api-m.sandbox.paypal.com") {
+      throw new Error(
+        `Security Violation: PAYPAL_API_BASE hostname '${parsedUrl.hostname}' is not an authorized PayPal Sandbox endpoint. Must be 'api-m.sandbox.paypal.com'.`
+      );
+    }
+    return `${parsedUrl.protocol}//${parsedUrl.hostname}`;
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.startsWith("Security Violation:")) {
+      throw err;
+    }
     throw new Error(
-      `Security Violation: PAYPAL_API_BASE '${rawBase}' is not an authorized PayPal Sandbox endpoint.`
+      `Security Violation: Malformed PAYPAL_API_BASE '${rawBase}'. Must be a valid HTTPS URL with hostname 'api-m.sandbox.paypal.com'.`
     );
   }
+}
 
-  return rawBase;
+/**
+ * Retrieves the dedicated server-only signing secret for checkout tokens.
+ * Fails closed if missing to prevent forged client-side tokens.
+ */
+export function getCheckoutSigningSecret(): string {
+  const secret = process.env.PAYPAL_CHECKOUT_SIGNING_SECRET?.trim();
+  if (!secret) {
+    throw new Error(
+      "Configuration Error: Missing required server-only environment variable PAYPAL_CHECKOUT_SIGNING_SECRET. Refusing to sign checkout tokens."
+    );
+  }
+  return secret;
 }
 
 export function getPayPalCredentials(): {
@@ -88,8 +115,7 @@ export function createCheckoutContextToken(payload: {
   totalMinor: number;
   currency: string;
 }): string {
-  const { clientSecret } = getPayPalCredentials();
-  const secretKey = clientSecret || "spendpilot_demo_sandbox_fallback_secret_key";
+  const secretKey = getCheckoutSigningSecret();
   const timestamp = Date.now();
   const data = JSON.stringify({ ...payload, timestamp });
   const hmac = crypto.createHmac("sha256", secretKey).update(data).digest("hex");
@@ -105,11 +131,11 @@ export function verifyCheckoutContextToken(token: string): {
   timestamp: number;
 } | null {
   try {
-    const { clientSecret } = getPayPalCredentials();
-    const secretKey = clientSecret || "spendpilot_demo_sandbox_fallback_secret_key";
+    if (!token || typeof token !== "string") return null;
+    const secretKey = getCheckoutSigningSecret();
     const raw = Buffer.from(token, "base64url").toString("utf-8");
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || !parsed.data || !parsed.hmac) {
+    if (!parsed || typeof parsed !== "object" || typeof parsed.data !== "string" || typeof parsed.hmac !== "string") {
       return null;
     }
 
@@ -118,18 +144,29 @@ export function verifyCheckoutContextToken(token: string): {
       .update(parsed.data)
       .digest("hex");
 
+    const hmacBuf = Buffer.from(parsed.hmac, "hex");
+    const expectedBuf = Buffer.from(expectedHmac, "hex");
+
     if (
-      !crypto.timingSafeEqual(
-        Buffer.from(parsed.hmac, "hex"),
-        Buffer.from(expectedHmac, "hex")
-      )
+      hmacBuf.length === 0 ||
+      hmacBuf.length !== expectedBuf.length ||
+      !crypto.timingSafeEqual(hmacBuf, expectedBuf)
     ) {
       return null;
     }
 
     const payload = JSON.parse(parsed.data);
-    // Disallow tokens older than 3 hours
-    if (Date.now() - payload.timestamp > 3 * 60 * 60 * 1000) {
+    if (!payload || typeof payload !== "object" || typeof payload.timestamp !== "number") {
+      return null;
+    }
+
+    const now = Date.now();
+    // Disallow tokens older than 3 hours or with timestamps in the distant future (>5 minutes)
+    if (now - payload.timestamp > 3 * 60 * 60 * 1000 || payload.timestamp - now > 5 * 60 * 1000) {
+      return null;
+    }
+
+    if (!payload.orderId || !Array.isArray(payload.sellerMerchantIds) || typeof payload.totalMinor !== "number") {
       return null;
     }
 

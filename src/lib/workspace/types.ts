@@ -1,4 +1,10 @@
-import type { NormalizedProduct, ProductOfferItem, CurrencyCode } from "../../types/index.ts";
+import type {
+  NormalizedProduct,
+  ProductOfferItem,
+  CurrencyCode,
+  AiComparisonResult,
+  EvidenceFact,
+} from "../../types/index.ts";
 
 export type ShoppingGroupType = "independent" | "coordinated_setup";
 
@@ -51,6 +57,15 @@ export interface ShoppingGroupBudget {
   strict: boolean;
 }
 
+export type ItemSearchStatus =
+  | "idle"
+  | "understanding"
+  | "searching"
+  | "results_ready"
+  | "comparing"
+  | "completed"
+  | "error";
+
 export interface ShoppingItem {
   id: string;
   productRequest: string;
@@ -61,7 +76,12 @@ export interface ShoppingItem {
   individualBudget?: ShoppingItemBudget;
   priority: ShoppingItemPriority;
   status: ShoppingItemStatus;
+  searchId?: string;
+  searchFingerprint?: string;
+  searchStatus?: ItemSearchStatus;
   candidates: NormalizedProduct[];
+  comparison?: AiComparisonResult | null;
+  evidenceFacts?: Record<string, EvidenceFact>;
   selectedProductId?: string;
   selectedProduct?: NormalizedProduct | null;
   selectedOffer?: ProductOfferItem | null;

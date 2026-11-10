@@ -46,3 +46,4 @@ SpendPilot AI incorporates open-source software and interfaces with third-party 
 
 - **SpendPilot Branding & UI**: Original design and brand marks created for SpendPilot AI.
 - **Product Images**: Product imagery retrieved dynamically via Channel3 belongs to their respective merchants and brand owners, referenced here for demonstration and product comparison purposes.
+

@@ -28,7 +28,7 @@ SpendPilot AI delivers an integrated, verified shopping experience:
 - **Grounded Retail Discovery**: Powered by Channel3, SpendPilot queries live merchant catalogs, retrieving actual retailer offers with live pricing, stock availability, and merchant links.
 - **Structured Specification Comparison**: Canonicalizes conflicting technical spec sheets across different retailers into clean, objective comparison tables highlighting critical trade-offs.
 - **Multi-Task Workspace & Persistent Cart**: Maintains distinct shopping tasks without context leakage, preserving selections across refreshes.
-- **PayPal Multi-Seller Split Checkout**: Demonstrates atomic, multi-merchant checkout where a single buyer approval pays multiple independent sellers simultaneously using PayPal Orders v2.
+- **PayPal Multi-Seller Split Checkout**: Demonstrates multi-merchant split checkout where a single buyer approval captures payments across multiple independent sellers using PayPal Orders v2.
 
 ---
 
@@ -44,7 +44,7 @@ SpendPilot AI delivers an integrated, verified shopping experience:
 
 ### PayPal Multi-Seller Sandbox Checkout
 ![PayPal Multi-Seller Checkout Demo](docs/assets/paypal-multi-seller-demo.png)
-*Server-authoritative multi-seller checkout demonstrating atomic split captures across independent merchants.*
+*Server-authoritative multi-seller checkout demonstrating split captures across independent Sandbox merchants.*
 
 ---
 
@@ -71,7 +71,7 @@ SpendPilot AI delivers an integrated, verified shopping experience:
 5. Comparison    -->  Side-by-side spec matrix contrasts trade-offs across 2-4 products
 6. Selection     -->  Selected product is added to My Shopping List in persistent cart
 7. Multi-Task    -->  Shopper can add more items (e.g. "now I need headphones under $200")
-8. PayPal Demo   -->  Multi-seller checkout captures separate merchant payments atomically
+8. PayPal Demo   -->  Multi-seller checkout executes independent split captures across registered merchants
 ```
 
 ---
@@ -145,7 +145,7 @@ Channel3 powers SpendPilot's real-time product discovery via `@channel3/sdk`:
 SpendPilot demonstrates multi-seller e-commerce checkout using the official PayPal Orders v2 REST API:
 - **Server-Authoritative Intent**: The server builds the order payload with `intent: "CAPTURE"` and multiple `purchase_units`, each assigned a specific demo merchant payee (`SpendPilot Audio Lab`, `SpendPilot Workspace Gear`).
 - **One-Click Buyer Approval**: The shopper logs into PayPal Sandbox once through the official PayPal JavaScript SDK popup window.
-- **Atomic Split Capture**: On the backend (`/api/paypal/capture-order`), SpendPilot captures the order, generating separate PayPal capture IDs and payment allocations for each merchant.
+- **Multi-Seller Split Capture**: On the backend (`/api/paypal/capture-order`), SpendPilot captures the order, generating separate PayPal capture IDs and payment allocations for each merchant.
 - **Receipt Transparency**: Renders a verified receipt displaying the breakdown of funds allocated to each independent seller.
 
 > [!NOTE]
@@ -209,6 +209,7 @@ SpendPilot demonstrates multi-seller e-commerce checkout using the official PayP
 | `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | PayPal Sandbox REST Client ID | **Yes** | Public / Client |
 | `PAYPAL_CLIENT_ID` | PayPal Sandbox REST Client ID | **Yes** | Server-Only |
 | `PAYPAL_CLIENT_SECRET` | PayPal Sandbox REST Client Secret | **Yes** | Server-Only |
+| `PAYPAL_CHECKOUT_SIGNING_SECRET` | Cryptographic secret for signing server-authoritative checkout tokens | **Yes** | Server-Only |
 | `PAYPAL_ENV` | Environment (`sandbox`) | **Yes** | Server-Only |
 | `PAYPAL_API_BASE` | PayPal API endpoint (`https://api-m.sandbox.paypal.com`) | **Yes** | Server-Only |
 | `PAYPAL_DEMO_SELLER_A_MERCHANT_ID` | Demo Seller A Merchant ID | Optional | Server-Only |
@@ -283,3 +284,4 @@ Created for the **PayPal AI Hackathon 2026**. Special thanks to Google Cloud & G
 ## 21. License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+

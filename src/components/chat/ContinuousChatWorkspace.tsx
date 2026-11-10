@@ -224,35 +224,28 @@ export function ContinuousChatWorkspace({
     }
   };
 
-  // Track last message details and search progress for comprehensive scroll visibility
+  // Track last message details for scroll visibility
   const lastMsg = session.messages[session.messages.length - 1];
   const lastMsgId = lastMsg?.id;
-  const lastMsgContent = lastMsg?.content;
-  const activeQuestionId = session.activeQuestion?.id;
-  const searchProgressMsg = searchProgress?.message;
 
-  // Auto-scroll whenever messages arrive, assistant streams, options appear, or search progress updates
+  // Auto-scroll when new messages arrive, but NEVER hijack scroll if user scrolled up
   useEffect(() => {
     if (!isMountedRef.current) {
       isMountedRef.current = true;
       return;
     }
-    if (!userScrolledUpRef.current && session.messages.length > 0) {
+    const el = chatContainerRef.current;
+    const isNearBottom = el ? el.scrollHeight - el.scrollTop - el.clientHeight < 120 : true;
+
+    if (isNearBottom && !userScrolledUpRef.current) {
       const frame = requestAnimationFrame(() => {
         scrollToBottom(true);
       });
       return () => cancelAnimationFrame(frame);
-    } else if (userScrolledUpRef.current) {
+    } else if (userScrolledUpRef.current || !isNearBottom) {
       setShowJumpToLatest(true);
     }
-  }, [
-    session.messages.length,
-    lastMsgId,
-    lastMsgContent,
-    activeQuestionId,
-    searchProgressMsg,
-    isLoading,
-  ]);
+  }, [session.messages.length, lastMsgId]);
 
   // Auto-resize textarea as content changes
   useEffect(() => {
