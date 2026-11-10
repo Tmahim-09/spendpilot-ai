@@ -92,8 +92,24 @@ export async function rankAndExplainProducts({
     }
   });
 
+  // Prepare candidate products, prioritizing budget proximity if budget is set
+  const sortedCandidates = [...products];
+  const isBudgetSaver =
+    query &&
+    /\b(lowest price|best value|budget[- ]?friendly|budget[- ]?saver|cheapest|economical|save money|cheap)\b/i.test(query);
+
+  const effectiveBudget = budget ?? intent?.totalBudget ?? null;
+  if (effectiveBudget && effectiveBudget > 0 && !isBudgetSaver) {
+    const budgetCents = effectiveBudget * 100;
+    sortedCandidates.sort((a, b) => {
+      const priceA = a.priceMinor ?? 0;
+      const priceB = b.priceMinor ?? 0;
+      return Math.abs(budgetCents - priceA) - Math.abs(budgetCents - priceB);
+    });
+  }
+
   // Prepare a compact, safe representation of candidates (max 8 items, no bloated metadata)
-  const candidateSummaries = products.slice(0, 8).map((p) => ({
+  const candidateSummaries = sortedCandidates.slice(0, 8).map((p) => ({
     productId: p.sourceProductId,
     title: p.title,
     brand: p.brand || "Not specified",
@@ -111,9 +127,10 @@ Rules:
 1. Grounding: All explanations must be grounded in the provided listing facts. Never invent specifications, ratings, prices, or retailer URLs.
 2. Only recommend productIds that exist in the candidate list. Do not introduce new products.
 3. Be transparent: If a specification like battery life, weight, or warranty is not in the data, do not invent it. Note it as unverified in keyTradeOffs.
-4. Tone: Concise, professional, objective. Avoid promotional hype like "best ever" or "unbeatable".`;
+4. Tone: Concise, professional, objective. Avoid promotional hype like "best ever" or "unbeatable".
+5. Requirement Provenance: Only cite requirements explicitly stated in User Shopping Request. Never claim the user requested unstated specs (like 32GB RAM or 1440p) unless explicitly requested.
+6. Budget Proximity: When a budget limit is set, rank products that maximize quality and build close to the budget higher than products far below budget (e.g. $44 on a $100 budget), unless the user explicitly requested a cheap or best-value option.`;
 
-  const effectiveBudget = budget ?? intent?.totalBudget ?? null;
   const effectiveCurrency = currency || intent?.currency || "USD";
   const intentSummary = intent?.summary || `Shopping request: "${query || "products"}"`;
 

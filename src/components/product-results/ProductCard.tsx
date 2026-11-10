@@ -7,13 +7,12 @@ import {
   Tag,
   Check,
   ChevronDown,
-  ChevronUp,
   Sparkles,
   ShoppingBag,
   AlertCircle,
   Award,
 } from "lucide-react";
-import type { NormalizedProduct, CurrencyCode } from "@/types";
+import type { NormalizedProduct, ProductOfferItem, CurrencyCode } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 
 interface ProductCardProps {
@@ -21,7 +20,10 @@ interface ProductCardProps {
   budget?: number | null;
   currency?: CurrencyCode;
   onConfigure?: (product: NormalizedProduct) => void;
+  onSelectOffer?: (product: NormalizedProduct, offer: ProductOfferItem) => void;
+  onSelectProduct?: (product: NormalizedProduct) => void;
   isConfigured?: boolean;
+  isSelected?: boolean;
 }
 
 export function ProductCard({
@@ -29,290 +31,339 @@ export function ProductCard({
   budget = null,
   currency = "USD",
   onConfigure,
+  onSelectOffer,
+  onSelectProduct,
   isConfigured = false,
+  isSelected = false,
 }: ProductCardProps) {
-  const [showOffers, setShowOffers] = useState(false);
-  const [showSpecs, setShowSpecs] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   const [imgError, setImgError] = useState(false);
 
   const productCurrency = product.currency || currency;
   const hasMultipleOffers = product.offers && product.offers.length > 1;
+
+  // Selected Offer is authoritative source of truth for price, URL, and verification
+  const activeOffer = product.selectedOffer || product.offers?.[0] || null;
+  const isUnverified = product.configurationStatus === "unverified";
+  const isVerified = product.configurationStatus === "verified";
+
+  // Confirmed price derived from verified selected offer, or lowest observed listing price if unverified
+  const effectivePriceMinor =
+    isVerified && product.priceMinor !== null
+      ? product.priceMinor
+      : activeOffer?.priceMinor ?? product.priceMinor ?? null;
+
   const startingPrice =
-    product.priceMinor !== null ? formatCurrency(product.priceMinor, productCurrency) : null;
+    effectivePriceMinor !== null ? formatCurrency(effectivePriceMinor, productCurrency) : null;
   const compareAtPrice =
-    product.compareAtPriceMinor ? formatCurrency(product.compareAtPriceMinor, productCurrency) : null;
+    activeOffer?.compareAtPriceMinor || product.compareAtPriceMinor
+      ? formatCurrency(activeOffer?.compareAtPriceMinor || product.compareAtPriceMinor!, productCurrency)
+      : null;
 
-  const isRanked = typeof product.rank === "number";
-  const isTopPick = product.rank === 1;
+  // Only verified configuration matches can display as AI confirmed recommendations
+  const isRanked = typeof product.rank === "number" && !isUnverified;
+  const isTopPick = product.rank === 1 && !isUnverified;
 
-  // Budget difference calculation if budget is provided
-  const budgetMinor = budget !== null ? Math.round(budget * 100) : null;
-  const underBudgetDiffMinor =
-    budgetMinor !== null && product.priceMinor !== null ? budgetMinor - product.priceMinor : null;
+  // Check if within specified budget limit
+  const isWithinBudget =
+    budget !== null && effectivePriceMinor !== null ? effectivePriceMinor <= budget : null;
+
+  // Extract top 2-3 key specs for quick compact display
+  const keySpecs: string[] = [];
+  if (product.specifications) {
+    const entries = Object.entries(product.specifications);
+    for (const [k, v] of entries) {
+      if (keySpecs.length >= 3) break;
+      if (typeof v === "string" && v.length < 30) {
+        keySpecs.push(`${k}: ${v}`);
+      }
+    }
+  }
+  if (keySpecs.length === 0 && product.sourceFacts) {
+    keySpecs.push(...product.sourceFacts.slice(0, 2));
+  }
 
   return (
     <article
-      className={`flex flex-col justify-between rounded-xl border p-4 sm:p-5 transition-all shadow-lg ${
+      className={`flex flex-col justify-between rounded-2xl border p-4 sm:p-4.5 transition-all shadow-lg ${
         isTopPick
-          ? "border-[#FF6A00]/40 bg-[#12100e] hover:border-[#FF6A00]/70 hover:bg-[#14120f] shadow-[0_0_20px_rgba(255,106,0,0.06)] ring-1 ring-[#FF6A00]/20"
-          : "border-[#262626] bg-[#101010] hover:border-[#383838] hover:bg-[#121212]"
+          ? "border-orange-300 dark:border-[#FF6A00]/50 bg-gradient-to-b from-orange-50/90 via-white to-orange-50/40 dark:from-[#18130e] dark:to-[#0f0d0a] shadow-[0_8px_30px_-8px_rgba(255,106,0,0.18)] ring-1 ring-orange-400/40 dark:ring-[#FF6A00]/25"
+          : "border-orange-200/80 dark:border-[#262626] bg-white dark:bg-gradient-to-b dark:from-[#141414] dark:to-[#0e0e0e] hover:border-orange-400 dark:hover:border-[#383838] hover:shadow-md"
       }`}
     >
       <div>
-        {/* Top AI Rank Badge */}
-        {isRanked && (
-          <div className="mb-3 flex items-center justify-between gap-2 pb-2.5 border-b border-[#222222]">
+        {/* Top AI Rank Badge or Status Header */}
+        <div className="mb-3 flex items-center justify-between gap-2 pb-2 border-b border-orange-100 dark:border-[#202020]">
+          {isRanked ? (
             <span
-              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
                 isTopPick
                   ? "border border-[#FF6A00]/40 bg-[#FF6A00]/15 text-[#FF8126]"
                   : product.rank === 2
-                  ? "border border-[#4B90FF]/30 bg-[#4B90FF]/10 text-[#7BB0FF]"
-                  : "border border-[#303030] bg-[#1a1a1a] text-[#A3A3A3]"
+                  ? "border border-[#4B90FF]/30 bg-[#4B90FF]/10 text-[#2563EB] dark:text-[#7BB0FF]"
+                  : "border border-zinc-200 dark:border-[#303030] bg-zinc-100 dark:bg-[#1a1a1a] text-zinc-700 dark:text-[#A3A3A3]"
               }`}
             >
               <Award className="h-3 w-3 shrink-0" />
               <span>
-                {isTopPick
-                  ? "Top AI Match"
-                  : product.rank === 2
-                  ? "AI Match #2"
-                  : `AI Match #${product.rank}`}
+                {isTopPick ? "Top Pick" : `Match #${product.rank}`}
               </span>
             </span>
+          ) : isUnverified ? (
+            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold border border-amber-300 dark:border-[#F5B942]/30 bg-amber-50 dark:bg-[#F5B942]/10 text-amber-700 dark:text-[#F5B942]">
+              <AlertCircle className="h-2.5 w-2.5 shrink-0" />
+              <span>Unverified Option</span>
+            </span>
+          ) : (
+            <span className="text-[11px] text-zinc-600 dark:text-[#737373] font-bold flex items-center gap-1">
+              <Tag className="h-3 w-3 text-[#FF6A00]" />
+              <span className="truncate max-w-[120px]">{product.brand || "Verified Brand"}</span>
+            </span>
+          )}
 
-            {underBudgetDiffMinor !== null && underBudgetDiffMinor >= 0 && (
-              <span className="text-[11px] font-mono text-[#35C979] font-medium tabular-nums">
-                {formatCurrency(underBudgetDiffMinor, productCurrency)} under budget
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Brand & Stock Status */}
-        <div className="flex items-center justify-between text-xs mb-3 pb-2.5 border-b border-[#202020]">
-          <span className="font-medium text-[#A3A3A3] flex items-center gap-1.5 truncate max-w-[60%]">
-            <Tag className="h-3 w-3 text-[#FF6A00] shrink-0" aria-hidden="true" />
-            <span className="truncate">{product.brand || product.retailerName || "Verified Retailer"}</span>
-          </span>
           <span
-            className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded ${
+            className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${
               product.availability === "in_stock"
-                ? "text-[#35C979] bg-[#35C979]/10"
-                : "text-[#A3A3A3] bg-[#222222]"
+                ? "text-[#35C979] bg-[#35C979]/10 border border-[#35C979]/20"
+                : "text-zinc-500 dark:text-[#888888] bg-zinc-100 dark:bg-[#1a1a1a] border border-zinc-200 dark:border-[#282828]"
             }`}
           >
-            {product.availability === "in_stock" && <Check className="h-3 w-3" />}
-            {product.availability === "in_stock" ? "In stock" : "Check merchant"}
+            {product.availability === "in_stock" && <Check className="h-2.5 w-2.5" />}
+            {product.availability === "in_stock" ? "In Stock" : "Check Store"}
           </span>
         </div>
 
         {/* Product Image */}
-        <div className="relative mb-4 flex h-48 w-full items-center justify-center overflow-hidden rounded-lg bg-[#0a0a0a] border border-[#1e1e1e] p-2">
+        <div className="relative mb-3 flex h-40 sm:h-44 w-full items-center justify-center overflow-hidden rounded-xl bg-zinc-50 dark:bg-[#090909] border border-orange-100 dark:border-[#1e1e1e] p-2">
           {product.imageUrl && !imgError ? (
             <Image
               src={product.imageUrl}
               alt={product.title}
               fill
-              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
               className="object-contain p-2 transition-transform duration-300 hover:scale-105"
               onError={() => setImgError(true)}
               loading="lazy"
+              unoptimized
             />
           ) : (
-            <div className="flex flex-col items-center justify-center gap-2 text-[#525252]">
-              <ShoppingBag className="h-10 w-10 text-[#333333]" aria-hidden="true" />
-              <span className="text-[11px] text-[#737373]">Product shot available at retailer</span>
+            <div className="flex flex-col items-center justify-center gap-1.5 text-zinc-400 dark:text-[#525252]">
+              <ShoppingBag className="h-8 w-8 text-zinc-300 dark:text-[#333333]" aria-hidden="true" />
+              <span className="text-[10px] text-zinc-500 dark:text-[#737373]">Merchant Image</span>
             </div>
           )}
         </div>
 
-        {/* Product Title */}
-        <h3 className="text-sm sm:text-base font-semibold text-[#F5F5F5] line-clamp-2 leading-snug">
-          {product.title}
-        </h3>
+        {/* Brand & Title */}
+        <div className="mb-2">
+          <span className="text-[11px] text-zinc-500 dark:text-[#888888] font-bold block truncate mb-0.5">
+            {product.brand || product.retailerName || "Verified Retailer"}
+          </span>
+          <h3 className="text-sm font-bold text-zinc-900 dark:text-[#F5F5F5] line-clamp-2 leading-snug" title={product.title}>
+            {product.title}
+          </h3>
+        </div>
 
-        {/* Pricing & Budget Comparison */}
-        <div className="mt-3 flex flex-wrap items-baseline justify-between gap-1">
-          <div className="flex items-baseline gap-2">
+        {/* Pricing Display */}
+        <div className="mt-2 flex items-baseline justify-between gap-1 pb-2 border-b border-orange-100 dark:border-[#1c1c1c]">
+          <div className="flex items-baseline gap-1.5">
             {startingPrice ? (
               <>
-                <span className="text-xl sm:text-2xl font-bold text-[#F5F5F5] tabular-nums">
+                <span className="text-lg sm:text-xl font-extrabold text-zinc-900 dark:text-[#F5F5F5] tabular-nums">
                   {hasMultipleOffers ? `From ${startingPrice}` : startingPrice}
                 </span>
                 {compareAtPrice && (
-                  <span className="text-xs text-[#737373] line-through tabular-nums">
+                  <span className="text-xs text-zinc-400 dark:text-[#737373] line-through tabular-nums">
                     {compareAtPrice}
                   </span>
                 )}
               </>
             ) : (
-              <span className="text-sm font-medium text-[#A3A3A3]">
-                Price available at merchant
+              <span className="text-xs font-bold text-zinc-600 dark:text-[#A3A3A3]">
+                Check Merchant Price
               </span>
             )}
-            <span className="text-[11px] text-[#737373]">
+            <span className="text-[10px] text-zinc-500 dark:text-[#737373] font-mono">
               {productCurrency}
             </span>
-          </div>
-
-          {budgetMinor !== null && (
-            <span className="text-[11px] text-[#737373] tabular-nums">
-              Budget: {formatCurrency(budgetMinor, productCurrency)}
-            </span>
-          )}
-        </div>
-
-        {/* AI Recommendation Rationale & Trade-Offs */}
-        {product.explanation && (
-          <div className="mt-3.5 rounded-lg border border-[#2b2b2b] bg-[#141414] p-3 text-xs">
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#FF8126] mb-1">
-              <Sparkles className="h-3 w-3 shrink-0" />
-              <span>Why SpendPilot Recommends This</span>
-            </div>
-            <p className="text-[#D4D4D4] leading-relaxed text-xs">
-              {product.explanation}
-            </p>
-            {product.keyTradeOffs && (
-              <div className="mt-2 pt-2 border-t border-[#222222] flex items-start gap-1.5 text-[11px] text-[#F5B942]">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span className="leading-snug">{product.keyTradeOffs}</span>
-              </div>
+            {isWithinBudget && (
+              <span className="text-[10px] font-bold text-[#35C979] bg-[#35C979]/10 border border-[#35C979]/20 px-1.5 py-0.5 rounded">
+                In Budget
+              </span>
             )}
           </div>
-        )}
 
-        {/* Offers count & primary merchant */}
-        <div className="mt-3 flex items-center justify-between text-xs text-[#A3A3A3]">
-          <span>
-            {product.offersCount && product.offersCount > 1
-              ? `${product.offersCount} retailer offers`
-              : `Sold by ${product.retailerName || "Partner"}`}
+          <span className="text-[11px] text-zinc-500 dark:text-[#888888] truncate max-w-[110px]" title={activeOffer?.domain || product.retailerName || "Retailer"}>
+            via {activeOffer?.domain || product.retailerName || "Retailer"}
           </span>
-
-          {hasMultipleOffers && (
-            <button
-              type="button"
-              onClick={() => setShowOffers(!showOffers)}
-              className="inline-flex items-center gap-1 text-[11px] text-[#FF6A00] hover:underline focus:outline-none"
-              aria-expanded={showOffers}
-            >
-              <span>{showOffers ? "Hide offers" : "Compare offers"}</span>
-              {showOffers ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            </button>
-          )}
         </div>
 
-        {/* Expandable Retailer Offers Tray */}
-        {showOffers && product.offers && product.offers.length > 0 && (
-          <div className="mt-3 space-y-1.5 rounded-lg border border-[#222222] bg-[#0c0c0c] p-2.5 text-xs animate-fadeIn">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#737373] block mb-1">
-              Available Merchant Offers:
-            </span>
-            {product.offers.map((offer, idx) => (
-              <div
-                key={idx}
-                className="flex items-center justify-between py-1 border-b border-[#1a1a1a] last:border-0"
+        {/* Compact Key Specs Badges */}
+        {keySpecs.length > 0 && (
+          <div className="mt-2.5 flex flex-wrap gap-1">
+            {keySpecs.map((spec) => (
+              <span
+                key={spec}
+                className="inline-block rounded-md border border-orange-200/80 dark:border-[#242424] bg-orange-50/60 dark:bg-[#141414] px-2 py-0.5 text-[10px] font-medium text-zinc-700 dark:text-[#A3A3A3] truncate max-w-full"
               >
-                <div className="flex flex-col">
-                  <span className="font-medium text-[#D4D4D4]">{offer.domain}</span>
-                  {offer.condition && (
-                    <span className="text-[10px] text-[#737373] capitalize">{offer.condition}</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-[#F5F5F5] font-semibold tabular-nums">
-                    {formatCurrency(offer.priceMinor, offer.currency)}
-                  </span>
-                  <a
-                    href={offer.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 rounded bg-[#171717] px-2 py-1 text-[11px] text-[#69A8FF] hover:bg-[#202020] hover:text-[#9bc2ff]"
-                  >
-                    <span>View offer</span>
-                    <ExternalLink className="h-2.5 w-2.5" />
-                  </a>
-                </div>
-              </div>
+                {spec}
+              </span>
             ))}
           </div>
         )}
 
-        {/* Verified Source Facts */}
-        {product.sourceFacts && product.sourceFacts.length > 0 && (
-          <div className="mt-3.5 space-y-1">
-            <span className="text-[11px] font-medium text-[#737373] uppercase tracking-wider flex items-center gap-1">
-              <Sparkles className="h-3 w-3 text-[#FF6A00]" />
-              Verified Product Facts
-            </span>
-            <ul className="space-y-1 text-xs text-[#A3A3A3]">
-              {product.sourceFacts.slice(0, 3).map((fact, idx) => (
-                <li key={idx} className="flex items-start gap-1.5 leading-snug">
-                  <span className="text-[#FF6A00] mt-0.5">&bull;</span>
-                  <span className="line-clamp-2">{fact}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        {/* Expandable Details & Specifications Toggle */}
+        <div className="mt-2.5">
+          <button
+            type="button"
+            onClick={() => setShowDetails(!showDetails)}
+            className="flex w-full items-center justify-between text-[11px] font-bold text-zinc-600 dark:text-[#888888] hover:text-zinc-900 dark:hover:text-[#D4D4D4] py-1 transition-colors"
+            aria-expanded={showDetails}
+          >
+            <span>{showDetails ? "Hide details & offers" : "Details & offers"}</span>
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition-transform duration-200 ${
+                showDetails ? "rotate-180 text-[#FF6A00]" : ""
+              }`}
+            />
+          </button>
 
-        {/* Expandable Specifications */}
-        {product.specifications && Object.keys(product.specifications).length > 0 && (
-          <div className="mt-3">
-            <button
-              type="button"
-              onClick={() => setShowSpecs(!showSpecs)}
-              className="text-[11px] text-[#737373] hover:text-[#A3A3A3] flex items-center gap-1"
-            >
-              <span>{showSpecs ? "Hide specifications" : "View specifications"}</span>
-              {showSpecs ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            </button>
-            {showSpecs && (
-              <div className="mt-2 space-y-1 border-t border-[#1e1e1e] pt-2 text-[11px]">
-                {Object.entries(product.specifications).map(([key, value]) => (
-                  <div key={key} className="flex justify-between text-[#737373]">
-                    <span className="truncate pr-2">{key}:</span>
-                    <span className="text-[#D4D4D4] font-medium truncate max-w-[60%]">{value}</span>
+          {showDetails && (
+            <div className="mt-2 space-y-2.5 rounded-xl border border-orange-200/80 dark:border-[#242424] bg-[#FFF9F3] dark:bg-[#0c0c0c] p-3 text-xs animate-fadeIn">
+              {product.explanation && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase text-[#FF8126] block">
+                    SpendPilot Insight:
+                  </span>
+                  <p className="text-[11px] text-zinc-700 dark:text-[#D4D4D4] leading-relaxed">
+                    {product.explanation}
+                  </p>
+                </div>
+              )}
+
+              {product.keyTradeOffs && (
+                <div className="rounded-lg border border-amber-300 dark:border-[#F5B942]/30 bg-amber-50 dark:bg-[#161410] p-2 text-[11px] text-amber-900 dark:text-[#F5B942] flex items-start gap-1.5">
+                  <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" />
+                  <span>{product.keyTradeOffs}</span>
+                </div>
+              )}
+
+              {/* Multiple Merchant Offers */}
+              {product.offers && product.offers.length > 0 && (
+                <div className="space-y-1.5 pt-1 border-t border-orange-100 dark:border-[#1a1a1a]">
+                  <span className="text-[10px] font-bold uppercase text-zinc-500 dark:text-[#737373] block">
+                    Store Offers ({product.offers.length}):
+                  </span>
+                  {product.offers.map((offer, idx) => {
+                    const offerKey = offer.id || offer.url || `${offer.domain}_${offer.priceMinor}`;
+                    const isSelected = activeOffer?.url === offer.url || (!activeOffer && idx === 0);
+                    return (
+                      <div
+                        key={offerKey}
+                        className={`flex items-center justify-between p-1.5 rounded-lg text-[11px] border ${
+                          isSelected ? "border-[#35C979]/40 bg-[#35C979]/10" : "border-orange-200/70 dark:border-[#1e1e1e] bg-white dark:bg-[#121212]"
+                        }`}
+                      >
+                        <span className="font-bold text-zinc-800 dark:text-[#D4D4D4]">{offer.domain}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-zinc-900 dark:text-[#F5F5F5]">
+                            {formatCurrency(offer.priceMinor, offer.currency)}
+                          </span>
+                          {onSelectOffer && !isSelected && (
+                            <button
+                              type="button"
+                              onClick={() => onSelectOffer(product, offer)}
+                              className="btn-3d-secondary rounded px-1.5 py-0.5 text-[10px] font-bold"
+                            >
+                              Select
+                            </button>
+                          )}
+                          <a
+                            href={offer.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[#FF6A00] dark:text-[#69A8FF] hover:underline"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Full Specs */}
+              {product.specifications && Object.keys(product.specifications).length > 0 && (
+                <div className="space-y-1 pt-1 border-t border-orange-100 dark:border-[#1a1a1a]">
+                  <span className="text-[10px] font-bold uppercase text-zinc-500 dark:text-[#737373] block">
+                    Specifications:
+                  </span>
+                  <div className="space-y-1 text-[11px]">
+                    {Object.entries(product.specifications).slice(0, 6).map(([k, v]) => (
+                      <div key={k} className="flex justify-between text-zinc-500 dark:text-[#888888]">
+                        <span className="truncate pr-2">{k}:</span>
+                        <span className="text-zinc-800 dark:text-[#D4D4D4] font-bold truncate max-w-[60%]">{v}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Card Actions: Configure & View Retailer Offer */}
-      <div className="mt-5 pt-3 border-t border-[#202020] space-y-2">
+      {/* Card 3D Actions */}
+      <div className="mt-4 pt-3 border-t border-orange-100 dark:border-[#1f1f1f] space-y-2">
+        {onSelectProduct && (
+          <button
+            type="button"
+            onClick={() => onSelectProduct(product)}
+            className={`btn-3d-primary w-full rounded-xl py-2.5 text-xs font-bold gap-1.5 transition-all ${
+              isSelected
+                ? "border-[#35C979]/50 bg-gradient-to-b from-emerald-600 to-emerald-700 text-white shadow-[0_4px_16px_rgba(53,201,121,0.25)]"
+                : ""
+            }`}
+          >
+            {isSelected ? (
+              <>
+                <Check className="h-4 w-4" />
+                <span>Added to Shopping List ✓</span>
+              </>
+            ) : (
+              <>
+                <ShoppingBag className="h-4 w-4" />
+                <span>Select This Product</span>
+              </>
+            )}
+          </button>
+        )}
+
         {onConfigure && (
           <button
             type="button"
             onClick={() => onConfigure(product)}
-            className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all ${
-              isConfigured
-                ? "border border-[#35C979]/40 bg-[#35C979]/15 text-[#35C979] hover:bg-[#35C979]/20"
-                : "border border-[#FF6A00]/50 bg-[#161310] text-[#FF8126] hover:bg-[#FF6A00]/20"
+            className={`btn-3d-accent w-full rounded-xl py-2 text-xs font-bold ${
+              isConfigured ? "border-[#35C979]/40 text-[#35C979]" : ""
             }`}
+            title={`See all available options for ${product.title}`}
+            aria-label={`See all available options for ${product.title}`}
           >
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>{isConfigured ? "Configuration Verified ✓" : "Configure Options (Size / Color)"}</span>
+            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+            <span>{isConfigured ? "Options Configured ✓" : "See Options"}</span>
           </button>
         )}
 
         <a
-          href={product.retailerUrl}
+          href={activeOffer?.url || product.retailerUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#FF6A00] px-3.5 py-2.5 text-xs font-semibold text-white shadow transition-all hover:bg-[#FF8126] active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF6A00]"
+          className="btn-3d-secondary w-full rounded-xl py-2.5 text-xs font-bold gap-1.5"
         >
-          <span>View retailer offer</span>
+          <span>View on {activeOffer?.domain || product.retailerName || "Retailer"}</span>
           <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
         </a>
-
-        <div className="mt-2 flex items-center justify-between text-[10px] text-[#737373]">
-          <span>Verified via Channel3</span>
-          <span>Direct merchant link</span>
-        </div>
       </div>
     </article>
   );

@@ -15,11 +15,16 @@ import {
   parseToMinorUnits,
   minorToMajorUnits,
   formatMinorUnits,
+  extractBudgetAndCurrency,
+  extractCurrencyFromText,
 } from "../money.ts";
+
+export { extractCurrencyFromText, extractBudgetAndCurrency };
 import {
   canonicalizeAttributeKey,
   upsertCanonicalAttribute,
 } from "../shopping/canonical-attributes.ts";
+import { isDelegatedOrNoPreference } from "../orchestrator/intent-analyzer.ts";
 import type {
   AuthoritativeShoppingSession,
   ChatMessage,
@@ -32,6 +37,7 @@ import type {
   SingleNextQuestion,
   CollectedAnswer,
 } from "../../types/index.ts";
+import type { OrchestratorTurnResult } from "../orchestrator/types.ts";
 
 export interface ProcessUserMessageOptions {
   session: AuthoritativeShoppingSession;
@@ -50,6 +56,7 @@ export interface ProcessUserMessageOptions {
     availability?: string;
     keySpecs?: Record<string, string>;
   }>;
+  precomputedOrchestration?: OrchestratorTurnResult;
 }
 
 export interface ProcessUserMessageResult {
@@ -68,6 +75,89 @@ export interface ProcessUserMessageResult {
   usedFallback?: boolean;
 }
 
+export function getTimeBasedGreeting(): string {
+  if (typeof window === "undefined") {
+    return "Good evening";
+  }
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+export const SPENDPILOT_WELCOME_MESSAGES = [
+  "Good evening! What are we shopping for today? Tell me what you need and your budget.",
+  "Good evening! Ready to shop smart? Tell me what you're looking for and let's find the right deals.",
+  "Warm greetings! I'm SpendPilot, your personal AI shopping assistant. What can I help you find today?",
+  "Warm greetings and welcome! Tell me what product, budget, or specifications you have in mind.",
+  "Good evening! Let's find something worth buying within your budget. What do you need today?",
+  "A warm welcome to SpendPilot! Looking for something specific, or hunting for the best verified deals?",
+  "Warm greetings! Let me know what you're shopping for and I'll discover the best verified options for you.",
+  "Good evening! Tell me what you have in mind, and I'll track down verified retailer options for you.",
+] as const;
+
+export function getRandomWelcomeMessage(): string {
+  if (typeof window === "undefined") {
+    return SPENDPILOT_WELCOME_MESSAGES[0];
+  }
+  const timeGreeting = getTimeBasedGreeting();
+  const variations = [
+    `${timeGreeting}! What are we shopping for today? Tell me what you need and your budget.`,
+    `${timeGreeting}! Ready to shop smart? Tell me what you're looking for and let's find the right deals.`,
+    `Warm greetings! I'm SpendPilot, your personal AI shopping assistant. What can I help you find today?`,
+    `Warm greetings and welcome! Tell me what product, budget, or specifications you have in mind.`,
+    `${timeGreeting}! Let's find something worth buying within your budget. What do you need today?`,
+    `A warm welcome to SpendPilot! Looking for something specific, or hunting for the best verified deals?`,
+    `Warm greetings! Let me know what you're shopping for and I'll discover the best verified options for you.`,
+    `${timeGreeting}! Tell me what you have in mind, and I'll track down verified retailer options for you.`,
+  ];
+  const index = Math.floor(Math.random() * variations.length);
+  return variations[index];
+}
+
+export const SPENDPILOT_HERO_WARM_MESSAGES = [
+  "Good evening! Ready to discover the best verified deals?",
+  "Warm greetings! Let's find exactly what fits your budget.",
+  "Good afternoon! Tell me what you're shopping for today.",
+  "Good morning! Let's discover verified retailer products.",
+  "Warm greetings! Real-time price tracking and budget protection.",
+  "A warm welcome! Tell me what you need and let's find the right match.",
+] as const;
+
+export function getHeroWarmMessage(): string {
+  if (typeof window === "undefined") {
+    return SPENDPILOT_HERO_WARM_MESSAGES[0];
+  }
+  const timeGreeting = getTimeBasedGreeting();
+  const variations = [
+    `${timeGreeting}! Ready to discover the best verified deals?`,
+    `Warm greetings! Let's find exactly what fits your budget.`,
+    `${timeGreeting}! Tell me what you're shopping for today.`,
+    `Warm greetings! Real-time price tracking and budget protection.`,
+    `A warm welcome! Tell me what you need and let's find the right match.`,
+    `${timeGreeting}! Verified products, genuine merchant prices, zero markup.`,
+  ];
+  const index = Math.floor(Math.random() * variations.length);
+  return variations[index];
+}
+
+export const SPENDPILOT_SEARCHING_TEXTS = [
+  "Searching for the best deals for you...",
+  "Scanning verified retailers for the best deals right now...",
+  "Hunting down top verified deals and authentic offers for you...",
+  "Finding the best deals and verified stock within your budget...",
+  "Checking merchant prices to get the best deals for you right now...",
+  "Looking up the best verified deals for you...",
+] as const;
+
+export function getRandomSearchingText(): string {
+  const index = Math.floor(Math.random() * SPENDPILOT_SEARCHING_TEXTS.length);
+  return SPENDPILOT_SEARCHING_TEXTS[index];
+}
+
+export const SPENDPILOT_INITIAL_GREETING =
+  "Hi! I'm SpendPilot, your personal shopping assistant. What are you looking for today? Tell me what you need, what matters most to you, and your budget if you have one. I'll help you discover and compare suitable products.";
+
 /**
  * Normalizes and initializes a default authoritative shopping session.
  */
@@ -77,15 +167,20 @@ export function createInitialSession(params: {
   mode?: ShoppingMode;
   budget?: number | null;
   currency?: CurrencyCode;
+  welcomeMessage?: string;
 }): AuthoritativeShoppingSession {
   const sessionId = params.sessionId || "session_init";
   const originalRequest = params.initialQuery?.trim() || "";
   const mode = params.mode || "single";
+  const extractedBudget = originalRequest ? extractBudgetFromText(originalRequest) : null;
   const budget =
     typeof params.budget === "number"
       ? parseToMinorUnits(params.budget, { isAlreadyMinor: true })
-      : parseToMinorUnits(params.budget);
+      : params.budget !== undefined && params.budget !== null
+      ? parseToMinorUnits(params.budget)
+      : extractedBudget;
   const currency = params.currency || "USD";
+  const welcomeMessage = params.welcomeMessage || getRandomWelcomeMessage();
 
   return {
     sessionId,
@@ -98,6 +193,7 @@ export function createInitialSession(params: {
     budget,
     currency,
     intentSummary: originalRequest ? `Looking for ${originalRequest}` : "Personal Shopping Assistance",
+    welcomeMessage,
     requirements: [],
     pendingQuestions: [],
     activeQuestion: null,
@@ -118,19 +214,57 @@ export function createInitialSession(params: {
 }
 
 /**
- * Extracts a budget amount mentioned in user message (e.g. "under $150", "budget of 120", "$70").
+ * Detects whether the user is starting a brand-new shopping task vs refining the current task.
+ */
+export function isNewShoppingTask(
+  currentRequest: string,
+  newText: string,
+  modelTaskIntent?: "new_task" | "refine_current" | "general_query"
+): boolean {
+  if (modelTaskIntent === "new_task") return true;
+  if (modelTaskIntent === "refine_current") return false;
+
+  const current = (currentRequest || "").trim().toLowerCase();
+  const next = (newText || "").trim().toLowerCase();
+  if (!current || !next) return false;
+
+  // Domain groupings
+  const domains: Array<{ id: string; keywords: string[] }> = [
+    { id: "laptop", keywords: ["macbook", "laptop", "thinkpad", "notebook", "chromebook"] },
+    { id: "anime_decor", keywords: ["anime", "naruto", "one piece", "attack on titan", "room decor", "wall scroll", "manga"] },
+    { id: "shoes", keywords: ["sneaker", "shoes", "shoe", "runners", "running shoe", "boots"] },
+    { id: "keyboard", keywords: ["keyboard", "keycap", "mechanical keyboard"] },
+    { id: "mouse", keywords: ["gaming mouse", "wireless mouse", "trackpad"] },
+    { id: "headphones", keywords: ["headphone", "headset", "earbud", "airpods"] },
+    { id: "phone", keywords: ["phone", "smartphone", "iphone", "pixel", "galaxy"] },
+    { id: "monitor", keywords: ["monitor", "display", "ultrawide", "screen"] },
+    { id: "chair", keywords: ["gaming chair", "ergonomic chair", "desk chair", "office chair"] },
+    { id: "pc", keywords: ["gaming pc", "pc build", "desktop tower", "computer setup"] },
+  ];
+
+  const getDomain = (txt: string) => domains.find((d) => d.keywords.some((k) => txt.includes(k)))?.id;
+
+  const domCurrent = getDomain(current);
+  const domNext = getDomain(next);
+
+  if (domCurrent && domNext && domCurrent !== domNext) {
+    return true;
+  }
+
+  // Obvious new shopping task intent phrases
+  if (/^(?:i need|i want|looking for|find|search for|buy|get me)\s+(?:a|an|some)\s+/i.test(next) && domNext && domNext !== domCurrent) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Extracts a budget amount mentioned in user message (e.g. "under $150", "budget of 120", "$70", "around 80 euros", "£200 max").
  * Returns the amount in minor units (cents).
  */
 export function extractBudgetFromText(text: string): number | null {
-  const match = text.match(/(?:under|below|budget(?:\s*(?:of|is|to|under))?|max(?:\s*price)?|within|less than)\s*\$?([0-9]+(?:\.[0-9]{1,2})?)/i) ||
-    text.match(/\$([0-9]+(?:\.[0-9]{1,2})?)/i);
-  if (match) {
-    const val = parseFloat(match[1]);
-    if (!isNaN(val) && val > 0) {
-      return parseToMinorUnits(val);
-    }
-  }
-  return null;
+  return extractBudgetAndCurrency(text).budgetMinor;
 }
 
 /**
@@ -225,6 +359,7 @@ export async function processUserMessage({
   answeredAttributeKey,
   currentProducts = [],
   currentProductsSummary = [],
+  precomputedOrchestration,
 }: ProcessUserMessageOptions): Promise<ProcessUserMessageResult> {
   const trimmed = userMessage.trim();
   const now = Date.now();
@@ -260,13 +395,46 @@ export async function processUserMessage({
     turnId,
   };
 
-  const updatedMessages = [...session.messages, userMsgEntry];
+  // 1. Multi-Task Detection: Is user starting a new shopping task?
+  const isTaskPivot = isNewShoppingTask(session.originalRequest, trimmed);
+  const extractedInfo = extractBudgetAndCurrency(trimmed, session.currency);
+  const extractedBudget = extractedInfo.budgetMinor;
+  if (extractedInfo.hasExplicitCurrency) {
+    session.currency = extractedInfo.currency;
+  }
 
-  // 1. Domain Guard Check
-  const hasActiveProducts = (session.retrievedProductIds?.length ?? 0) > 0 || currentProductsSummary.length > 0;
+  let effectiveSession = session;
+  if (isTaskPivot) {
+    effectiveSession = {
+      ...session,
+      originalRequest: trimmed,
+      currentTaskId: `task_${now.toString(36)}`,
+      intentSummary: `Looking for ${trimmed}`,
+      requirements: [],
+      pendingQuestions: [],
+      activeQuestion: null,
+      answeredQuestionIds: [],
+      answers: {},
+      attributeOrigins: {},
+      canonicalAttributes: {},
+      retrievedProductIds: [],
+      selectedProductId: null,
+      selectedVariants: {},
+      budget: extractedBudget !== null ? extractedBudget : null,
+      currency: extractedInfo.hasExplicitCurrency ? extractedInfo.currency : session.currency,
+      mode: inferShoppingModeFromText(trimmed),
+      canSearch: false,
+      messages: [],
+    };
+  }
+
+  const updatedMessages = [...effectiveSession.messages, userMsgEntry];
+
+  // 1b. Domain Guard Check
+  const hasActiveProducts = !isTaskPivot && ((effectiveSession.retrievedProductIds?.length ?? 0) > 0 || currentProductsSummary.length > 0);
   const guard = evaluateDomainScope(trimmed, hasActiveProducts);
 
-  const isAnsweringQuestion = Boolean(answeredQuestionId || answeredAttributeKey || session.activeQuestion);
+  const isAnsweringQuestion = Boolean(answeredQuestionId || answeredAttributeKey || effectiveSession.activeQuestion);
 
   if (isAnsweringQuestion && guard.scope === "ambiguous_intent") {
     guard.scope = "shopping_related";
@@ -275,7 +443,7 @@ export async function processUserMessage({
   }
 
   if (!guard.isAllowed) {
-    if (guard.scope === "out_of_scope" || (!isAnsweringQuestion && session.messages.length <= 1)) {
+    if (guard.scope === "out_of_scope" || (!isAnsweringQuestion && effectiveSession.messages.length <= 1)) {
       const assistantMsg: ChatMessage = {
         id: `msg_a_${Date.now().toString(36)}`,
         role: "assistant",
@@ -289,7 +457,7 @@ export async function processUserMessage({
 
       return {
         session: {
-          ...session,
+          ...effectiveSession,
           conversationState: "idle",
           revision: nextRev,
           turnId,
@@ -307,27 +475,28 @@ export async function processUserMessage({
   }
 
   // 2. Budget extraction & invalidation
-  const extractedBudget = extractBudgetFromText(trimmed);
-  let effectiveBudget = session.budget;
+  let effectiveBudget = effectiveSession.budget;
   let needsReSearch = false;
   if (extractedBudget !== null) {
-    if (session.budget !== extractedBudget && session.retrievedProductIds && session.retrievedProductIds.length > 0) {
+    if (effectiveSession.budget !== extractedBudget && effectiveSession.retrievedProductIds && effectiveSession.retrievedProductIds.length > 0) {
       needsReSearch = true;
     }
     effectiveBudget = extractedBudget;
   }
 
-  const inferredMode = session.mode === "setup" ? "setup" : inferShoppingModeFromText(trimmed);
+  const inferredMode = effectiveSession.mode === "setup" ? "setup" : inferShoppingModeFromText(trimmed);
 
   // 3. Upsert canonical attributes
-  let canonicalMap = { ...(session.canonicalAttributes || {}) };
-  const answeredIds = [...(session.answeredQuestionIds || [])];
+  let canonicalMap = { ...(effectiveSession.canonicalAttributes || {}) };
+  const answeredIds = [...(effectiveSession.answeredQuestionIds || [])];
 
-  // A. If an explicit option was selected via quick reply:
-  if (answeredQuestionId || answeredAttributeKey) {
-    const qId = answeredQuestionId || session.activeQuestion?.id || "";
-    const attrKey = answeredAttributeKey || session.activeQuestion?.attributeKey || "preference";
-    if (qId && !answeredIds.includes(qId)) {
+  // A. If an explicit option was selected via quick reply OR answering active question:
+  const activeQ = effectiveSession.activeQuestion;
+  const qId = answeredQuestionId || activeQ?.id || "";
+  const attrKey = answeredAttributeKey || activeQ?.attributeKey || "";
+
+  if (qId && attrKey) {
+    if (!answeredIds.includes(qId)) {
       answeredIds.push(qId);
     }
     const isSkip = /\b(?:no preference|any|skip)\b/i.test(trimmed);
@@ -335,40 +504,46 @@ export async function processUserMessage({
       canonicalMap,
       attrKey,
       trimmed,
-      "user_confirmed",
-      isSkip ? "skipped" : "confirmed"
+      answeredQuestionId ? "user_confirmed" : "user_explicit",
+      isSkip ? "skipped" : "confirmed",
+      "hard_requirement"
     );
   }
 
   // B. Extract attributes directly from user's free text:
   const textAttrs = extractAttributesFromText(trimmed);
   for (const [key, val] of Object.entries(textAttrs)) {
-    canonicalMap = upsertCanonicalAttribute(canonicalMap, key, val, "user_explicit", "confirmed");
+    canonicalMap = upsertCanonicalAttribute(canonicalMap, key, val, "user_explicit", "confirmed", "hard_requirement");
+    const autoQId = `q-${key.replace(/_/g, "-")}`;
+    if (!answeredIds.includes(autoQId)) {
+      answeredIds.push(autoQId);
+    }
   }
 
-  // C. Handle explicit skip expressions in text:
-  if (/\b(?:skip|no preference|any|don't care|doesn't matter)\b/i.test(trimmed)) {
-    if (session.activeQuestion) {
-      if (!answeredIds.includes(session.activeQuestion.id)) {
-        answeredIds.push(session.activeQuestion.id);
+  // C. Handle explicit skip / delegation expressions in text:
+  if (isDelegatedOrNoPreference(trimmed) || /\b(?:skip|no preference|any|don't care|doesn't matter)\b/i.test(trimmed)) {
+    if (effectiveSession.activeQuestion) {
+      if (!answeredIds.includes(effectiveSession.activeQuestion.id)) {
+        answeredIds.push(effectiveSession.activeQuestion.id);
       }
       canonicalMap = upsertCanonicalAttribute(
         canonicalMap,
-        session.activeQuestion.attributeKey,
+        effectiveSession.activeQuestion.attributeKey,
         "No preference",
         "user_explicit",
-        "skipped"
+        "skipped",
+        "optional_preference"
       );
     }
   }
 
-  if (Object.keys(textAttrs).length > 0 && session.retrievedProductIds && session.retrievedProductIds.length > 0) {
+  if (Object.keys(textAttrs).length > 0 && effectiveSession.retrievedProductIds && effectiveSession.retrievedProductIds.length > 0) {
     needsReSearch = true;
   }
 
   // 4. Synchronize legacy answers map from canonical attributes for backwards compatibility
-  const updatedAnswers: Record<string, CollectedAnswer> = { ...session.answers };
-  const updatedOrigins: Record<string, typeof session.attributeOrigins[string]> = { ...session.attributeOrigins };
+  const updatedAnswers: Record<string, CollectedAnswer> = { ...effectiveSession.answers };
+  const updatedOrigins: Record<string, typeof effectiveSession.attributeOrigins[string]> = { ...effectiveSession.attributeOrigins };
 
   for (const attr of Object.values(canonicalMap)) {
     const qId = `q-${attr.key.replace(/_/g, "-")}`;
@@ -387,10 +562,30 @@ export async function processUserMessage({
     updatedOrigins[qId] = attr.source;
     updatedOrigins[attr.key] = attr.source;
     updatedOrigins[hyphenKey] = attr.source;
+
+    // Cross-alias primary use
+    if (attr.key === "primary_use" || attr.key === "intended_use") {
+      updatedAnswers["primary-use"] = collected;
+      updatedAnswers["primary_use"] = collected;
+      updatedAnswers["intended-use"] = collected;
+      updatedAnswers["intended_use"] = collected;
+      updatedAnswers["q-primary-use"] = collected;
+      updatedAnswers["q-intended-use"] = collected;
+      if (!answeredIds.includes("q-primary-use")) answeredIds.push("q-primary-use");
+    }
+
+    // Cross-alias operating system
+    if (attr.key === "operating_system" || attr.key === "os") {
+      updatedAnswers["operating-system"] = collected;
+      updatedAnswers["operating_system"] = collected;
+      updatedAnswers["os"] = collected;
+      updatedAnswers["q-operating-system"] = collected;
+      if (!answeredIds.includes("q-operating-system")) answeredIds.push("q-operating-system");
+    }
   }
 
   // 5. Check for product specification / comparison / follow-up requests on active products
-  const isComparisonRequest = /\b(?:compare|comparison|versus|vs|tradeoffs?)\b/i.test(trimmed);
+  const isComparisonRequest = !isTaskPivot && /\b(?:compare|comparison|versus|vs|tradeoffs?)\b/i.test(trimmed);
   const referencedIds = resolveReferencedProductIds(trimmed, currentProductsSummary);
 
   if (isComparisonRequest && hasActiveProducts) {
@@ -414,7 +609,7 @@ export async function processUserMessage({
 
     return {
       session: {
-        ...session,
+        ...effectiveSession,
         conversationState: "comparing_products",
         revision: nextRev,
         turnId,
@@ -437,24 +632,46 @@ export async function processUserMessage({
   }
 
   // Check for follow-up questions asking about active products' features
-  const isProductInfoFollowUp = hasActiveProducts && (
+  const isProductInfoFollowUp = !isTaskPivot && hasActiveProducts && (
     isShoppingFollowUp(trimmed, true) ||
     isProductInformationQuery(trimmed) ||
     /\b(?:cushioning|cushion|cushioned|lighter|cheaper|battery|comfort|weight)\b/i.test(trimmed)
   );
 
   if (isProductInfoFollowUp && currentProducts.length > 0) {
-    let responseText = "";
-    if (/cushion/i.test(trimmed)) {
-      const cushioned = currentProducts.find((p) => p.sourceFacts?.some((f) => /cushion/i.test(f))) || currentProducts[1] || currentProducts[0];
-      const other = currentProducts.find((p) => p.sourceProductId !== cushioned?.sourceProductId) || currentProducts[0];
-      responseText = `Between the active choices, the ${cushioned?.title || "first option"} features specialized cushioning for impact absorption, whereas the ${other?.title || "second option"} provides a firmer, responsive ride.`;
-    } else if (/cheaper|price|cost/i.test(trimmed)) {
-      const sorted = [...currentProducts].sort((a, b) => (a.priceMinor || 0) - (b.priceMinor || 0));
-      const priceStr = sorted[0]?.priceMinor ? formatMinorUnits(sorted[0].priceMinor, session.currency) : "listed price";
-      responseText = `The ${sorted[0]?.title || "first option"} is the more budget-friendly option at ${priceStr}.`;
-    } else {
-      responseText = `Looking at your active candidates, ${currentProducts.map((p) => p.title).join(" and ")} both fit your confirmed preferences.`;
+    // Call Gemini to answer with verified facts about active products
+    const turnResult = await executeConversationalInteractionTurn({
+      userMessage: trimmed,
+      session: {
+        ...effectiveSession,
+        budget: effectiveBudget,
+        mode: inferredMode,
+        canonicalAttributes: canonicalMap,
+        answers: updatedAnswers,
+        attributeOrigins: updatedOrigins,
+      },
+      currentProductsSummary,
+    });
+
+    let responseText = turnResult.contract.assistantMessage;
+    if (
+      turnResult.usedFallback ||
+      turnResult.modelUsed === "deterministic-recovery" ||
+      !responseText ||
+      responseText.includes("keeping your shopping requirements ready") ||
+      !currentProducts.some((p) => responseText.toLowerCase().includes(p.title.toLowerCase().split(" ")[0]))
+    ) {
+      if (/cushion/i.test(trimmed)) {
+        const cushioned = currentProducts.find((p) => p.sourceFacts?.some((f) => /cushion/i.test(f))) || currentProducts[1] || currentProducts[0];
+        const other = currentProducts.find((p) => p.sourceProductId !== cushioned?.sourceProductId) || currentProducts[0];
+        responseText = `Between the active choices, the ${cushioned?.title || "first option"} features specialized cushioning for impact absorption, whereas the ${other?.title || "second option"} provides a firmer, responsive ride.`;
+      } else if (/cheaper|price|cost/i.test(trimmed)) {
+        const sorted = [...currentProducts].sort((a, b) => (a.priceMinor || 0) - (b.priceMinor || 0));
+        const priceStr = sorted[0]?.priceMinor ? formatMinorUnits(sorted[0].priceMinor, effectiveSession.currency) : "listed price";
+        responseText = `The ${sorted[0]?.title || "first option"} is the more budget-friendly option at ${priceStr}.`;
+      } else {
+        responseText = `Looking at your active candidates, ${currentProducts.map((p) => p.title).join(" and ")} both fit your confirmed preferences.`;
+      }
     }
 
     const assistantMsg: ChatMessage = {
@@ -465,13 +682,13 @@ export async function processUserMessage({
       scope: "product_information",
       actionProposed: "continue_conversation",
       productsReferenced: currentProducts.map((p) => p.sourceProductId || "").filter(Boolean),
-      modelUsed: "product-info-grounding",
+      modelUsed: turnResult.modelUsed || "product-info-grounding",
       turnId,
     };
 
     return {
       session: {
-        ...session,
+        ...effectiveSession,
         conversationState: "results_ready",
         revision: nextRev,
         turnId,
@@ -495,10 +712,10 @@ export async function processUserMessage({
   // 6. Evaluate shopping requirements deterministically
   const budgetInMajorUnits = minorToMajorUnits(effectiveBudget);
   const reqAnalysis = await analyzeShoppingRequirements({
-    originalRequest: session.originalRequest || trimmed,
+    originalRequest: effectiveSession.originalRequest || trimmed,
     mode: inferredMode,
     budget: budgetInMajorUnits,
-    currency: session.currency,
+    currency: effectiveSession.currency,
     existingAnswers: updatedAnswers,
   });
 
@@ -506,81 +723,117 @@ export async function processUserMessage({
     reqAnalysis.canSearch = false;
   }
 
-  // 7. Check if all essential requirements are answered and search can begin automatically
-  const isConfirming = isAffirmativeConfirmation(trimmed);
-  const hasUnansweredQuestions = reqAnalysis.questions.length > 0;
-  const isRequirementsComplete = reqAnalysis.canSearch && !hasUnansweredQuestions;
-
+  // 7. Decide single-call orchestration or fast-path
+  let modelUsed = "spendpilot-engine";
+  let usedFallback = false;
   let shouldExecuteSearch = false;
-  let effectiveAction: ConversationalAction = "ask_follow_up";
+  let effectiveAction: ConversationalAction = "continue_conversation";
   let activeQuestion: SingleNextQuestion | null = null;
   let assistantContent = "";
 
-  if (isRequirementsComplete || (reqAnalysis.canSearch && isConfirming)) {
-    // Requirements are complete! Automatically begin Channel3 product search
-    shouldExecuteSearch = true;
-    effectiveAction = "search_products";
+  const isKnownQuickReply = Boolean(answeredQuestionId || (answeredAttributeKey && effectiveSession.activeQuestion));
 
-    const categoryTitle = reqAnalysis.category.toLowerCase();
-    const confirmedHighlights = Object.values(canonicalMap)
-      .filter((a) => a.status === "confirmed" && a.value !== "No preference")
-      .map((a) => a.displayValue)
-      .filter((v) => !v.toLowerCase().includes(categoryTitle));
+  if (precomputedOrchestration) {
+    // Fast single-turn: Orchestrator already performed the turn's Gemini call (Rule 7A)
+    // or deterministic extraction (Rule 7B). Do NOT execute a second Gemini call!
+    modelUsed = "spendpilot-orchestrator-unified";
+    assistantContent = precomputedOrchestration.assistantMessage || "";
+    shouldExecuteSearch = precomputedOrchestration.isReadyForSearch;
+    effectiveAction = precomputedOrchestration.isReadyForSearch
+      ? "search_products"
+      : precomputedOrchestration.question
+      ? "ask_follow_up"
+      : precomputedOrchestration.suggestedAction === "start_product_search"
+      ? "search_products"
+      : precomputedOrchestration.suggestedAction === "ask_question"
+      ? "ask_follow_up"
+      : precomputedOrchestration.suggestedAction === "reject_unrelated_request"
+      ? "out_of_scope"
+      : (precomputedOrchestration.suggestedAction as ConversationalAction) || "continue_conversation";
 
-    const specsStr = confirmedHighlights.length > 0 ? ` ${confirmedHighlights.join(", ")}` : "";
-    const budgetStr = effectiveBudget ? ` within your ${formatMinorUnits(effectiveBudget, session.currency)} budget` : "";
-
-    assistantContent = `Perfect! I'll look for${specsStr} ${categoryTitle}${budgetStr}.`;
-  } else if (hasUnansweredQuestions) {
-    // Exactly ONE next question
-    const q = reqAnalysis.questions[0];
-    const canonicalKey = canonicalizeAttributeKey(q.attribute);
-
-    // Deduplicate options: keep only 1 option per distinct label/value
-    const seenOpt = new Set<string>();
-    const sanitizedOptions = q.options.filter((o) => {
-      const norm = (o.label || o.value || "").trim().toLowerCase();
-      if (!norm || seenOpt.has(norm)) return false;
-      seenOpt.add(norm);
-      return true;
-    });
-
-    activeQuestion = {
-      id: q.id,
-      attributeKey: canonicalKey,
-      text: q.label,
-      inputType: q.inputType,
-      options: sanitizedOptions,
-      required: q.importance === "required_before_search",
-      allowSkip: q.allowSkip,
-    };
-
-    effectiveAction = "ask_follow_up";
-    shouldExecuteSearch = false;
-    assistantContent = q.label;
-  }
-
-  // 8. If questions remain and user didn't just answer an explicit option, invoke Gemini for conversational context
-  let modelUsed = "spendpilot-engine";
-  let usedFallback = false;
-
-  if (!shouldExecuteSearch && (!answeredQuestionId || !assistantContent)) {
+    if (precomputedOrchestration.question && !shouldExecuteSearch) {
+      const q = precomputedOrchestration.question;
+      const rawOptions = q.options ?? [];
+      const opts = rawOptions.map((opt, i) => ({
+        id: `opt_${q.attributeKey || "q"}_${i}`,
+        label: typeof opt === "string" ? opt : (opt as { label: string }).label,
+        value: typeof opt === "string" ? opt : (opt as { value: string }).value,
+      }));
+      activeQuestion = {
+        id: q.id || `q_${q.attributeKey || "attr"}_${Date.now()}`,
+        attributeKey: q.attributeKey || "clarification",
+        text: q.text,
+        inputType: opts.length > 0 ? "single_select" : "text_input",
+        options: opts,
+        required: true,
+        allowSkip: true,
+      };
+    } else {
+      activeQuestion = null;
+    }
+  } else if (isKnownQuickReply) {
+    // Rule 7B: Known quick reply button click -> 0 Gemini calls!
+    modelUsed = "quick-reply-fast-path";
+    const hasUnansweredQuestions = reqAnalysis.questions.length > 0;
+    const isReady = reqAnalysis.canSearch && !hasUnansweredQuestions;
+    if (isReady) {
+      shouldExecuteSearch = true;
+      effectiveAction = "search_products";
+      activeQuestion = null;
+      assistantContent = "Looking for verified products matching your preferences.";
+    } else if (hasUnansweredQuestions) {
+      const q = reqAnalysis.questions[0];
+      const canonicalKey = canonicalizeAttributeKey(q.attribute);
+      const seenOpt = new Set<string>();
+      const sanitizedOptions = q.options.filter((o) => {
+        const norm = (o.label || o.value || "").trim().toLowerCase();
+        if (!norm || seenOpt.has(norm)) return false;
+        seenOpt.add(norm);
+        return true;
+      });
+      activeQuestion = {
+        id: q.id,
+        attributeKey: canonicalKey,
+        text: q.label,
+        inputType: q.inputType,
+        options: sanitizedOptions,
+        required: q.importance === "required_before_search",
+        allowSkip: q.allowSkip,
+      };
+      effectiveAction = "ask_follow_up";
+      assistantContent = q.label;
+    } else {
+      shouldExecuteSearch = true;
+      effectiveAction = "search_products";
+      activeQuestion = null;
+      assistantContent = "Looking for verified products matching your preferences.";
+    }
+  } else {
+    // Fallback path when called directly without precomputed orchestration
     const turnResult = await executeConversationalInteractionTurn({
       userMessage: trimmed,
       session: {
-        ...session,
+        ...effectiveSession,
         budget: effectiveBudget,
         mode: inferredMode,
         canonicalAttributes: canonicalMap,
         answers: updatedAnswers,
         attributeOrigins: updatedOrigins,
       },
-      currentProductsSummary,
+      currentProductsSummary: isTaskPivot ? [] : currentProductsSummary,
     });
 
     const { contract } = turnResult;
     modelUsed = turnResult.modelUsed;
     usedFallback = turnResult.usedFallback;
+
+    // Handle taskIntent from Gemini if detected
+    if (contract.taskIntent === "new_task" && !isTaskPivot) {
+      canonicalMap = {};
+      for (const [k, v] of Object.entries(textAttrs)) {
+        canonicalMap = upsertCanonicalAttribute(canonicalMap, k, v, "user_explicit", "confirmed", "hard_requirement");
+      }
+    }
 
     // Incorporate model updates if valid
     if (contract.requirementsUpdate?.attributes) {
@@ -591,18 +844,67 @@ export async function processUserMessage({
       }
     }
 
-    if (contract.action === "search_products" && reqAnalysis.canSearch) {
+    const isConfirming = isAffirmativeConfirmation(trimmed);
+    const hasUnansweredQuestions = reqAnalysis.questions.length > 0;
+    const isRequirementsComplete = reqAnalysis.canSearch && !hasUnansweredQuestions;
+
+    effectiveAction = contract.action || "ask_follow_up";
+    assistantContent = contract.assistantMessage || "";
+
+    if (
+      isDelegatedOrNoPreference(trimmed) ||
+      contract.readyForSearch ||
+      contract.action === "search_products" ||
+      isRequirementsComplete ||
+      (reqAnalysis.canSearch && isConfirming)
+    ) {
       shouldExecuteSearch = true;
       effectiveAction = "search_products";
-      assistantContent = contract.assistantMessage || assistantContent;
       activeQuestion = null;
-    } else if (contract.assistantMessage && !contract.assistantMessage.includes("keeping your shopping requirements ready")) {
-      assistantContent = contract.assistantMessage;
+      if (!assistantContent || isDelegatedOrNoPreference(trimmed)) {
+        const categoryTitle = reqAnalysis.category ? reqAnalysis.category.toLowerCase() : "product";
+        assistantContent = `As you have very little preference, it will be a bit tough to suggest the single best match, but I'll recommend the top-rated all-around ${categoryTitle} options. You can always add your preferences whenever you feel like it, and we can search again!`;
+      }
+    } else if (contract.nextQuestion) {
+      activeQuestion = contract.nextQuestion;
+      effectiveAction = "ask_follow_up";
+    } else if (hasUnansweredQuestions) {
+      const q = reqAnalysis.questions[0];
+      const canonicalKey = canonicalizeAttributeKey(q.attribute);
+
+      const seenOpt = new Set<string>();
+      const sanitizedOptions = q.options.filter((o) => {
+        const norm = (o.label || o.value || "").trim().toLowerCase();
+        if (!norm || seenOpt.has(norm)) return false;
+        seenOpt.add(norm);
+        return true;
+      });
+
+      activeQuestion = {
+        id: q.id,
+        attributeKey: canonicalKey,
+        text: q.label,
+        inputType: q.inputType,
+        options: sanitizedOptions,
+        required: q.importance === "required_before_search",
+        allowSkip: q.allowSkip,
+      };
+      effectiveAction = "ask_follow_up";
     }
+  }
+
+  if (isTaskPivot) {
+    effectiveAction = "new_shopping_task";
+    shouldExecuteSearch = false;
   }
 
   if (!assistantContent) {
     assistantContent = activeQuestion?.text || "What other specifications would you prefer?";
+  }
+
+  // Critical rule: If assistant asks a question (message ending with '?') or has an active question, product search MUST NOT execute
+  if (/\?\s*$/.test(assistantContent.trim()) || activeQuestion) {
+    shouldExecuteSearch = false;
   }
 
   // 9. Format Assistant Chat Message
@@ -626,6 +928,12 @@ export async function processUserMessage({
     content: assistantContent,
     createdAt: now,
     nextQuestion: activeQuestion,
+    clarification: activeQuestion ? {
+      questionId: activeQuestion.id,
+      attributeKey: activeQuestion.attributeKey,
+      question: activeQuestion.text,
+      options: (activeQuestion.options || []).map((o) => ({ label: o.label || o.value, value: o.value || o.label })),
+    } : null,
     questions: mappedGuidedQuestions,
     suggestedReplies: activeQuestion?.options.map((o) => o.label || o.value).slice(0, 4) || [],
     actionProposed: effectiveAction,
@@ -665,8 +973,10 @@ export async function processUserMessage({
   }));
 
   const updatedSession: AuthoritativeShoppingSession = {
-    ...session,
-    originalRequest: session.originalRequest || trimmed,
+    ...effectiveSession,
+    originalRequest: effectiveSession.originalRequest || trimmed,
+    currentTaskId: precomputedOrchestration?.taskId || effectiveSession.currentTaskId || `task_${now.toString(36)}`,
+    shoppingBrief: precomputedOrchestration?.brief || effectiveSession.shoppingBrief,
     stage: nextStage,
     conversationState: nextConversationState,
     revision: nextRev,
@@ -674,7 +984,7 @@ export async function processUserMessage({
     mode: inferredMode,
     budget: effectiveBudget,
     intentSummary,
-    requirements: requirementsToSave.length > 0 ? requirementsToSave : session.requirements,
+    requirements: requirementsToSave.length > 0 ? requirementsToSave : effectiveSession.requirements,
     pendingQuestions: mappedGuidedQuestions,
     activeQuestion,
     answeredQuestionIds: answeredIds,
@@ -682,8 +992,12 @@ export async function processUserMessage({
     attributeOrigins: updatedOrigins,
     canonicalAttributes: canonicalMap,
     messages: [...updatedMessages, assistantMsg],
-    canSearch: reqAnalysis.canSearch,
-    retrievedProductIds: needsReSearch ? [] : session.retrievedProductIds,
+    canSearch: precomputedOrchestration
+      ? precomputedOrchestration.isReadyForSearch
+      : Boolean(shouldExecuteSearch || reqAnalysis.canSearch),
+    retrievedProductIds: isTaskPivot ? [] : needsReSearch ? [] : effectiveSession.retrievedProductIds,
+    selectedProductId: isTaskPivot ? null : effectiveSession.selectedProductId,
+    selectedVariants: isTaskPivot ? {} : effectiveSession.selectedVariants,
     lastAction: effectiveAction,
     updatedAt: now,
   };

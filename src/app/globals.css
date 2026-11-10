@@ -1,24 +1,57 @@
 @import "tailwindcss";
+@variant dark (&:where(.dark, .dark *));
 
 :root {
+  color-scheme: light dark;
+  scrollbar-color: #D4D4D8 transparent;
+  scrollbar-width: thin;
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #FFF9F3;
+  --bg-elevated: #FFFFFF;
+  --bg-card: #FFFFFF;
+  --border-subtle: #FED7AA;
+  --border-base: #FDBA74;
+  --border-active: #FB923C;
+  --text-offwhite: #09090B;
+  --text-light: #18181B;
+  --text-primary-gray: #52525B;
+  --text-muted: #71717A;
+  --accent-orange: #FF6A00;
+  --accent-orange-hover: #EA580C;
+  --status-success: #16A34A;
+  --status-warning: #D97706;
+  --status-error: #DC2626;
+  --status-info: #2563EB;
+}
+
+html.dark,
+.dark,
+[data-theme="dark"] {
   color-scheme: dark;
-  --bg-primary: #080808;
-  --bg-secondary: #101010;
-  --bg-elevated: #171717;
-  --bg-card: #141414;
-  --border-subtle: #242424;
-  --border-base: #303030;
-  --border-active: #404040;
-  --text-offwhite: #F5F5F5;
-  --text-light: #D4D4D4;
-  --text-primary-gray: #A3A3A3;
-  --text-muted: #737373;
+  scrollbar-color: #3F3F46 transparent;
+  --bg-primary: #030303;
+  --bg-secondary: #0E0C10;
+  --bg-elevated: #16131A;
+  --bg-card: #121015;
+  --border-subtle: #2A2232;
+  --border-base: #382D44;
+  --border-active: #523E66;
+  --text-offwhite: #F5F5F7;
+  --text-light: #E4E4E7;
+  --text-primary-gray: #A1A1AA;
+  --text-muted: #71717A;
   --accent-orange: #FF6A00;
   --accent-orange-hover: #FF8126;
   --status-success: #35C979;
   --status-warning: #F5B942;
   --status-error: #F05B5B;
   --status-info: #69A8FF;
+}
+
+html.light,
+[data-theme="light"] {
+  color-scheme: light;
+  scrollbar-color: #D4D4D8 transparent;
 }
 
 @theme inline {
@@ -44,14 +77,37 @@
   --font-mono: var(--font-geist-mono), monospace;
 }
 
+/* ─────────────────────────────────────────────────────────────
+   GLOBAL BACKGROUNDS:
+   - Light Mode: White and Radiant Neon Orange ambient
+   - Dark Mode: Pitch Neon Black and Radiant Neon Orange glow
+   ───────────────────────────────────────────────────────────── */
 body {
-  background-color: var(--bg-primary);
+  background-color: #FFFFFF;
+  background-image:
+    radial-gradient(1200px 600px at 50% -80px, rgba(255, 106, 0, 0.16) 0%, rgba(255, 140, 0, 0.08) 40%, rgba(255, 255, 255, 0) 75%),
+    radial-gradient(850px 450px at 90% 15%, rgba(255, 120, 0, 0.10) 0%, transparent 60%),
+    radial-gradient(850px 450px at 10% 45%, rgba(255, 106, 0, 0.07) 0%, transparent 60%),
+    linear-gradient(180deg, #FFFFFF 0%, #FFFBF7 50%, #FFF5ED 100%);
+  background-attachment: fixed;
   color: var(--text-light);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
   overflow-x: hidden;
+}
+
+.dark body,
+[data-theme="dark"] body {
+  background-color: #020202;
+  background-image:
+    radial-gradient(1200px 600px at 50% -80px, rgba(255, 106, 0, 0.24) 0%, rgba(255, 129, 38, 0.10) 35%, rgba(2, 2, 2, 0) 75%),
+    radial-gradient(900px 500px at 95% 20%, rgba(255, 106, 0, 0.14) 0%, transparent 60%),
+    radial-gradient(900px 500px at 5% 50%, rgba(255, 80, 0, 0.10) 0%, transparent 60%),
+    linear-gradient(180deg, #070605 0%, #030303 50%, #020202 100%);
+  background-attachment: fixed;
+  color: var(--text-light);
 }
 
 /* Custom focus ring utility for accessibility */
@@ -121,21 +177,372 @@ body {
   }
 }
 
-/* Scrollbar styling */
+/* Scrollbar styling - explicitly targets root and nested scrollbars without flickering */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0d0d0d;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #262626;
+  background: #D4D4D8;
   border-radius: 4px;
 }
 
+html.dark::-webkit-scrollbar-thumb,
+[data-theme="dark"]::-webkit-scrollbar-thumb,
+.dark ::-webkit-scrollbar-thumb,
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: #3F3F46;
+}
+
 ::-webkit-scrollbar-thumb:hover {
-  background: #363636;
+  background: #FF6A00;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   3D BUTTON ENGINE:
+   - Upper side border removed: border is placed on downside
+   - While clicking / active: border appears on BOTH sides (top & bottom)
+     giving a true tactile, recessed 3D mechanical button effect
+   - Bold, punchy typography across all button classes
+   ───────────────────────────────────────────────────────────── */
+
+/* Primary 3D Orange Button */
+.btn-3d-primary {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #FF7E22 0%, #EA5C00 100%);
+  color: #FFFFFF;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  border: 1px solid rgba(255, 106, 0, 0.35);
+  border-top: none;
+  border-bottom: 4px solid #9E3500;
+  border-radius: 0.75rem;
+  box-shadow:
+    0 4px 14px rgba(255, 106, 0, 0.38),
+    0 0 10px rgba(255, 106, 0, 0.15);
+  transition: transform 0.1s ease, box-shadow 0.1s ease, border 0.1s ease, background 0.15s ease;
+  transform: translateY(0);
+  cursor: pointer;
+  user-select: none;
+}
+
+.btn-3d-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #FF8D38 0%, #F86704 100%);
+  border-top: none;
+  border-bottom: 5px solid #8A2C00;
+  box-shadow:
+    0 6px 20px rgba(255, 106, 0, 0.5),
+    0 0 16px rgba(255, 106, 0, 0.3);
+  transform: translateY(-1.5px);
+}
+
+/* While clicking: border on BOTH sides (top & bottom) */
+.btn-3d-primary:active:not(:disabled) {
+  transform: translateY(2.5px);
+  border-top: 2.5px solid #732200;
+  border-bottom: 2px solid #732200;
+  box-shadow:
+    inset 0 2px 4px rgba(0, 0, 0, 0.35),
+    0 1px 4px rgba(255, 106, 0, 0.25);
+}
+
+.btn-3d-primary:disabled {
+  opacity: 0.45;
+  border-bottom: 2px solid #602500;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Dark Mode Primary Enhancements: Vivid Neon Orange 3D */
+.dark .btn-3d-primary,
+[data-theme="dark"] .btn-3d-primary {
+  background: linear-gradient(180deg, #FF7E22 0%, #EA5C00 100%);
+  color: #FFFFFF;
+  border: 1px solid rgba(255, 106, 0, 0.5);
+  border-top: none;
+  border-bottom: 4px solid #8C2E00;
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.8),
+    0 0 20px rgba(255, 106, 0, 0.4);
+}
+
+.dark .btn-3d-primary:hover:not(:disabled),
+[data-theme="dark"] .btn-3d-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #FF8D38 0%, #F86704 100%);
+  border-top: none;
+  border-bottom: 5px solid #752500;
+  box-shadow:
+    0 6px 22px rgba(0, 0, 0, 0.9),
+    0 0 26px rgba(255, 106, 0, 0.55);
+  transform: translateY(-1.5px);
+}
+
+.dark .btn-3d-primary:active:not(:disabled),
+[data-theme="dark"] .btn-3d-primary:active:not(:disabled) {
+  transform: translateY(2.5px);
+  border-top: 2.5px solid #631F00;
+  border-bottom: 2px solid #631F00;
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.6),
+    0 0 14px rgba(255, 106, 0, 0.3);
+}
+
+/* Secondary 3D Button: White and Orange Gradient for Light Mode */
+.btn-3d-secondary {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #FFFFFF 0%, #FFF5EC 55%, #FFEADB 100%);
+  color: #C2410C;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  border: 1px solid rgba(255, 106, 0, 0.25);
+  border-top: none;
+  border-bottom: 4px solid #DF9C75;
+  border-radius: 0.75rem;
+  box-shadow:
+    0 3px 10px rgba(255, 106, 0, 0.14),
+    0 0 8px rgba(255, 106, 0, 0.08);
+  transition: transform 0.1s ease, box-shadow 0.1s ease, border 0.1s ease, color 0.15s ease, background 0.15s ease;
+  transform: translateY(0);
+  cursor: pointer;
+  user-select: none;
+}
+
+.btn-3d-secondary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #FFFFFF 0%, #FFECE0 50%, #FFDFC6 100%);
+  color: #EA580C;
+  border-top: none;
+  border-bottom: 5px solid #CC8358;
+  box-shadow:
+    0 5px 16px rgba(255, 106, 0, 0.22),
+    0 0 12px rgba(255, 106, 0, 0.15);
+  transform: translateY(-1.5px);
+}
+
+/* While clicking: border on BOTH sides (top & bottom) */
+.btn-3d-secondary:active:not(:disabled) {
+  transform: translateY(2.5px);
+  border-top: 2.5px solid #B86B3E;
+  border-bottom: 2px solid #B86B3E;
+  box-shadow:
+    inset 0 2px 4px rgba(255, 106, 0, 0.2),
+    0 1px 3px rgba(255, 106, 0, 0.1);
+}
+
+.btn-3d-secondary:disabled {
+  opacity: 0.45;
+  border-bottom: 2px solid #DF9C75;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Dark Mode Secondary 3D Button: Same to Same 3D Depth with Vivid Neon Amber/Orange Border */
+.dark .btn-3d-secondary,
+[data-theme="dark"] .btn-3d-secondary {
+  background: linear-gradient(180deg, #1C1510 0%, #120D09 100%);
+  color: #FFA564;
+  font-weight: 800;
+  border: 1px solid rgba(255, 106, 0, 0.45);
+  border-top: none;
+  border-bottom: 4px solid #993800;
+  border-radius: 0.75rem;
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.7),
+    0 0 14px rgba(255, 106, 0, 0.22);
+}
+
+.dark .btn-3d-secondary:hover:not(:disabled),
+[data-theme="dark"] .btn-3d-secondary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #271C14 0%, #17100A 100%);
+  color: #FFB885;
+  border-top: none;
+  border-bottom: 5px solid #B34400;
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.8),
+    0 0 20px rgba(255, 106, 0, 0.35);
+  transform: translateY(-1.5px);
+}
+
+/* While clicking: border on BOTH sides (top & bottom) */
+.dark .btn-3d-secondary:active:not(:disabled),
+[data-theme="dark"] .btn-3d-secondary:active:not(:disabled) {
+  transform: translateY(2.5px);
+  border-top: 2.5px solid #802E00;
+  border-bottom: 2px solid #802E00;
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.7),
+    0 0 12px rgba(255, 106, 0, 0.2);
+}
+
+.dark .btn-3d-secondary:disabled,
+[data-theme="dark"] .btn-3d-secondary:disabled {
+  opacity: 0.45;
+  border-bottom: 2px solid #5A1E00;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Subtle Orange Accent 3D Button */
+.btn-3d-accent {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #FFF6EE 0%, #FFE9D6 100%);
+  color: #EA580C;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  border: 1px solid rgba(255, 106, 0, 0.3);
+  border-top: none;
+  border-bottom: 3.5px solid #E0996D;
+  border-radius: 0.75rem;
+  box-shadow: 0 3px 8px rgba(255, 106, 0, 0.15);
+  transition: transform 0.1s ease, box-shadow 0.1s ease, border 0.1s ease;
+  transform: translateY(0);
+  cursor: pointer;
+  user-select: none;
+}
+
+.btn-3d-accent:hover:not(:disabled) {
+  background: linear-gradient(180deg, #FFF8F2 0%, #FFDFC4 100%);
+  border-top: none;
+  border-bottom: 4.5px solid #CC7B4A;
+  box-shadow: 0 5px 14px rgba(255, 106, 0, 0.22);
+  transform: translateY(-1.5px);
+}
+
+/* While clicking: border on BOTH sides */
+.btn-3d-accent:active:not(:disabled) {
+  transform: translateY(2px);
+  border-top: 2px solid #B86533;
+  border-bottom: 2px solid #B86533;
+  box-shadow: inset 0 2px 4px rgba(255, 106, 0, 0.25);
+}
+
+.dark .btn-3d-accent,
+[data-theme="dark"] .btn-3d-accent {
+  background: linear-gradient(180deg, #24170E 0%, #150D07 100%);
+  color: #FF9242;
+  font-weight: 800;
+  border: 1px solid rgba(255, 106, 0, 0.45);
+  border-top: none;
+  border-bottom: 3.5px solid #943500;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.7), 0 0 12px rgba(255, 106, 0, 0.2);
+}
+
+.dark .btn-3d-accent:hover:not(:disabled),
+[data-theme="dark"] .btn-3d-accent:hover:not(:disabled) {
+  background: linear-gradient(180deg, #321F12 0%, #1F130A 100%);
+  border-top: none;
+  border-bottom: 4.5px solid #AD3E00;
+  color: #FFAE6E;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.8), 0 0 18px rgba(255, 106, 0, 0.32);
+  transform: translateY(-1.5px);
+}
+
+.dark .btn-3d-accent:active:not(:disabled),
+[data-theme="dark"] .btn-3d-accent:active:not(:disabled) {
+  transform: translateY(2px);
+  border-top: 2px solid #782800;
+  border-bottom: 2px solid #782800;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.7), 0 0 10px rgba(255, 106, 0, 0.15);
+}
+
+/* 3D Chip / Pill Button */
+.btn-3d-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  background: linear-gradient(180deg, #FFFFFF 0%, #F5F5F7 100%);
+  color: #3F3F46;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-top: none;
+  border-bottom: 3px solid #CBD5E1;
+  border-radius: 9999px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  transition: transform 0.1s ease, box-shadow 0.1s ease, border 0.1s ease, color 0.15s ease;
+  transform: translateY(0);
+  cursor: pointer;
+  user-select: none;
+}
+
+.btn-3d-pill:hover:not(:disabled) {
+  background: linear-gradient(180deg, #FFFFFF 0%, #FFF4EB 100%);
+  color: #EA580C;
+  border-color: rgba(255, 106, 0, 0.4);
+  border-top: none;
+  border-bottom: 4px solid #DF9A70;
+  box-shadow: 0 4px 10px rgba(255, 106, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+/* While clicking: border on BOTH sides */
+.btn-3d-pill:active:not(:disabled) {
+  transform: translateY(1.5px);
+  border-top: 2px solid #94A3B8;
+  border-bottom: 1.5px solid #94A3B8;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.dark .btn-3d-pill,
+[data-theme="dark"] .btn-3d-pill {
+  background: linear-gradient(180deg, #1C1920 0%, #121015 100%);
+  color: #E4E4E7;
+  font-weight: 800;
+  border: 1px solid rgba(255, 106, 0, 0.35);
+  border-top: none;
+  border-bottom: 3px solid #8A3200;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.6), 0 0 10px rgba(255, 106, 0, 0.16);
+}
+
+.dark .btn-3d-pill:hover:not(:disabled),
+[data-theme="dark"] .btn-3d-pill:hover:not(:disabled) {
+  background: linear-gradient(180deg, #27212E 0%, #1A1620 100%);
+  color: #FF9B54;
+  border-color: rgba(255, 106, 0, 0.5);
+  border-top: none;
+  border-bottom: 4px solid #A83E00;
+  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.8), 0 0 14px rgba(255, 106, 0, 0.28);
+  transform: translateY(-1px);
+}
+
+.dark .btn-3d-pill:active:not(:disabled),
+[data-theme="dark"] .btn-3d-pill:active:not(:disabled) {
+  transform: translateY(1.5px);
+  border-top: 2px solid #702600;
+  border-bottom: 1.5px solid #702600;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.7);
+}
+
+/* Ambient glow & glass panels */
+.ambient-glow-orange {
+  box-shadow: 0 0 50px -10px rgba(255, 106, 0, 0.15);
+}
+
+.ambient-card {
+  background: linear-gradient(180deg, #FFFFFF 0%, #FFF9F3 100%);
+  border: 1px solid rgba(255, 106, 0, 0.15);
+  box-shadow: 0 10px 30px -10px rgba(255, 106, 0, 0.1);
+}
+
+.dark .ambient-card,
+[data-theme="dark"] .ambient-card {
+  background: linear-gradient(180deg, #141217 0%, #0C0A0E 100%);
+  border: 1px solid rgba(255, 106, 0, 0.2);
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.8), 0 0 20px rgba(255, 106, 0, 0.1);
 }

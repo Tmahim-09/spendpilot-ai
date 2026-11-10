@@ -8,6 +8,13 @@ export type DiversityGroup =
   | "rug"
   | "pillows"
   | "desk-mat"
+  | "pc"
+  | "monitor"
+  | "keyboard"
+  | "mouse"
+  | "headset"
+  | "speakers"
+  | "chair"
   | "electronics"
   | "apparel"
   | "furniture"
@@ -20,10 +27,76 @@ export type DiversityGroup =
 export function inferDiversityGroup(categoryOrName: string): DiversityGroup {
   const lower = categoryOrName.toLowerCase();
 
+  // 1. Specific PC Peripherals and Hardware (Check before generic accessories or pads)
+  if (lower.includes("chair") || lower.includes("seating")) {
+    return "chair";
+  }
+  if (
+    lower.includes("desktop") ||
+    lower.includes("tower") ||
+    lower.includes("prebuilt") ||
+    lower.includes("gaming pc") ||
+    lower.includes("computer build") ||
+    lower.includes("gaming system")
+  ) {
+    return "pc";
+  }
+  if (lower.includes("monitor") || lower.includes("display") || lower.includes("screen")) {
+    return "monitor";
+  }
+  if (lower.includes("keyboard") || lower.includes("keycap")) {
+    return "keyboard";
+  }
+  if (
+    (lower.includes("headset") || lower.includes("headphone") || lower.includes("earphone") || lower.includes("earbuds"))
+  ) {
+    return "headset";
+  }
+  if (lower.includes("speaker") || lower.includes("soundbar") || lower.includes("audio monitor")) {
+    return "speakers";
+  }
+  // Check mouse before desk mat / mouse pad, but if it explicitly targets the mat, categorize as desk-mat
+  if (
+    lower.includes("desk mat") ||
+    lower.includes("desk-mat") ||
+    lower.includes("mouse pad") ||
+    lower.includes("mouse-pad") ||
+    lower.includes("mousepad") ||
+    lower.includes("playmat") ||
+    lower.includes("desk pad") ||
+    lower.includes("mouse mat")
+  ) {
+    return "desk-mat";
+  }
+  if (lower.includes("mouse") || lower.includes("pointer") || lower.includes("trackball")) {
+    return "mouse";
+  }
+  if (
+    lower.includes("cpu") ||
+    lower.includes("gpu") ||
+    lower.includes("motherboard") ||
+    lower.includes("ram") ||
+    lower.includes("power supply") ||
+    lower.includes("psu") ||
+    lower.includes("graphics card") ||
+    lower.includes("processor")
+  ) {
+    return "hardware";
+  }
+
+  // 2. Room Decor and Merchandise
   if (lower.includes("neon") || lower.includes("led") || lower.includes("light") || lower.includes("lamp")) {
     return "wall-lighting";
   }
-  if (lower.includes("canvas") || lower.includes("poster") || lower.includes("scroll") || lower.includes("wall art") || lower.includes("print")) {
+  if (
+    lower.includes("canvas") ||
+    lower.includes("poster") ||
+    lower.includes("scroll") ||
+    lower.includes("wall art") ||
+    lower.includes("print") ||
+    lower.includes("tapestry") ||
+    lower.includes("wall flag")
+  ) {
     return "wall-art";
   }
   if (lower.includes("bedding") || lower.includes("duvet") || lower.includes("comforter") || lower.includes("sheet") || lower.includes("blanket")) {
@@ -37,15 +110,6 @@ export function inferDiversityGroup(categoryOrName: string): DiversityGroup {
   }
   if (lower.includes("pillow") || lower.includes("cushion") || lower.includes("pillowcase")) {
     return "pillows";
-  }
-  if (lower.includes("desk mat") || lower.includes("mouse pad") || lower.includes("mousepad") || lower.includes("playmat")) {
-    return "desk-mat";
-  }
-  if (lower.includes("cpu") || lower.includes("gpu") || lower.includes("motherboard") || lower.includes("ram") || lower.includes("power supply")) {
-    return "hardware";
-  }
-  if (lower.includes("monitor") || lower.includes("keyboard") || lower.includes("mouse") || lower.includes("headset") || lower.includes("speaker")) {
-    return "electronics";
   }
 
   return "general";
@@ -109,6 +173,13 @@ export function evaluateBundleDiversity(
     rug: 0,
     pillows: 0,
     "desk-mat": 0,
+    pc: 0,
+    monitor: 0,
+    keyboard: 0,
+    mouse: 0,
+    headset: 0,
+    speakers: 0,
+    chair: 0,
     electronics: 0,
     apparel: 0,
     furniture: 0,
@@ -146,9 +217,15 @@ export function evaluateBundleDiversity(
       }
     }
 
-    // 3. Count diversity groups
+    // 3. Count diversity groups strictly based on canonical requirement record, NEVER product listing title
     const req = requirements.find((r) => r.id === item.requirementId);
-    const group = (req?.diversityGroup as DiversityGroup) || inferDiversityGroup(item.requirementName || prod.title);
+    let group: DiversityGroup;
+    if (req?.diversityGroup && req.diversityGroup !== "general") {
+      group = req.diversityGroup as DiversityGroup;
+    } else {
+      const categorySource = req?.productCategory || req?.name || item.requirementName || "general";
+      group = inferDiversityGroup(categorySource);
+    }
     groupCounts[group] = (groupCounts[group] || 0) + 1;
   }
 

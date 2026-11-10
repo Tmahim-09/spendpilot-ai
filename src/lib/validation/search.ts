@@ -1,4 +1,4 @@
-import type { CurrencyCode, ShoppingMode, PricePreference } from "@/types";
+import type { CurrencyCode, ShoppingMode, PricePreference, CanonicalShoppingAttribute } from "@/types";
 
 export const ALLOWED_CURRENCIES: CurrencyCode[] = ["USD", "EUR", "GBP"];
 
@@ -12,6 +12,7 @@ export interface ValidatedSearchParams {
   categorySlug?: string;
   attributes?: Record<string, string[]>;
   gender?: string;
+  canonicalAttributes?: Record<string, CanonicalShoppingAttribute>;
 }
 
 export type ValidationResult =
@@ -115,6 +116,11 @@ export function validateSearchPayload(body: unknown): ValidationResult {
       ? payload.gender.trim()
       : undefined;
 
+  const canonicalAttributes =
+    payload.canonicalAttributes && typeof payload.canonicalAttributes === "object"
+      ? (payload.canonicalAttributes as Record<string, CanonicalShoppingAttribute>)
+      : undefined;
+
   return {
     valid: true,
     data: {
@@ -127,6 +133,7 @@ export function validateSearchPayload(body: unknown): ValidationResult {
       categorySlug,
       attributes,
       gender,
+      canonicalAttributes,
     },
   };
 }

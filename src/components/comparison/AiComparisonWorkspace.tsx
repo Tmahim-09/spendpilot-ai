@@ -62,7 +62,7 @@ export function AiComparisonWorkspace({
     productMap.set(id, p);
   });
 
-  // Shortlist of candidate products evaluated in comparison (up to 6)
+  // Shortlist of candidate products evaluated in comparison (strictly up to 4 so all fit the screen)
   const candidateIds = Array.from(
     new Set([
       comparison.bestMatchProductId,
@@ -71,9 +71,25 @@ export function AiComparisonWorkspace({
     ])
   ).filter(Boolean);
 
-  const comparedProducts = candidateIds
+  const candidateList = candidateIds
     .map((id) => productMap.get(id))
     .filter((p): p is NormalizedProduct => Boolean(p));
+
+  // If fewer than 4 candidates, backfill from products list up to 4
+  if (candidateList.length < 4) {
+    const includedIds = new Set(candidateList.map((p) => p.sourceProductId || p.title));
+    for (const p of products) {
+      const pid = p.sourceProductId || p.title;
+      if (!includedIds.has(pid)) {
+        candidateList.push(p);
+        includedIds.add(pid);
+        if (candidateList.length >= 4) break;
+      }
+    }
+  }
+
+  // Exactly 4 best candidate products so all 4 fit on the screen cleanly
+  const comparedProducts = candidateList.slice(0, 4);
 
   const bestMatch = productMap.get(comparison.bestMatchProductId) || comparedProducts[0];
 
@@ -96,12 +112,20 @@ export function AiComparisonWorkspace({
     .map((fId) => evidenceFacts[fId])
     .filter(Boolean);
 
-  // Natural priority refinement presets
+  // Natural priority refinement presets, strictly keeping: Close to Budget, Best Budget, and Best Quality
   const refinementPresets = [
-    { label: "Lowest Price", value: "Prioritize lowest verified offer price" },
-    { label: "Comfort & Quality", value: "Prioritize build quality, materials, and comfort" },
-    { label: "Battery & Efficiency", value: "Prioritize long battery life and energy efficiency" },
-    { label: "Portability & Travel", value: "Prioritize lightweight compact design for travel" },
+    {
+      label: "Close to Budget",
+      value: "Prioritize options closest to my budget for top performance and features",
+    },
+    {
+      label: "Best Budget",
+      value: "Recommend best budget value option that saves money while meeting needs",
+    },
+    {
+      label: "Best Quality",
+      value: "Prioritize build quality, premium materials, and reliability",
+    },
   ];
 
   const handleApplyPriority = (val: string) => {
@@ -124,30 +148,30 @@ export function AiComparisonWorkspace({
          ───────────────────────────────────────────────────────────── */}
       <section
         aria-label="Comparison summary and priority controls"
-        className="rounded-2xl border border-[#2b2b2b] bg-[#0d0d0d] p-6 shadow-xl"
+        className="rounded-2xl border border-orange-200/80 dark:border-[#2b2b2b] bg-white dark:bg-[#0d0d0d] p-6 shadow-xl"
       >
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 pb-6 border-b border-[#202020]">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 pb-6 border-b border-orange-100 dark:border-[#202020]">
           <div className="space-y-1.5">
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-3 py-1 text-xs font-semibold text-[#FF8126]">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-3 py-1 text-xs font-bold text-[#FF8126]">
                 <Sparkles className="h-3.5 w-3.5 text-[#FF6A00]" />
                 AI Comparison Workspace
               </span>
               {budget && (
-                <span className="text-xs text-[#35C979] bg-[#141c14] border border-[#35C979]/30 px-2.5 py-0.5 rounded-full font-mono font-medium">
+                <span className="text-xs text-[#35C979] bg-[#35C979]/10 border border-[#35C979]/30 px-2.5 py-0.5 rounded-full font-mono font-bold">
                   Budget: {formatSafeBudget(budget, currency)}
                 </span>
               )}
             </div>
 
-            <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#F5F5F5]">
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900 dark:text-[#F5F5F5]">
               {comparison.summary}
             </h2>
 
             {comparison.priorityInterpretation.length > 0 && (
-              <p className="text-xs sm:text-sm text-[#A3A3A3]">
+              <p className="text-xs sm:text-sm text-zinc-600 dark:text-[#A3A3A3]">
                 Evaluated for &ldquo;{query}&rdquo; &bull; Key criteria:{" "}
-                <span className="text-[#D4D4D4] font-medium">
+                <span className="text-zinc-800 dark:text-[#D4D4D4] font-bold">
                   {comparison.priorityInterpretation.join(" • ")}
                 </span>
               </p>
@@ -156,7 +180,7 @@ export function AiComparisonWorkspace({
 
           {/* Interactive Priority Refinement Controls */}
           <div className="shrink-0 space-y-2">
-            <span className="text-xs font-medium text-[#737373] flex items-center gap-1.5">
+            <span className="text-xs font-bold text-zinc-600 dark:text-[#737373] flex items-center gap-1.5">
               <SlidersHorizontal className="h-3.5 w-3.5 text-[#FF6A00]" />
               Refine comparison priorities without searching again:
             </span>
@@ -168,11 +192,10 @@ export function AiComparisonWorkspace({
                   type="button"
                   disabled={isRefining}
                   onClick={() => handleApplyPriority(preset.value)}
-                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-all ${
-                    activePriority === preset.value
+                  className={`btn-3d-pill rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${activePriority === preset.value
                       ? "border-[#FF6A00] bg-[#FF6A00]/20 text-[#FF8126] ring-1 ring-[#FF6A00]"
-                      : "border-[#2b2b2b] bg-[#141414] text-[#D4D4D4] hover:border-[#FF6A00]/50 hover:text-[#F5F5F5]"
-                  } disabled:opacity-50`}
+                      : ""
+                    }`}
                 >
                   {preset.label}
                 </button>
@@ -184,14 +207,14 @@ export function AiComparisonWorkspace({
                 type="text"
                 value={customPriority}
                 onChange={(e) => setCustomPriority(e.target.value)}
-                placeholder="Or enter a custom priority (e.g. 'durability')..."
-                className="flex-1 rounded-lg border border-[#2b2b2b] bg-[#141414] px-3 py-1.5 text-xs text-[#F5F5F5] placeholder-[#666666] focus:border-[#FF6A00] focus:outline-none"
+                placeholder="Or enter a custom priority"
+                className="flex-1 rounded-xl border border-orange-200 dark:border-[#2b2b2b] bg-zinc-50 dark:bg-[#141414] px-3.5 py-2 text-xs text-zinc-900 dark:text-[#F5F5F5] placeholder-zinc-400 dark:placeholder-[#666666] focus:border-[#FF6A00] focus:outline-none"
                 disabled={isRefining}
               />
               <button
                 type="submit"
                 disabled={isRefining || !customPriority.trim()}
-                className="inline-flex items-center gap-1 rounded-lg bg-[#242424] px-3 py-1.5 text-xs font-semibold text-[#F5F5F5] hover:bg-[#333333] hover:text-[#FF8126] transition-colors disabled:opacity-40"
+                className="btn-3d-secondary rounded-xl px-3.5 py-2 text-xs font-bold gap-1"
               >
                 {isRefining ? <RefreshCw className="h-3 w-3 animate-spin" /> : <ArrowRight className="h-3 w-3" />}
                 <span>Re-evaluate</span>
@@ -207,9 +230,9 @@ export function AiComparisonWorkspace({
       {bestMatch && (
         <section
           aria-label="Top recommendation verdict"
-          className="rounded-2xl border border-[#FF6A00]/50 bg-gradient-to-b from-[#14110e] to-[#0d0d0d] p-6 sm:p-8 shadow-2xl shadow-[#FF6A00]/10 ring-1 ring-[#FF6A00]/20"
+          className="rounded-2xl border border-orange-300 dark:border-[#FF6A00]/50 bg-gradient-to-b from-orange-50/70 via-white to-orange-50/30 dark:from-[#14110e] dark:to-[#0d0d0d] p-6 sm:p-8 shadow-2xl shadow-orange-500/10 dark:shadow-[#FF6A00]/10 ring-1 ring-orange-400/40 dark:ring-[#FF6A00]/20"
         >
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[#29221b]">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-orange-200/60 dark:border-[#29221b]">
             <div className="flex items-center gap-2">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FF6A00] text-black">
                 <Award className="h-4 w-4" />
@@ -218,23 +241,45 @@ export function AiComparisonWorkspace({
                 <span className="text-[11px] font-bold uppercase tracking-wider text-[#FF8126] block">
                   Top Recommendation
                 </span>
-                <span className="text-xs text-[#A3A3A3]">
+                <span className="text-xs text-zinc-600 dark:text-[#A3A3A3]">
                   Selected as the strongest overall fit based on verified merchant specifications and price
                 </span>
               </div>
             </div>
 
-            <span className="rounded-full border border-[#35C979]/40 bg-[#35C979]/10 px-3 py-1 text-xs font-semibold text-[#35C979] flex items-center gap-1">
-              <Check className="h-3.5 w-3.5" />
-              Best Overall Match
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {budget && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleApplyPriority(
+                      activePriority?.includes("budget value") || activePriority?.includes("lowest")
+                        ? "Prioritize options closest to my budget for top performance and features"
+                        : "Recommend best budget value option that saves money while meeting needs"
+                    )
+                  }
+                  className="rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 hover:bg-[#FF6A00]/20 px-3 py-1 text-xs font-bold text-[#FF8126] flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <SlidersHorizontal className="h-3 w-3" />
+                  <span>
+                    {activePriority?.includes("budget value") || activePriority?.includes("lowest")
+                      ? "Switch to: Close to Budget"
+                      : "Switch to: Best Budget"}
+                  </span>
+                </button>
+              )}
+              <span className="rounded-full border border-[#35C979]/40 bg-[#35C979]/10 px-3 py-1 text-xs font-bold text-[#35C979] flex items-center gap-1">
+                <Check className="h-3.5 w-3.5" />
+                Best Overall Match
+              </span>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
             {/* Left Column: Product hero */}
-            <div className="lg:col-span-5 flex flex-col justify-between rounded-xl border border-[#2b251f] bg-[#100e0c] p-5 shadow-lg">
+            <div className="lg:col-span-5 flex flex-col justify-between rounded-xl border border-orange-200/80 dark:border-[#2b251f] bg-white dark:bg-[#100e0c] p-5 shadow-lg">
               <div>
-                <div className="relative mb-4 flex h-52 w-full items-center justify-center overflow-hidden rounded-lg bg-[#080808] p-3 border border-[#201c18]">
+                <div className="relative mb-4 flex h-52 w-full items-center justify-center overflow-hidden rounded-lg bg-zinc-50 dark:bg-[#080808] p-3 border border-orange-100 dark:border-[#201c18]">
                   {bestMatch.imageUrl ? (
                     <Image
                       src={bestMatch.imageUrl}
@@ -243,49 +288,49 @@ export function AiComparisonWorkspace({
                       sizes="(max-width: 768px) 100vw, 40vw"
                       className="object-contain p-2"
                       loading="lazy"
+                      unoptimized
                     />
                   ) : (
-                    <ShoppingBag className="h-12 w-12 text-[#444444]" />
+                    <ShoppingBag className="h-12 w-12 text-zinc-400 dark:text-[#444444]" />
                   )}
                 </div>
 
-                <div className="flex items-center gap-1.5 text-xs text-[#A3A3A3] mb-1">
+                <div className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-[#A3A3A3] mb-1 font-bold">
                   <Tag className="h-3 w-3 text-[#FF6A00]" />
                   <span>{bestMatch.brand || bestMatch.retailerName || "Verified Brand"}</span>
                 </div>
 
-                <h3 className="text-base sm:text-lg font-bold text-[#F5F5F5] leading-snug mb-3">
+                <h3 className="text-base sm:text-lg font-bold text-zinc-900 dark:text-[#F5F5F5] leading-snug mb-3">
                   {bestMatch.title}
                 </h3>
 
                 <div className="flex items-baseline gap-2 mb-4">
-                  <span className="text-2xl font-bold text-[#F5F5F5] tabular-nums">
+                  <span className="text-2xl font-extrabold text-zinc-900 dark:text-[#F5F5F5] tabular-nums">
                     {bestMatch.priceMinor !== null
                       ? formatCurrency(bestMatch.priceMinor, bestMatch.currency || currency)
                       : "Price at merchant"}
                   </span>
-                  <span className="text-xs text-[#737373]">
+                  <span className="text-xs text-zinc-500 dark:text-[#737373]">
                     sold by {bestMatch.retailerName || "Verified Retailer"}
                   </span>
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-2 mt-2">
                 {onConfigureProduct && (
                   <button
                     type="button"
                     onClick={() => onConfigureProduct(bestMatch)}
-                    className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
-                      configuredProductIds.has(bestMatch.sourceProductId || bestMatch.title)
-                        ? "border border-[#35C979]/40 bg-[#35C979]/15 text-[#35C979] hover:bg-[#35C979]/20"
-                        : "border border-[#FF6A00]/50 bg-[#161310] text-[#FF8126] hover:bg-[#FF6A00]/20"
-                    }`}
+                    className={`btn-3d-accent w-full rounded-xl py-2 text-xs font-bold ${configuredProductIds.has(bestMatch.sourceProductId || bestMatch.title)
+                        ? "border-[#35C979]/40 text-[#35C979]"
+                        : ""
+                      }`}
                   >
-                    <Sparkles className="h-3.5 w-3.5" />
+                    <Sparkles className="h-3.5 w-3.5 mr-1.5" />
                     <span>
                       {configuredProductIds.has(bestMatch.sourceProductId || bestMatch.title)
-                        ? "Configuration Verified ✓"
-                        : "Configure Options (Size / Color)"}
+                        ? "Options Configured ✓"
+                        : "See Options"}
                     </span>
                   </button>
                 )}
@@ -294,9 +339,9 @@ export function AiComparisonWorkspace({
                   href={bestMatch.retailerUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#FF6A00] px-4 py-2.5 text-xs font-semibold text-white shadow hover:bg-[#FF8126] transition-all focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
+                  className="btn-3d-primary w-full rounded-xl py-2.5 text-xs font-bold gap-1.5"
                 >
-                  <span>View retailer offer</span>
+                  <span>View on {bestMatch.retailerName || "Retailer"}</span>
                   <ExternalLink className="h-3.5 w-3.5" />
                 </a>
               </div>
@@ -306,11 +351,11 @@ export function AiComparisonWorkspace({
             <div className="lg:col-span-7 space-y-6">
               {/* Why it matches better than alternatives */}
               <div className="space-y-2">
-                <h4 className="text-sm font-semibold uppercase tracking-wider text-[#FF8126] flex items-center gap-2">
+                <h4 className="text-sm font-bold uppercase tracking-wider text-[#FF8126] flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-[#35C979]" />
                   Why SpendPilot recommends this option
                 </h4>
-                <p className="text-sm text-[#D4D4D4] leading-relaxed bg-[#161310] p-4 rounded-xl border border-[#2b241c]">
+                <p className="text-sm text-zinc-700 dark:text-[#D4D4D4] leading-relaxed bg-orange-50/60 dark:bg-[#161310] p-4 rounded-xl border border-orange-200/80 dark:border-[#2b241c]">
                   {comparison.bestMatchReason}
                 </p>
               </div>
@@ -318,19 +363,19 @@ export function AiComparisonWorkspace({
               {/* Verified Evidence Claims Cited */}
               {bestMatchEvidence.length > 0 && (
                 <div className="space-y-2.5">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-[#888888] block">
+                  <span className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-[#888888] block">
                     Verified features &amp; specs:
                   </span>
                   <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                     {bestMatchEvidence.slice(0, 6).map((fact) => (
                       <li
                         key={fact.id}
-                        className="flex items-start gap-2 rounded-lg border border-[#242424] bg-[#121212] p-2.5"
+                        className="flex items-start gap-2 rounded-lg border border-orange-200/70 dark:border-[#242424] bg-white dark:bg-[#121212] p-2.5"
                       >
                         <Check className="h-3.5 w-3.5 text-[#35C979] shrink-0 mt-0.5" />
                         <div>
-                          <strong className="text-[#F5F5F5] block font-medium">{fact.label}</strong>
-                          <span className="text-[#A3A3A3] line-clamp-2">{fact.value}</span>
+                          <strong className="text-zinc-900 dark:text-[#F5F5F5] block font-bold">{fact.label}</strong>
+                          <span className="text-zinc-600 dark:text-[#A3A3A3] line-clamp-2">{fact.value}</span>
                         </div>
                       </li>
                     ))}
@@ -340,11 +385,11 @@ export function AiComparisonWorkspace({
 
               {/* Trade-off Warning / Considerations */}
               {bestMatchTradeoff && (
-                <div className="rounded-xl border border-[#F5B942]/30 bg-[#161410] p-4 text-xs text-[#D4D4D4]">
+                <div className="rounded-xl border border-amber-300 dark:border-[#F5B942]/30 bg-amber-50/70 dark:bg-[#161410] p-4 text-xs text-amber-950 dark:text-[#D4D4D4]">
                   <div className="flex items-start gap-2.5">
                     <AlertTriangle className="h-4 w-4 text-[#F5B942] shrink-0 mt-0.5" />
                     <div>
-                      <strong className="text-[#F5B942] font-semibold block mb-0.5">
+                      <strong className="text-[#FF8126] dark:text-[#F5B942] font-bold block mb-0.5">
                         Trade-off to consider:
                       </strong>
                       <p className="leading-relaxed">{bestMatchTradeoff.summary}</p>
@@ -363,18 +408,18 @@ export function AiComparisonWorkspace({
       {comparison.criteria.length > 0 && comparedProducts.length >= 2 && (
         <section
           aria-label="Side-by-side comparison matrix"
-          className="rounded-2xl border border-[#2b2b2b] bg-[#0d0d0d] p-6 shadow-xl space-y-6"
+          className="rounded-2xl border border-orange-200/80 dark:border-[#2b2b2b] bg-white dark:bg-[#0d0d0d] p-6 shadow-xl space-y-6"
         >
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 border-b border-[#202020]">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 border-b border-orange-100 dark:border-[#202020]">
             <div>
-              <h3 className="text-lg sm:text-xl font-bold text-[#F5F5F5]">
+              <h3 className="text-lg sm:text-xl font-bold text-zinc-900 dark:text-[#F5F5F5]">
                 Side-by-side comparison
               </h3>
-              <p className="text-xs text-[#888888]">
+              <p className="text-xs text-zinc-500 dark:text-[#888888]">
                 Comparing verified features and prices across {comparedProducts.length} candidate options
               </p>
             </div>
-            <div className="flex items-center gap-3 text-xs text-[#737373]">
+            <div className="flex items-center gap-3 text-xs text-zinc-600 dark:text-[#737373] font-bold">
               <span className="flex items-center gap-1">
                 <CheckCircle2 className="h-3.5 w-3.5 text-[#35C979]" /> Strong
               </span>
@@ -385,7 +430,7 @@ export function AiComparisonWorkspace({
                 <AlertTriangle className="h-3.5 w-3.5 text-[#F5B942]" /> Weak
               </span>
               <span className="flex items-center gap-1">
-                <HelpCircle className="h-3.5 w-3.5 text-[#737373]" /> Unspecified
+                <HelpCircle className="h-3.5 w-3.5 text-zinc-400 dark:text-[#737373]" /> Unspecified
               </span>
             </div>
           </div>
@@ -395,17 +440,17 @@ export function AiComparisonWorkspace({
             tabIndex={0}
             role="region"
             aria-label="Product comparison table"
-            className="overflow-x-auto rounded-xl border border-[#222222] bg-[#0a0a0a] focus:outline-none focus:ring-1 focus:ring-[#FF6A00]"
+            className="overflow-x-auto rounded-xl border border-orange-200 dark:border-[#222222] bg-white dark:bg-[#0a0a0a] focus:outline-none focus:ring-1 focus:ring-[#FF6A00]"
           >
             <table className="w-full text-left border-collapse text-xs">
               <caption className="sr-only">
                 Comparison of candidate products across key criteria
               </caption>
               <thead>
-                <tr className="border-b border-[#222222] bg-[#121212]">
+                <tr className="border-b border-orange-200 dark:border-[#222222] bg-[#FFF9F3] dark:bg-[#121212]">
                   <th
                     scope="col"
-                    className="p-4 font-semibold text-[#888888] uppercase tracking-wider min-w-[180px] w-1/4 sticky left-0 bg-[#121212] z-10 border-r border-[#222222]"
+                    className="p-3 sm:p-4 font-bold text-zinc-600 dark:text-[#888888] uppercase tracking-wider min-w-[140px] sm:min-w-[160px] w-1/5 sticky left-0 bg-[#FFF9F3] dark:bg-[#121212] z-10 border-r border-orange-200 dark:border-[#222222]"
                   >
                     Criteria / Specifications
                   </th>
@@ -416,9 +461,8 @@ export function AiComparisonWorkspace({
                       <th
                         key={id}
                         scope="col"
-                        className={`p-4 min-w-[220px] align-top ${
-                          isWinner ? "bg-[#181410] border-t-2 border-t-[#FF6A00]" : ""
-                        }`}
+                        className={`p-3 sm:p-4 min-w-[180px] sm:min-w-[200px] w-1/5 align-top ${isWinner ? "bg-orange-50/80 dark:bg-[#181410] border-t-2 border-t-[#FF6A00]" : ""
+                          }`}
                       >
                         <div className="space-y-1.5">
                           {isWinner && (
@@ -426,7 +470,7 @@ export function AiComparisonWorkspace({
                               <Award className="h-3 w-3" /> Best Match
                             </span>
                           )}
-                          <div className="font-bold text-[#F5F5F5] line-clamp-2 leading-snug">
+                          <div className="font-bold text-zinc-900 dark:text-[#F5F5F5] line-clamp-2 leading-snug">
                             {p.title}
                           </div>
                           <div className="font-mono text-sm text-[#35C979] font-bold">
@@ -440,12 +484,12 @@ export function AiComparisonWorkspace({
                   })}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#1c1c1c]">
+              <tbody className="divide-y divide-orange-100 dark:divide-[#1c1c1c]">
                 {/* Row 1: Objective Starting Price & Retailer */}
-                <tr className="hover:bg-[#111111] transition-colors">
+                <tr className="hover:bg-orange-50/40 dark:hover:bg-[#111111] transition-colors">
                   <th
                     scope="row"
-                    className="p-4 font-medium text-[#D4D4D4] sticky left-0 bg-[#0a0a0a] z-10 border-r border-[#222222]"
+                    className="p-4 font-bold text-zinc-800 dark:text-[#D4D4D4] sticky left-0 bg-white dark:bg-[#0a0a0a] z-10 border-r border-orange-200 dark:border-[#222222]"
                   >
                     Verified Starting Price
                   </th>
@@ -453,12 +497,12 @@ export function AiComparisonWorkspace({
                     const id = p.sourceProductId || p.title;
                     return (
                       <td key={id} className="p-4 align-top">
-                        <span className="font-semibold text-[#F5F5F5] block">
+                        <span className="font-bold text-zinc-900 dark:text-[#F5F5F5] block">
                           {p.priceMinor !== null
                             ? formatCurrency(p.priceMinor, p.currency || currency)
                             : "At retailer"}
                         </span>
-                        <span className="text-[#737373] text-[11px]">
+                        <span className="text-zinc-500 dark:text-[#737373] text-[11px]">
                           via {p.retailerName || "Merchant"} ({p.offersCount || 1} offer{p.offersCount === 1 ? "" : "s"})
                         </span>
                       </td>
@@ -468,14 +512,14 @@ export function AiComparisonWorkspace({
 
                 {/* Rows 2..N: Dynamic Evaluated Criteria */}
                 {comparison.criteria.map((criterion, idx) => (
-                  <tr key={idx} className="hover:bg-[#111111] transition-colors">
+                  <tr key={criterion.name || `crit_${idx}`} className="hover:bg-orange-50/40 dark:hover:bg-[#111111] transition-colors">
                     <th
                       scope="row"
-                      className="p-4 font-medium text-[#D4D4D4] sticky left-0 bg-[#0a0a0a] z-10 border-r border-[#222222]"
+                      className="p-4 font-bold text-zinc-800 dark:text-[#D4D4D4] sticky left-0 bg-white dark:bg-[#0a0a0a] z-10 border-r border-orange-200 dark:border-[#222222]"
                     >
                       <div className="space-y-1">
-                        <span className="block font-semibold text-[#F5F5F5]">{criterion.name}</span>
-                        <span className="text-[10px] uppercase font-bold text-[#737373] px-1.5 py-0.5 rounded bg-[#161616] inline-block">
+                        <span className="block font-bold text-zinc-900 dark:text-[#F5F5F5]">{criterion.name}</span>
+                        <span className="text-[10px] uppercase font-bold text-zinc-600 dark:text-[#737373] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-[#161616] inline-block">
                           {criterion.importance} Priority
                         </span>
                       </div>
@@ -488,7 +532,7 @@ export function AiComparisonWorkspace({
                           {assessmentObj ? (
                             <div className="space-y-1.5">
                               <AssessmentBadge rating={assessmentObj.assessment} />
-                              <p className="text-[#A3A3A3] text-xs leading-relaxed">
+                              <p className="text-zinc-600 dark:text-[#A3A3A3] text-xs leading-relaxed">
                                 {assessmentObj.reason}
                               </p>
                               {assessmentObj.evidenceFactIds.length > 0 && (
@@ -499,7 +543,7 @@ export function AiComparisonWorkspace({
                                     return (
                                       <span
                                         key={fId}
-                                        className="inline-block text-[10px] text-[#888888] bg-[#141414] border border-[#242424] px-1.5 py-0.5 rounded"
+                                        className="inline-block text-[10px] text-zinc-600 dark:text-[#888888] bg-orange-50/60 dark:bg-[#141414] border border-orange-200/60 dark:border-[#242424] px-1.5 py-0.5 rounded"
                                       >
                                         Fact: {fact.label}: {fact.value}
                                       </span>
@@ -509,7 +553,7 @@ export function AiComparisonWorkspace({
                               )}
                             </div>
                           ) : (
-                            <span className="text-[#555555]">Not evaluated</span>
+                            <span className="text-zinc-400 dark:text-[#555555]">Not evaluated</span>
                           )}
                         </td>
                       );
@@ -518,10 +562,10 @@ export function AiComparisonWorkspace({
                 ))}
 
                 {/* Trade-offs Row */}
-                <tr className="hover:bg-[#111111] transition-colors bg-[#0e0c0a]">
+                <tr className="hover:bg-amber-50/50 dark:hover:bg-[#111111] transition-colors bg-amber-50/30 dark:bg-[#0e0c0a]">
                   <th
                     scope="row"
-                    className="p-4 font-medium text-[#F5B942] sticky left-0 bg-[#0e0c0a] z-10 border-r border-[#222222]"
+                    className="p-4 font-bold text-amber-800 dark:text-[#F5B942] sticky left-0 bg-[#FFFDF7] dark:bg-[#0e0c0a] z-10 border-r border-orange-200 dark:border-[#222222]"
                   >
                     Key trade-offs &amp; considerations
                   </th>
@@ -529,14 +573,14 @@ export function AiComparisonWorkspace({
                     const id = p.sourceProductId || p.title;
                     const tradeoff = comparison.tradeoffs.find((t) => t.productId === id);
                     return (
-                      <td key={id} className="p-4 align-top text-xs text-[#D4D4D4]">
+                      <td key={id} className="p-4 align-top text-xs text-zinc-700 dark:text-[#D4D4D4]">
                         {tradeoff ? (
                           <div className="flex items-start gap-1.5">
                             <AlertTriangle className="h-3.5 w-3.5 text-[#F5B942] shrink-0 mt-0.5" />
                             <span>{tradeoff.summary}</span>
                           </div>
                         ) : (
-                          <span className="text-[#737373]">No notable trade-offs logged</span>
+                          <span className="text-zinc-400 dark:text-[#737373]">No notable trade-offs logged</span>
                         )}
                       </td>
                     );
@@ -544,10 +588,10 @@ export function AiComparisonWorkspace({
                 </tr>
 
                 {/* Missing Information Row */}
-                <tr className="hover:bg-[#111111] transition-colors">
+                <tr className="hover:bg-orange-50/40 dark:hover:bg-[#111111] transition-colors">
                   <th
                     scope="row"
-                    className="p-4 font-medium text-[#737373] sticky left-0 bg-[#0a0a0a] z-10 border-r border-[#222222]"
+                    className="p-4 font-bold text-zinc-500 dark:text-[#737373] sticky left-0 bg-white dark:bg-[#0a0a0a] z-10 border-r border-orange-200 dark:border-[#222222]"
                   >
                     Not specified in listing
                   </th>
@@ -555,11 +599,11 @@ export function AiComparisonWorkspace({
                     const id = p.sourceProductId || p.title;
                     const missingItems = comparison.missingInformation.filter((m) => m.productId === id);
                     return (
-                      <td key={id} className="p-4 align-top text-xs text-[#737373]">
+                      <td key={id} className="p-4 align-top text-xs text-zinc-500 dark:text-[#737373]">
                         {missingItems.length > 0 ? (
                           <ul className="space-y-1">
                             {missingItems.map((m, mIdx) => (
-                              <li key={mIdx}>
+                              <li key={`${id}_missing_${m.field}_${mIdx}`}>
                                 <strong>{m.field}:</strong> {m.explanation}
                               </li>
                             ))}
@@ -583,13 +627,13 @@ export function AiComparisonWorkspace({
       {comparison.alternativePicks.length > 0 && (
         <section
           aria-label="Alternative recommendations by priority"
-          className="rounded-2xl border border-[#2b2b2b] bg-[#0d0d0d] p-6 shadow-xl space-y-4"
+          className="rounded-2xl border border-orange-200/80 dark:border-[#2b2b2b] bg-white dark:bg-[#0d0d0d] p-6 shadow-xl space-y-4"
         >
-          <div className="space-y-1 pb-3 border-b border-[#202020]">
-            <h3 className="text-base sm:text-lg font-bold text-[#F5F5F5]">
+          <div className="space-y-1 pb-3 border-b border-orange-100 dark:border-[#202020]">
+            <h3 className="text-base sm:text-lg font-bold text-zinc-900 dark:text-[#F5F5F5]">
               Alternative options by priority
             </h3>
-            <p className="text-xs text-[#888888]">
+            <p className="text-xs text-zinc-500 dark:text-[#888888]">
               Options that may suit you better if your priorities differ from the primary verdict
             </p>
           </div>
@@ -599,22 +643,22 @@ export function AiComparisonWorkspace({
               const product = productMap.get(alt.productId);
               return (
                 <div
-                  key={idx}
-                  className="rounded-xl border border-[#242424] bg-[#121212] p-4 flex flex-col justify-between space-y-3"
+                  key={alt.productId || `alt_${alt.bestFor}_${idx}`}
+                  className="rounded-xl border border-orange-200/70 dark:border-[#242424] bg-[#FFF9F4] dark:bg-[#121212] p-4 flex flex-col justify-between space-y-3"
                 >
                   <div className="space-y-2">
-                    <span className="inline-flex items-center gap-1 rounded bg-[#69A8FF]/15 border border-[#69A8FF]/30 px-2 py-0.5 text-[11px] font-semibold text-[#69A8FF]">
+                    <span className="inline-flex items-center gap-1 rounded bg-[#69A8FF]/15 border border-[#69A8FF]/30 px-2 py-0.5 text-[11px] font-bold text-[#2563EB] dark:text-[#69A8FF]">
                       Best for: {alt.bestFor}
                     </span>
-                    <h4 className="font-semibold text-[#F5F5F5] text-sm line-clamp-2">
+                    <h4 className="font-bold text-zinc-900 dark:text-[#F5F5F5] text-sm line-clamp-2">
                       {product?.title || alt.productId}
                     </h4>
-                    <p className="text-xs text-[#A3A3A3] leading-relaxed">{alt.reason}</p>
+                    <p className="text-xs text-zinc-600 dark:text-[#A3A3A3] leading-relaxed">{alt.reason}</p>
                   </div>
 
                   {product && (
-                    <div className="pt-3 border-t border-[#1c1c1c] flex items-center justify-between">
-                      <span className="font-mono font-bold text-sm text-[#F5F5F5]">
+                    <div className="pt-3 border-t border-orange-100 dark:border-[#1c1c1c] flex items-center justify-between">
+                      <span className="font-mono font-bold text-sm text-zinc-900 dark:text-[#F5F5F5]">
                         {product.priceMinor !== null
                           ? formatCurrency(product.priceMinor, product.currency || currency)
                           : "Price at merchant"}
@@ -623,9 +667,9 @@ export function AiComparisonWorkspace({
                         href={product.retailerUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-[#FF8126] hover:underline"
+                        className="btn-3d-accent px-2.5 py-1 rounded-lg text-xs font-bold gap-1"
                       >
-                        <span>View retailer offer</span>
+                        <span>View on {product.retailerName || "Store"}</span>
                         <ExternalLink className="h-3 w-3" />
                       </a>
                     </div>
@@ -644,21 +688,21 @@ function AssessmentBadge({ rating }: { rating: AssessmentRating }) {
   switch (rating) {
     case "strong":
       return (
-        <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold text-[#35C979] bg-[#35C979]/15 border border-[#35C979]/30">
+        <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-bold text-[#35C979] bg-[#35C979]/15 border border-[#35C979]/30">
           <CheckCircle2 className="h-3 w-3" />
           Strong Match
         </span>
       );
     case "partial":
       return (
-        <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold text-[#69A8FF] bg-[#69A8FF]/15 border border-[#69A8FF]/30">
+        <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-bold text-[#2563EB] dark:text-[#69A8FF] bg-[#69A8FF]/15 border border-[#69A8FF]/30">
           <Info className="h-3 w-3" />
           Partial Match
         </span>
       );
     case "weak":
       return (
-        <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold text-[#F5B942] bg-[#F5B942]/15 border border-[#F5B942]/30">
+        <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:text-[#F5B942] bg-amber-500/15 border border-amber-500/30">
           <AlertTriangle className="h-3 w-3" />
           Weak Match
         </span>
@@ -666,7 +710,7 @@ function AssessmentBadge({ rating }: { rating: AssessmentRating }) {
     case "unknown":
     default:
       return (
-        <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-[#888888] bg-[#1a1a1a] border border-[#2b2b2b]">
+        <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-bold text-zinc-600 dark:text-[#888888] bg-zinc-100 dark:bg-[#1a1a1a] border border-zinc-200 dark:border-[#2b2b2b]">
           <HelpCircle className="h-3 w-3" />
           Not Specified
         </span>

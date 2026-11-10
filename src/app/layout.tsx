@@ -53,8 +53,32 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} dark`}
+      suppressHydrationWarning
     >
-      <body className="min-h-screen bg-[#080808] text-[#D4D4D4] antialiased flex flex-col selection:bg-[#FF6A00] selection:text-white">
+      <head>
+        <meta name="color-scheme" content="light dark" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              try {
+                const t = localStorage.getItem('spendpilot-theme');
+                if (t === 'light') {
+                  document.documentElement.classList.remove('dark');
+                  document.documentElement.classList.add('light');
+                  document.documentElement.setAttribute('data-theme', 'light');
+                  document.documentElement.style.colorScheme = 'light';
+                } else {
+                  document.documentElement.classList.add('dark');
+                  document.documentElement.classList.remove('light');
+                  document.documentElement.setAttribute('data-theme', 'dark');
+                  document.documentElement.style.colorScheme = 'dark';
+                }
+              } catch (_) {}
+            `,
+          }}
+        />
+      </head>
+      <body className="min-h-screen text-zinc-900 dark:text-[#E4E4E7] antialiased flex flex-col selection:bg-[#FF6A00] selection:text-white">
         {children}
       </body>
     </html>

@@ -1,5 +1,6 @@
 import { Channel3, Channel3Error, Channel3TimeoutError } from "@channel3/sdk";
 import type { Channel3Api } from "@channel3/sdk";
+import { trackChannel3Search } from "../observability/call-tracker.ts";
 
 // In-memory cache entry with TTL to conserve hackathon credits
 interface CacheEntry {
@@ -107,6 +108,7 @@ export async function searchChannel3Products({
   };
 
   try {
+    trackChannel3Search(normalizedQuery);
     const page = await client.products.search({
       query: normalizedQuery,
       limit: Math.min(Math.max(limit, 1), 20),

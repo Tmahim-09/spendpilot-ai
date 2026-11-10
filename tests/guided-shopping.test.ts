@@ -397,6 +397,7 @@ describe("SpendPilot AI Phase 4: Guided Shopping & Configuration (28 Scenarios)"
         productId: "prod-shoe-123",
         title: "Nike Pegasus 40",
         imageUrl: "https://example.com/shoe.jpg",
+        status: "variants_found",
         options: [
           {
             name: "Size",

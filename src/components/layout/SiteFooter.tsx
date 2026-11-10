@@ -8,13 +8,13 @@ export function SiteFooter() {
   const currentYear = 2026;
 
   return (
-    <footer className="border-t border-[#242424] bg-[#050505] text-[#A3A3A3]">
+    <footer className="border-t border-orange-200/60 dark:border-[#221c29] bg-[#FFFBF7] dark:bg-[#060408] text-zinc-600 dark:text-[#A1A1AA] transition-colors">
       <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-8 pb-8 border-b border-[#1c1c1c]">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-8 pb-8 border-b border-orange-200/40 dark:border-[#1d1723]">
           {/* Brand & Mission */}
           <div className="md:col-span-2 space-y-3">
             <div className="flex items-center gap-3">
-              <div className="relative h-8 w-8 overflow-hidden rounded-lg border border-[#303030] bg-[#0c0c0c] p-0.5 shadow-sm shadow-[#FF6A00]/20">
+              <div className="relative h-8 w-8 overflow-hidden rounded-lg border border-orange-200 dark:border-[#382f45] bg-white dark:bg-[#121015] p-0.5 shadow-sm shadow-[#FF6A00]/20">
                 <Image
                   src="/logo/SpendPilotLOGO.png"
                   alt="SpendPilot AI logo"
@@ -23,14 +23,14 @@ export function SiteFooter() {
                   className="h-full w-full object-contain"
                 />
               </div>
-              <span className="text-base font-semibold text-[#F5F5F5]">
+              <span className="text-base font-bold text-zinc-900 dark:text-[#F5F5F5]">
                 SpendPilot <span className="text-[#FF6A00]">AI</span>
               </span>
             </div>
-            <p className="text-xs text-[#888888] max-w-md leading-relaxed">
+            <p className="text-xs text-zinc-600 dark:text-[#888888] max-w-md leading-relaxed">
               Budget-aware conversational shopping assistant engineered for the PayPal AI Hackathon 2026. Translates natural language shopping goals into verified, source-grounded product plans with strict budget constraints.
             </p>
-            <div className="flex items-center gap-2 text-[11px] text-[#35C979]">
+            <div className="flex items-center gap-2 text-[11px] font-bold text-[#16A34A] dark:text-[#35C979]">
               <ShieldCheck className="h-4 w-4" />
               <span>Grounded Merchant Commerce Architecture</span>
             </div>
@@ -38,10 +38,10 @@ export function SiteFooter() {
 
           {/* Architecture Pillars */}
           <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-[#D4D4D4] mb-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-[#D4D4D4] mb-3">
               Technical Stack
             </h4>
-            <ul className="space-y-2 text-xs text-[#888888]">
+            <ul className="space-y-2 text-xs text-zinc-600 dark:text-[#888888]">
               <li>Next.js App Router (React 19, TypeScript)</li>
               <li>Tailwind CSS v4 Design Tokens</li>
               <li>Google Gemini API with Automatic Failover</li>

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runAiComparison } from "@/lib/ai/gemini-comparison";
+import { filterEligibleCandidates } from "@/lib/shopping/eligibility-gate";
 import type {
   ShoppingRecommendRequestPayload,
   ShoppingRecommendResponsePayload,
@@ -26,9 +27,20 @@ export async function POST(request: NextRequest) {
       budget = null,
       currency = "USD",
       priorityOverride,
+      canonicalAttributes,
     } = body;
 
-    if (!Array.isArray(products) || products.length === 0) {
+    // Filter candidate products against active hard requirements
+    const eligibility = filterEligibleCandidates({
+      products: products as NormalizedProduct[],
+      canonicalAttributes,
+      budgetCents: budget ? Math.round(budget * 100) : null,
+      currency,
+    });
+
+    const eligibleCandidates = eligibility.eligibleProducts;
+
+    if (!Array.isArray(eligibleCandidates) || eligibleCandidates.length === 0) {
       return NextResponse.json(
         {
           success: true,
@@ -36,7 +48,7 @@ export async function POST(request: NextRequest) {
           topRecommendations: [],
           otherMatches: [],
           allProducts: [],
-          comparisonOverview: null,
+          comparisonOverview: eligibility.noMatchMessage || "No eligible products match your confirmed requirements.",
           comparison: null,
           evidenceFacts: {},
           timings: {
@@ -58,8 +70,8 @@ export async function POST(request: NextRequest) {
           comparison: null,
           evidenceFacts: {},
           topRecommendations: [],
-          otherMatches: products as NormalizedProduct[],
-          allProducts: products as NormalizedProduct[],
+          otherMatches: eligibleCandidates,
+          allProducts: eligibleCandidates,
           comparisonOverview: null,
           timings: {
             geminiDurationMs: Math.round(performance.now() - t0),
@@ -73,7 +85,7 @@ export async function POST(request: NextRequest) {
     // Call Gemini evidence-grounded comparison with automatic model failover
     const result = await runAiComparison({
       query,
-      products: products as NormalizedProduct[],
+      products: eligibleCandidates,
       budget,
       currency,
       priorityOverride,

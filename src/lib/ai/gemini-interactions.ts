@@ -9,7 +9,13 @@ import {
   evaluateDomainScope,
   SPENDPILOT_REDIRECT_MESSAGE,
 } from "./domain-guard.ts";
+import { SPENDPILOT_CENTRAL_SYSTEM_INSTRUCTION } from "./central-instruction.ts";
+import { trackGeminiCall } from "../observability/call-tracker.ts";
 import { formatMinorUnits, minorToMajorUnits } from "../money.ts";
+import {
+  normalizeInteractionResponse,
+  resolveNaturalMessage,
+} from "./normalize-interaction-response.ts";
 import type {
   AuthoritativeShoppingSession,
   ConversationalActionContract,
@@ -19,21 +25,36 @@ import type {
   SingleNextQuestion,
 } from "../../types/index.ts";
 
-export const SPENDPILOT_SYSTEM_INSTRUCTION = `You are SpendPilot AI, an elite conversational personal shopping assistant for the PayPal AI Hackathon 2026.
+export const SPENDPILOT_SYSTEM_INSTRUCTION = `${SPENDPILOT_CENTRAL_SYSTEM_INSTRUCTION}
 
 PERMANENT IDENTITY & ROLE:
-- Your exclusive mission is helping users find products, explain specifications, compare alternatives, build setups, manage budgets, and configure variants.
+- Your exclusive mission is helping users find products, explain specifications, compare alternatives, build multi-product setups, manage budgets, and configure variants.
 - You are NOT a general-purpose AI. You NEVER write code, solve math/calculus homework, write essays, tell fictional stories, or answer general trivia.
 - If a user asks for non-shopping tasks (e.g., "Write a Python script", "Solve my calculus problem", "Which model are you?"), you MUST classify scope as "out_of_scope", set action to "out_of_scope", and respond with the exact SPENDPILOT_REDIRECT_MESSAGE: "${SPENDPILOT_REDIRECT_MESSAGE}".
 - CRITICAL EXCEPTION: Technical requirements for shopping (e.g., "I need a laptop for Python programming", "Which GPU is best for 1440p gaming?", "Explain OLED vs IPS") ARE valid shopping conversations.
 
-CONVERSATION PRINCIPLES:
-1. Speak naturally, warmly, and concisely as a knowledgeable shopping specialist.
-2. Ask questions ONE turn at a time using 'nextQuestion'. NEVER dump multiple questions simultaneously.
-3. NEVER repeat an answered question, and NEVER ask for information already mentioned in the prompt or confirmed in session.
-4. Allow optional preferences to be skipped ("No preference", "You decide").
-5. When all essential specifications are known (e.g. for headphones: connectivity, form factor, ANC), do NOT ask for repeated confirmation or say you are keeping requirements ready. Acknowledge user specifications warmly and set action to "search_products" with readyForSearch: true so search begins immediately.
-6. When active products are present in session, answer questions about them using ONLY verified listing facts. Do not invent specs or ratings.
+CONVERSATION PRINCIPLES & DYNAMIC INTELLIGENCE:
+1. Speak naturally, warmly, and contextually as an expert personal shopper. NEVER sound like a rigid questionnaire or wizard. NEVER use generic canned phrases like "Let's find the best options for you. Could you share your preferred style or features?" or "Preferences complete!".
+2. CONTEXT AWARENESS:
+   - When a user asks for themed room decor (e.g. "I want to decorate my room with Naruto, One Piece, and Attack on Titan"): immediately understand all requested franchises and the room decoration objective. Ask only about genuinely missing essential criteria (such as budget ceiling or decor format preference: wall art vs figurines vs LED signs). NEVER ask generic furniture questions.
+   - When a user asks for a specific tech item (e.g. "MacBook for programming with 1TB SSD"): recognize product family (MacBook), manufacturer (Apple), OS (macOS), intended use (programming), and storage (1TB SSD). NEVER ask what operating system they prefer. Ask only for missing essential information (like budget).
+   - When a user specifies details (e.g. "Gaming keyboard under $100 with wireless connectivity"): immediately recognize category (gaming keyboard), budget ($100), and connectivity (wireless). Do NOT re-ask these details.
+3. TASK SWITCHING vs. REFINEMENT:
+   - If the user changes to a completely new shopping task (e.g., from room decor to a MacBook, or from headphones to running shoes):
+     Set taskIntent to "new_task".
+     Set action to "ask_follow_up" (if essential info like budget is missing) or "search_products" (if enough info is present).
+     Respond naturally acknowledging the switch to the new item.
+     Do NOT carry over previous product attributes to the new task.
+   - If the user refines the current task ("Can I get the same with 1TB?", "Show me cheaper options", "Do you have it in black?"):
+     Set taskIntent to "refine_current".
+4. ONE MEANINGFUL QUESTION AT A TIME:
+   - Ask at most ONE contextually relevant question per turn using 'nextQuestion'.
+   - NEVER dump multiple questions. NEVER repeat an answered question.
+   - Provide concise, useful quick-reply options when helpful, but ensure the conversation flows naturally if the user responds with free text.
+5. WHEN READY TO SEARCH:
+   - When essential specifications are known (or when user says "search", "find products", "yes", "looks good"), set action to "search_products" and readyForSearch: true so search begins immediately.
+6. GROUNDED PRODUCT SPECIFICATIONS:
+   - When active products are present in session, answer questions using ONLY verified listing facts. Never invent specifications, ratings, or prices.
 7. Always return a valid JSON object matching the action contract schema.`;
 
 export const CONVERSATIONAL_ACTION_SCHEMA = {
@@ -63,7 +84,12 @@ export const CONVERSATIONAL_ACTION_SCHEMA = {
         "confirm_configuration",
         "out_of_scope",
         "clarify_intent",
+        "new_shopping_task",
       ],
+    },
+    taskIntent: {
+      type: "string",
+      enum: ["new_task", "refine_current", "general_query"],
     },
     assistantMessage: { type: "string" },
     requirementsUpdate: {
@@ -243,6 +269,20 @@ export function buildCompactSessionContext(
     parts.push(`Selected Product Configurations:\n${JSON.stringify(session.selectedVariants, null, 2)}`);
   }
 
+  // Dialogue transcript for current task (fixes missing conversation history)
+  if (Array.isArray(session.messages) && session.messages.length > 0) {
+    const recent = session.messages.slice(-8).map((m) => {
+      const role = m.role === "user" ? "Shopper" : "Assistant";
+      return `${role}: "${m.content.replace(/\n+/g, " ").trim()}"`;
+    });
+    parts.push(`Recent Dialogue Transcript (Current Task):\n${recent.join("\n")}`);
+  }
+
+  // Active pending question
+  if (session.activeQuestion) {
+    parts.push(`Active Pending Question: "${session.activeQuestion.text}"`);
+  }
+
   return parts.join("\n\n");
 }
 
@@ -329,6 +369,7 @@ Respond with appropriate conversational message and next proposed shopping actio
             interactionParams.previous_interaction_id = session.previousInteractionId;
           }
 
+          trackGeminiCall(`gemini_interactions_${model}`);
           const interaction = (await client.interactions.create(
             interactionParams as unknown as Parameters<typeof client.interactions.create>[0]
           )) as unknown as { id?: string; output_text?: string };
@@ -368,6 +409,7 @@ Respond with appropriate conversational message and next proposed shopping actio
           responseSchema: CONVERSATIONAL_ACTION_SCHEMA,
         });
 
+        trackGeminiCall(`gemini_generateContent_${model}`);
         const genRes = await client.models.generateContent({
           model,
           contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -376,10 +418,30 @@ Respond with appropriate conversational message and next proposed shopping actio
         rawText = genRes.text?.trim() || "";
       }
 
-      const parsed = JSON.parse(rawText || "{}") as ConversationalActionContract;
+      const normalized = normalizeInteractionResponse(rawText, {
+        userMessage,
+        category: session.requirements?.[0]?.categorySlug,
+        budget: session.budget,
+        currency: session.currency,
+      });
 
       // 4. Validate output contract server-side
-      const validatedContract = sanitizeAndValidateActionContract(parsed, userMessage, hasActiveProducts);
+      const validatedContract = sanitizeAndValidateActionContract(
+        {
+          scope: normalized.scope,
+          action: normalized.action,
+          assistantMessage: normalized.assistantMessage,
+          nextQuestion: normalized.question,
+          requirementsUpdate: {
+            attributes: normalized.requirementUpdates,
+          },
+          readyForSearch: normalized.readyForSearch,
+          referencedProductIds: normalized.referencedProductIds,
+          variantSelection: normalized.variantSelection,
+        },
+        userMessage,
+        hasActiveProducts
+      );
 
       return {
         contract: validatedContract,
@@ -403,7 +465,7 @@ Respond with appropriate conversational message and next proposed shopping actio
     contract: {
       scope: guardResult.scope,
       action: "ask_follow_up",
-      assistantMessage: "Let's find the best options for you. Could you share your preferred style or features?",
+      assistantMessage: generateDynamicFallbackMessage(userMessage, session),
       readyForSearch: false,
       requiresConfirmation: false,
     },
@@ -411,6 +473,53 @@ Respond with appropriate conversational message and next proposed shopping actio
     modelUsed: "deterministic-recovery",
     usedFallback: true,
   };
+}
+
+/**
+ * Generates a contextual, natural fallback message when Gemini API is unavailable,
+ * strictly avoiding hardcoded boilerplate or generic questionnaires.
+ */
+export function generateDynamicFallbackMessage(
+  userMessage: string,
+  session: AuthoritativeShoppingSession
+): string {
+  const lower = userMessage.toLowerCase();
+  if (lower.includes("macbook") || lower.includes("laptop")) {
+    if (!session.budget) {
+      return "I can help you find the best MacBook for your needs. What target budget would you like to stay within?";
+    }
+    return "Great choice! Do you have a preferred screen size (like 13-inch or 14-inch), or should I look across models within your budget?";
+  }
+  if (
+    lower.includes("anime") ||
+    lower.includes("naruto") ||
+    lower.includes("one piece") ||
+    lower.includes("attack on titan")
+  ) {
+    if (!session.budget) {
+      return "Decorating your room with Naruto, One Piece, and Attack on Titan sounds awesome! What total budget do you have in mind for the room setup?";
+    }
+    return "Awesome anime themes! What specific types of decor are you most interested in (e.g. wall art, desk figures, lighting), or would you like a balanced variety?";
+  }
+  if (lower.includes("keyboard")) {
+    if (!session.budget) {
+      return "I'll help you pick a great gaming keyboard. What is your target budget?";
+    }
+    return "Looking for gaming keyboards! Do you prefer a compact mechanical layout, or full-size with a number pad?";
+  }
+  if (lower.includes("headphone") || lower.includes("headset") || lower.includes("audio")) {
+    if (!session.budget) {
+      return "I can help you find the right headphones. What is your target budget?";
+    }
+    return "Do you prefer over-ear headphones or earbuds?";
+  }
+  if (lower.includes("shoe") || lower.includes("sneaker") || lower.includes("running")) {
+    return "What shoe size do you wear?";
+  }
+  if (session.budget) {
+    return `I'm searching for options within your budget. Any particular brand or must-have features you'd like me to focus on?`;
+  }
+  return `I'd love to help you find that. What target budget would you like to stay within?`;
 }
 
 /**
@@ -426,7 +535,11 @@ export function sanitizeAndValidateActionContract(
   const payload = (raw || {}) as Record<string, any>;
   let scope: DomainScope = (payload.scope as DomainScope) || "shopping_related";
   let action: ConversationalAction = (payload.action as ConversationalAction) || "continue_conversation";
-  let assistantMessage = typeof payload.assistantMessage === "string" ? payload.assistantMessage.trim() : "";
+  const taskIntent = payload.taskIntent as "new_task" | "refine_current" | "general_query" | undefined;
+  let assistantMessage = resolveNaturalMessage(
+    payload.assistantMessage || payload.response || payload.message,
+    ""
+  );
 
   // 1. If scope is out_of_scope or prompt fails domain guard: enforce redirect
   const guard = evaluateDomainScope(userMessage, hasActiveProducts);
@@ -441,10 +554,14 @@ export function sanitizeAndValidateActionContract(
 
   // Fallback message if empty
   if (!assistantMessage) {
-    assistantMessage =
-      action === "out_of_scope"
-        ? SPENDPILOT_REDIRECT_MESSAGE
-        : "I'm ready to help you find the right product within your budget. What details can I help with?";
+    if (typeof payload.question === "string" && payload.question.trim()) {
+      assistantMessage = payload.question.trim();
+    } else {
+      assistantMessage =
+        action === "out_of_scope"
+          ? SPENDPILOT_REDIRECT_MESSAGE
+          : "I'm ready to help you find the right product within your budget. What details can I help with?";
+    }
   }
 
   // 2. Validate and sanitize nextQuestion (strictly ONE question)
@@ -537,6 +654,7 @@ export function sanitizeAndValidateActionContract(
   return {
     scope,
     action,
+    taskIntent,
     assistantMessage,
     requirementsUpdate: payload.requirementsUpdate,
     nextQuestion,

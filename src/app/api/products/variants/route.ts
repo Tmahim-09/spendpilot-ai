@@ -24,8 +24,9 @@ export async function POST(req: Request) {
 
     const selectedOptions = body.selectedOptions || {};
     const currency = body.currency || "USD";
+    const retailerUrl = typeof body.retailerUrl === "string" ? body.retailerUrl.trim() : undefined;
 
-    const variantState = await retrieveProductVariants(productId, selectedOptions, currency);
+    const variantState = await retrieveProductVariants(productId, selectedOptions, currency, retailerUrl);
 
     const payload: ProductVariantResponsePayload = {
       success: true,

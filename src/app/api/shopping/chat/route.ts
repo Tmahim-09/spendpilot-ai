@@ -3,10 +3,15 @@ import {
   processUserMessage,
   createInitialSession,
 } from "@/lib/ai/conversation-engine";
+import { orchestrateShoppingTurn } from "@/lib/orchestrator/index";
+import { resolveNaturalMessage } from "@/lib/ai/normalize-interaction-response";
+import { createTurnTracker } from "@/lib/observability/call-tracker";
+import { syncWorkspaceFromBrief } from "@/lib/workspace/sync-engine";
 import type {
   ChatRequestPayload,
   ChatResponsePayload,
   AuthoritativeShoppingSession,
+  CurrencyCode,
 } from "@/types";
 
 export const maxDuration = 30; // 30s timeout
@@ -31,6 +36,7 @@ export async function POST(req: Request) {
     const baseSession: AuthoritativeShoppingSession = incomingSession && incomingSession.sessionId
       ? {
           sessionId: incomingSession.sessionId,
+          currentTaskId: incomingSession.currentTaskId,
           stage: incomingSession.stage || "initial_request",
           conversationState: incomingSession.conversationState || "idle",
           turnId: incomingSession.turnId || "turn_0",
@@ -55,6 +61,9 @@ export async function POST(req: Request) {
           selectedProductId: incomingSession.selectedProductId || null,
           selectedVariants: incomingSession.selectedVariants || {},
           lastAction: incomingSession.lastAction || "continue_conversation",
+          shoppingBrief: incomingSession.shoppingBrief,
+          workspace: incomingSession.workspace,
+          welcomeMessage: incomingSession.welcomeMessage,
           updatedAt: Date.now(),
         }
       : createInitialSession({
@@ -65,6 +74,34 @@ export async function POST(req: Request) {
           currency: body.currency,
         });
 
+    // Initialize turn call tracker for observability (Section 19)
+    const submissionId = body.clientMessageId || `sub_${Date.now()}`;
+    const tracker = createTurnTracker(submissionId, baseSession.revision);
+
+    // Run central orchestrator to manage structured Shopping Brief and task lifecycle
+    // (Rule 7A: 1 Gemini call for new text, Rule 7B: 0 Gemini calls for quick replies)
+    const orchestratorResult = await orchestrateShoppingTurn({
+      userMessage,
+      activeBrief: baseSession.shoppingBrief || null,
+      activeSessionId: baseSession.sessionId,
+      activeTaskId: baseSession.currentTaskId || null,
+      answeredQuestionId: body.answeredQuestionId,
+      sourceMessageId: body.clientMessageId,
+      conversationHistory: (baseSession.messages || []).map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
+    });
+
+    baseSession.shoppingBrief = orchestratorResult.brief;
+    baseSession.currentTaskId = orchestratorResult.taskId;
+    baseSession.workspace = syncWorkspaceFromBrief(
+      baseSession.workspace,
+      orchestratorResult.brief,
+      userMessage,
+      (orchestratorResult.brief.budget?.maximum?.currency as CurrencyCode) || baseSession.currency
+    );
+
     const result = await processUserMessage({
       session: baseSession,
       userMessage,
@@ -72,26 +109,62 @@ export async function POST(req: Request) {
       answeredQuestionId: body.answeredQuestionId,
       answeredAttributeKey: body.answeredAttributeKey,
       currentProductsSummary: body.currentProductsSummary || [],
+      precomputedOrchestration: orchestratorResult,
     });
+
+    // Record turn decision reason and log summary
+    tracker.setDecisionReason(
+      result.shouldExecuteSearch
+        ? "ready_for_product_search"
+        : result.assistantMessage.nextQuestion
+        ? "clarification_question_required"
+        : "continue_dialogue"
+    );
+    tracker.logSummary();
+
+    const naturalContent = resolveNaturalMessage(
+      result.assistantMessage.content,
+      "I'm ready to help you find the right product within your budget."
+    );
 
     const responsePayload: ChatResponsePayload = {
       success: true,
       sessionId: result.session.sessionId,
       turnId: result.session.turnId,
       revision: result.session.revision,
-      message: result.assistantMessage.content,
+      message: naturalContent,
+      assistantMessage: naturalContent,
       action: result.action,
       scope: result.scope,
       requirements: result.session.requirements,
       nextQuestion: result.assistantMessage.nextQuestion || null,
+      clarification: result.assistantMessage.clarification || (result.assistantMessage.nextQuestion ? {
+        questionId: result.assistantMessage.nextQuestion.id,
+        attributeKey: result.assistantMessage.nextQuestion.attributeKey,
+        question: result.assistantMessage.nextQuestion.text,
+        options: (result.assistantMessage.nextQuestion.options || []).map((o) => ({ label: o.label || o.value, value: o.value || o.label })),
+      } : null),
       questions: result.assistantMessage.questions || [],
       suggestedReplies: result.assistantMessage.suggestedReplies || [],
+      quickReplies: result.assistantMessage.suggestedReplies || [],
+      conversationStatus: result.shouldExecuteSearch
+        ? "searching"
+        : result.shouldExecuteComparison
+        ? "comparing"
+        : "idle",
       canSearch: result.session.canSearch,
       shouldExecuteSearch: result.shouldExecuteSearch,
       shouldExecuteComparison: result.shouldExecuteComparison,
       comparisonRequestedProductIds: result.comparisonProductIds,
       variantConfiguration: result.variantConfiguration,
-      session: result.session,
+      session: {
+        ...result.session,
+        shoppingBrief: orchestratorResult.brief,
+        workspace: baseSession.workspace,
+        currentTaskId: orchestratorResult.taskId,
+      },
+      brief: orchestratorResult.brief,
+      taskId: orchestratorResult.taskId,
       modelUsed: result.modelUsed,
       usedFallback: result.usedFallback,
       previousInteractionId: result.session.previousInteractionId,

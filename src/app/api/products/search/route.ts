@@ -8,6 +8,11 @@ import {
   resolvePricePreference,
   filterQualifyingProducts,
 } from "@/lib/shopping/price-policy";
+import {
+  buildConstrainedSearchQuery,
+  filterEligibleCandidates,
+} from "@/lib/shopping/eligibility-gate";
+import { verifyAndSelectOffer } from "@/lib/shopping/offer-verification";
 import type { SearchProductsResponsePayload } from "@/types";
 
 export async function POST(request: NextRequest) {
@@ -91,9 +96,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Determine constrained search query if hard requirements exist (e.g. macOS -> Apple MacBook)
+    const effectiveQuery = buildConstrainedSearchQuery(query, validation.data.canonicalAttributes);
+
     // Perform live Channel3 search with 15-second client timeout
     const { products: rawProducts, cached } = await searchChannel3Products({
-      query,
+      query: effectiveQuery,
       minPrice: minPriceFilter,
       maxPrice: maxPriceFilter,
       currency,
@@ -103,8 +111,11 @@ export async function POST(request: NextRequest) {
       gender,
     });
 
-    // Normalize raw products into application schema
-    const normalized = normalizeChannel3Products(rawProducts, currency);
+    // Normalize raw products into application schema and establish verified offers
+    const rawNormalized = normalizeChannel3Products(rawProducts, currency);
+    const normalized = rawNormalized.map((p) =>
+      verifyAndSelectOffer(p, validation.data.canonicalAttributes)
+    );
 
     // Apply strict server-side qualifying offer and price range filtering
     const {
@@ -120,12 +131,21 @@ export async function POST(request: NextRequest) {
       expandRange,
     });
 
+    // Apply deterministic Hard Requirement Eligibility Gate
+    const eligibility = filterEligibleCandidates({
+      products: qualifyingProducts,
+      canonicalAttributes: validation.data.canonicalAttributes,
+      budgetCents: budget ? Math.round(budget * 100) : null,
+      currency,
+    });
+
+    const finalProducts = eligibility.eligibleProducts;
     const durationMs = Math.round(performance.now() - t0);
 
     // Development diagnostic log
     if (process.env.NODE_ENV !== "production") {
       console.log(
-        `[SearchAPI] id=${requestId} query="${query}" mode=${mode} pref=${effectivePreference} expanded=${expandRange} count=${qualifyingProducts.length} cached=${cached} duration=${durationMs}ms`
+        `[SearchAPI] id=${requestId} query="${query}" effectiveQuery="${effectiveQuery}" count=${finalProducts.length} disqualified=${eligibility.disqualifiedProducts.length} isNoMatch=${eligibility.isNoMatch} cached=${cached} duration=${durationMs}ms`
       );
     }
 
@@ -134,15 +154,18 @@ export async function POST(request: NextRequest) {
       query,
       budgetApplied: budget,
       currency,
-      count: qualifyingProducts.length,
-      products: qualifyingProducts,
+      count: finalProducts.length,
+      products: finalProducts,
       cached,
       mode,
       pricePreference: effectivePreference,
       preferredRange,
       preferredRangeText,
-      emptyInPreferredRange,
+      emptyInPreferredRange: eligibility.isNoMatch ? false : emptyInPreferredRange,
       isRangeExpanded: expandRange,
+      isNoMatch: eligibility.isNoMatch,
+      noMatchReason: eligibility.noMatchMessage || undefined,
+      suggestedAlternatives: eligibility.suggestedAlternatives,
       timings: {
         durationMs,
         requestId,

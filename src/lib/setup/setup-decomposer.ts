@@ -114,7 +114,7 @@ const decompositionSchema = {
           },
           diversityGroup: {
             type: Type.STRING,
-            description: "Visual/physical diversity group: 'wall-lighting', 'wall-art', 'bedding', 'figurine', 'rug', 'pillows', 'desk-mat', 'electronics', 'hardware', or 'general'.",
+            description: "Visual/physical diversity group: 'wall-lighting', 'wall-art', 'bedding', 'figurine', 'rug', 'pillows', 'desk-mat', 'pc', 'monitor', 'keyboard', 'mouse', 'headset', 'speakers', 'chair', 'electronics', 'hardware', or 'general'.",
           },
           allocationPercentage: {
             type: Type.NUMBER,
@@ -557,6 +557,28 @@ export function normalizeDecomposition(
     const allocatedAmount = Math.round(itemMinor) / 100;
     const allocationPercentage = Math.round((itemMinor / totalBudgetMinor) * 100);
 
+    const queryLower = originalQuery.toLowerCase();
+    const userReqs: string[] = [];
+    const baselineReqs: string[] = [];
+
+    for (const reqStr of item.requirements) {
+      const words = reqStr
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length > 2);
+      const isExplicitInQuery = words.some(
+        (w) =>
+          queryLower.includes(w) &&
+          !["gaming", "setup", "product", "need", "want", "under", "with", "best", "good", "budget"].includes(w)
+      );
+      if (isExplicitInQuery) {
+        userReqs.push(reqStr);
+      } else {
+        baselineReqs.push(reqStr);
+      }
+    }
+
     items.push({
       id,
       name: item.name,
@@ -567,6 +589,8 @@ export function normalizeDecomposition(
       allocatedAmountMinor: itemMinor,
       allocatedAmount,
       requirements: item.requirements,
+      userRequirements: userReqs,
+      baselineRequirements: baselineReqs,
       priority: item.priority,
       requiredTheme,
       requiredFranchises: item.requiredFranchises,

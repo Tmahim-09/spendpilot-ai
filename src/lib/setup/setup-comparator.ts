@@ -111,7 +111,8 @@ export async function runSetupComparison({
       mandatoryFranchises: req?.requiredFranchises || [],
       mandatoryCharacters: req?.requiredCharacters || [],
       allocatedBudget: `${currency} ${((cat.allocatedAmountMinor || 0) / 100).toFixed(2)}`,
-      requestedFeatures: req?.requirements || [],
+      userSpecifiedFeatures: req?.userRequirements || [],
+      suggestedBaselines: req?.baselineRequirements || req?.requirements || [],
       priority: req?.priority || "medium",
       candidates: cat.products.map((p) => ({
         productId: p.sourceProductId || p.title,
@@ -133,7 +134,10 @@ CRITICAL INSTRUCTION HIERARCHY:
 2. Honest unfilled state: If none of the candidates in a category satisfy the hard theme constraints, set recommendedProductId to null and explain why. NEVER choose an irrelevant or generic product as a winner.
 3. Compare eligible alternatives: If candidates meet the theme, compare them on key differences, trade-offs, and quality.
 4. Grounding: Do not invent specifications, prices, or ratings. Use only facts from the listing.
-5. PC Component Compatibility: Check socket, form factor, RAM, and PSU. Set compatibilityStatus to 'unverified' if specs missing, or 'not_applicable' for non-PC setups.`;
+5. PC Component Compatibility: Check socket, form factor, RAM, and PSU. Set compatibilityStatus to 'unverified' if specs missing, or 'not_applicable' for non-PC setups.
+6. Requirement Provenance: Strictly distinguish 'userSpecifiedFeatures' from 'suggestedBaselines'.
+   - NEVER state or imply that the user requested a specific specification, capacity, or component (such as 32GB RAM, 1440p monitor, or specific GPU) unless it is explicitly present in 'userSpecifiedFeatures'.
+   - If a product has 16GB RAM or a 1080p display and fits the user's budget and gameplay goals, evaluate it fairly against the suggestedBaselines without falsely claiming the user demanded 32GB RAM or 1440p.`;
 
   const userPrompt = `Shopping Request: "${query}"
 Total Budget: ${currency} ${totalBudget}

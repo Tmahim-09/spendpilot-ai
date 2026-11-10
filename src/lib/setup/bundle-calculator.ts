@@ -8,13 +8,14 @@ import type {
   SetupRequirementItem,
 } from "../../types/index.ts";
 import { evaluateBundleDiversity } from "./bundle-diversity.ts";
+import { isSameProductModel } from "./setup-search.ts";
 
 export interface BuildRecommendedBundleOptions {
   totalBudget: number;
   currency?: CurrencyCode;
   requirements: SetupRequirementItem[];
   categories: SetupCategorySearchResult[];
-  comparisons: SetupComparisonCategoryResult[];
+  comparisons?: SetupComparisonCategoryResult[];
   selectedItemIds?: Record<string, string>; // requirementId -> chosen productId
 }
 
@@ -30,7 +31,7 @@ export function calculateRecommendedBundle({
   currency = "USD",
   requirements,
   categories,
-  comparisons,
+  comparisons = [],
   selectedItemIds = {},
 }: BuildRecommendedBundleOptions): RecommendedBundle {
   const totalBudgetMinor = Math.round(Math.max(0, totalBudget) * 100);
@@ -94,9 +95,12 @@ export function calculateRecommendedBundle({
     // Check category budget constraint
     const isOverCategoryBudget = priceMinor > req.allocatedAmountMinor;
 
-    const altProduct = products.find(
-      (p) => (p.sourceProductId || p.title) !== (chosenProduct?.sourceProductId || chosenProduct?.title)
-    ) || null;
+    const altProduct = products.find((p) => {
+      const isSameId = (p.sourceProductId || p.title) === (chosenProduct?.sourceProductId || chosenProduct?.title);
+      if (isSameId) return false;
+      if (chosenProduct && isSameProductModel(p, chosenProduct)) return false;
+      return true;
+    }) || null;
 
     productSubtotalMinor += priceMinor;
 

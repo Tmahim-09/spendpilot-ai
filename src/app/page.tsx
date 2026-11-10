@@ -1,158 +1,225 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { SiteHeader } from "@/components/layout/SiteHeader";
-import { HeroSection } from "@/components/ai-shopping/HeroSection";
-import { LiveProductResults } from "@/components/product-results/LiveProductResults";
-import { SetupDecompositionReview } from "@/components/setup/SetupDecompositionReview";
-import { SetupBundleWorkspace } from "@/components/setup/SetupBundleWorkspace";
 import { ContinuousChatWorkspace } from "@/components/chat/ContinuousChatWorkspace";
+import { LiveProductResults } from "@/components/product-results/LiveProductResults";
 import { ProductVariantConfigurator } from "@/components/guided-shopping/ProductVariantConfigurator";
 import { HowItWorks } from "@/components/sections/HowItWorks";
 import { TrustSection } from "@/components/sections/TrustSection";
 import { SiteFooter } from "@/components/layout/SiteFooter";
-import { calculateRecommendedBundle } from "@/lib/setup/bundle-calculator";
-import { createInitialSession } from "@/lib/ai/conversation-engine";
-import { parseToMinorUnits, minorToMajorUnits } from "@/lib/money";
+import {
+  createInitialSession,
+  getRandomWelcomeMessage,
+} from "@/lib/ai/conversation-engine";
+import { minorToMajorUnits } from "@/lib/money";
+import { selectRetailerOffer } from "@/lib/shopping/offer-verification";
+import { formatCurrency } from "@/lib/utils";
+import {
+  createInitialWorkspace,
+  selectProductForItem,
+  getNextUnresolvedItem,
+  addIndependentItem,
+  calculateWorkspaceBudgetSummary,
+} from "@/lib/workspace/workspace-manager";
+import { saveWorkspaceToStorage } from "@/lib/workspace/workspace-storage";
+import {
+  getProgressMessage,
+  type SearchProgressState,
+} from "@/lib/shopping/search-progress";
+import { isDelegatedOrNoPreference } from "@/lib/orchestrator/intent-analyzer";
 import type {
   NormalizedProduct,
+  ProductOfferItem,
   CurrencyCode,
-  ShoppingMode,
-  PricePreference,
   SearchProductsResponsePayload,
   ShoppingRecommendResponsePayload,
-  AiProcessingStatus,
   AiComparisonResult,
   EvidenceFact,
-  SetupDecompositionResult,
-  SetupRequirementItem,
-  SetupCategorySearchResult,
-  SetupComparisonCategoryResult,
-  RecommendedBundle,
-  SetupDecomposeResponsePayload,
-  SetupSearchResponsePayload,
-  SetupCompareResponsePayload,
   ProductVariantSelection,
-  StructuredRequirementSearchFilters,
   AuthoritativeShoppingSession,
+  CanonicalShoppingAttribute,
 } from "@/types";
-import { Sparkles, Search, Layers, ShieldAlert, RefreshCw } from "lucide-react";
-
-type SetupStage = "idle" | "decomposing" | "review" | "searching" | "comparing" | "workspace";
 
 export default function Home() {
-  const [query, setQuery] = useState<string | null>(null);
-  const [budget, setBudget] = useState<number | null>(null);
   const [currency, setCurrency] = useState<CurrencyCode>("USD");
-  const [mode, setMode] = useState<ShoppingMode>("single");
-  const [pricePreference, setPricePreference] = useState<PricePreference>("near_budget");
 
-  // Conversational Chat Session State (Interactions API)
-  const [chatSession, setChatSession] = useState<AuthoritativeShoppingSession>(() =>
-    createInitialSession({})
-  );
+  // Conversational Chat Session State (Interactions API) - strictly ephemeral in memory
+  const [chatSession, setChatSession] = useState<AuthoritativeShoppingSession>(() => {
+    const init = createInitialSession({ sessionId: "ephemeral_client" });
+    return {
+      ...init,
+      workspace: createInitialWorkspace({ id: "ephemeral_client" }),
+    };
+  });
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [chatStatusText, setChatStatusText] = useState<string | null>(null);
+  const [searchProgress, setSearchProgress] = useState<SearchProgressState | null>(null);
+  const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
+
+  // Handle hash scrolling when returning from /cart or navigating via links
+  useEffect(() => {
+    const handleHash = () => {
+      if (typeof window !== "undefined" && window.location.hash) {
+        const id = window.location.hash.replace("#", "");
+        const el = document.getElementById(id);
+        if (el) {
+          setTimeout(() => el.scrollIntoView({ behavior: "smooth" }), 50);
+        }
+      }
+    };
+    handleHash();
+    window.addEventListener("hashchange", handleHash);
+    return () => window.removeEventListener("hashchange", handleHash);
+  }, []);
 
   // Variant Configuration State
   const [configuringProduct, setConfiguringProduct] = useState<NormalizedProduct | null>(null);
   const [configuredProductIds, setConfiguredProductIds] = useState<Set<string>>(new Set());
   const [configuredVariants, setConfiguredVariants] = useState<Record<string, ProductVariantSelection>>({});
 
-  // Single Product Results State
+  // Product Results & Showcase State
   const [products, setProducts] = useState<NormalizedProduct[]>([]);
   const [comparison, setComparison] = useState<AiComparisonResult | null>(null);
   const [evidenceFacts, setEvidenceFacts] = useState<Record<string, EvidenceFact>>({});
-  const [topRecommendations, setTopRecommendations] = useState<NormalizedProduct[]>([]);
-  const [otherMatches, setOtherMatches] = useState<NormalizedProduct[]>([]);
-  const [emptyInPreferredRange, setEmptyInPreferredRange] = useState(false);
-  const [preferredRangeText, setPreferredRangeText] = useState<string | null>(null);
-  const [isRangeExpanded, setIsRangeExpanded] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
-  // Status & Progress State for Single Product
+  // Background AI ranking & refinement progress
   const [isSearchingProducts, setIsSearchingProducts] = useState(false);
   const [isRankingAi, setIsRankingAi] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
-  const [aiStatus, setAiStatus] = useState<AiProcessingStatus>("complete");
-  const [aiMessage, setAiMessage] = useState<string | null>(null);
-  const [playfulNotice, setPlayfulNotice] = useState<{
-    message: string;
-    suggestedProducts: string[];
-  } | null>(null);
-
-  const [error, setError] = useState<string | null>(null);
-  const [cached, setCached] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
-
-  // Multi-Product Setup State
-  const [setupStage, setSetupStage] = useState<SetupStage>("idle");
-  const [setupDecomposition, setSetupDecomposition] = useState<SetupDecompositionResult | null>(null);
-  const [setupRequirements, setSetupRequirements] = useState<SetupRequirementItem[]>([]);
-  const [setupCategories, setSetupCategories] = useState<SetupCategorySearchResult[]>([]);
-  const [setupComparisons, setSetupComparisons] = useState<SetupComparisonCategoryResult[]>([]);
-  const [setupBundle, setSetupBundle] = useState<RecommendedBundle | null>(null);
-  const [selectedItemIds, setSelectedItemIds] = useState<Record<string, string>>({});
-  const [setupError, setSetupError] = useState<string | null>(null);
 
   // Monotonic ID to prevent race conditions from previous late responses
   const activeSearchId = useRef(0);
 
-  // Load saved session on mount
+  // Track hydration state to prevent initial render from overwriting stored workspace
+  const isHydratedRef = useRef(false);
+  const lastSavedWorkspaceRef = useRef<string>("");
+
+  // Smooth scroll helper to navigate from chat to products showcase
+  const scrollToShowcase = useCallback(() => {
+    if (typeof window !== "undefined") {
+      const el = document.getElementById("products-showcase");
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, []);
+
+  // Ensure window stays at top on mount/refresh (never jumping to input section)
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      if ("scrollRestoration" in window.history) {
+        window.history.scrollRestoration = "manual";
+      }
+      window.scrollTo(0, 0);
+    }
+  }, []);
+
+  // Hydrate workspace from localStorage once on client mount (safe against Strict Mode and SSR)
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
         if (typeof window !== "undefined") {
-          const saved = window.sessionStorage.getItem("spendpilot_guided_shopping_session");
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            if (parsed.sessionId) {
-              setChatSession(parsed);
-              if (parsed.originalRequest) setQuery(parsed.originalRequest);
-              if (parsed.budget) setBudget(parsed.budget);
-              if (parsed.currency) setCurrency(parsed.currency);
-              if (parsed.mode) setMode(parsed.mode);
+          const raw = window.localStorage.getItem("spendpilot_workspace");
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && Array.isArray(parsed.groups)) {
+              lastSavedWorkspaceRef.current = raw;
+              setChatSession((prev) => ({ ...prev, workspace: parsed }));
+              const selectedIds = new Set<string>();
+              parsed.groups.forEach((g: { items: Array<{ status: string; selectedProductId?: string }> }) => {
+                g.items.forEach((item) => {
+                  if (item.status === "selected" && item.selectedProductId) {
+                    selectedIds.add(item.selectedProductId);
+                  }
+                });
+              });
+              setSelectedProductIds(selectedIds);
             }
-          } else {
-            setChatSession((prev) => ({
-              ...prev,
-              sessionId: `session_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`,
-              updatedAt: Date.now(),
-            }));
           }
         }
       } catch {
-        // Ignore session storage errors
+        // Ignore parsing errors
+      } finally {
+        isHydratedRef.current = true;
       }
     }, 0);
 
     return () => clearTimeout(timer);
   }, []);
 
-  const scrollToChat = () => {
-    setTimeout(() => {
-      const el = document.getElementById("spendpilot-chat-workspace");
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
+  // Listen for external cross-tab storage changes (e.g. from /cart page removals in another window/tab)
+  useEffect(() => {
+    const handleCrossTabStorage = (e: StorageEvent) => {
+      if (e.key && e.key !== "spendpilot_workspace") return;
+      try {
+        const raw = window.localStorage.getItem("spendpilot_workspace");
+        if (!raw || raw === lastSavedWorkspaceRef.current) return;
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.groups)) {
+          lastSavedWorkspaceRef.current = raw;
+          setChatSession((prev) => ({ ...prev, workspace: parsed }));
+          const selectedIds = new Set<string>();
+          parsed.groups.forEach((g: { items: Array<{ status: string; selectedProductId?: string }> }) => {
+            g.items.forEach((item) => {
+              if (item.status === "selected" && item.selectedProductId) {
+                selectedIds.add(item.selectedProductId);
+              }
+            });
+          });
+          setSelectedProductIds(selectedIds);
+        }
+      } catch {
+        // Ignore parsing errors
       }
-    }, 60);
-  };
+    };
 
-  const scrollToResults = () => {
-    setTimeout(() => {
-      const resultsEl = document.getElementById("search-results") || document.getElementById("setup-workspace");
-      if (resultsEl) {
-        resultsEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.addEventListener("storage", handleCrossTabStorage);
+    return () => window.removeEventListener("storage", handleCrossTabStorage);
+  }, []);
+
+  // Sync workspace to localStorage whenever it changes so /cart page accesses selected items
+  // Guarded by hydration ref and serialized equality to avoid feedback loops
+  useEffect(() => {
+    if (!isHydratedRef.current || !chatSession.workspace || typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const serialized = JSON.stringify(chatSession.workspace);
+      if (serialized === lastSavedWorkspaceRef.current) {
+        return;
       }
-    }, 60);
-  };
+      lastSavedWorkspaceRef.current = serialized;
+      saveWorkspaceToStorage(chatSession.workspace);
+    } catch {
+      // Ignore
+    }
+  }, [chatSession.workspace]);
 
-  const handleResetSession = () => {
-    const fresh = createInitialSession({ currency });
-    setChatSession(fresh);
-    setHasSearched(false);
+  const handleResetSession = useCallback(() => {
+    const fresh = createInitialSession({ currency, welcomeMessage: getRandomWelcomeMessage() });
+    const freshWorkspace = createInitialWorkspace({ id: fresh.sessionId, currency });
+    try {
+      const serialized = JSON.stringify(freshWorkspace);
+      lastSavedWorkspaceRef.current = serialized;
+      saveWorkspaceToStorage(freshWorkspace);
+    } catch {
+      // Ignore
+    }
+    setChatSession({
+      ...fresh,
+      workspace: freshWorkspace,
+    });
     setProducts([]);
     setComparison(null);
-    setSetupStage("idle");
+    setEvidenceFacts({});
+    setHasSearched(false);
+    setSearchError(null);
+    setConfiguringProduct(null);
+    setConfiguredProductIds(new Set());
+    setConfiguredVariants({});
+    setSelectedProductIds(new Set());
     try {
       if (typeof window !== "undefined") {
         window.sessionStorage.removeItem("spendpilot_guided_shopping_session");
@@ -160,391 +227,621 @@ export default function Home() {
     } catch {
       // Ignore
     }
-  };
+  }, [currency]);
 
-  const handleCompareProducts = async (candidateProductIds: string[]) => {
-    setIsRankingAi(true);
-    setAiStatus("complete");
-    try {
-      const candidateProducts = products.filter((p) =>
-        candidateProductIds.includes(p.sourceProductId || p.title)
-      );
-      const toCompare = candidateProducts.length >= 2 ? candidateProducts : products.slice(0, 4);
+  const handleCompareProducts = useCallback(
+    async (candidateProductIds: string[]) => {
+      if (products.length === 0) return;
+      setIsRankingAi(true);
+      try {
+        const candidateProducts = products.filter((p) =>
+          candidateProductIds.includes(p.sourceProductId || p.title)
+        );
+        const toCompare = candidateProducts.length >= 2 ? candidateProducts : products.slice(0, 4);
+        const majorBudget = minorToMajorUnits(chatSession.budget);
 
-      const majorBudget = minorToMajorUnits(budget || chatSession.budget);
-      const compRes = await fetch("/api/shopping/plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: query || chatSession.originalRequest,
-          budget: majorBudget,
-          currency,
-          products: toCompare,
-        }),
-      });
-      const compData = (await compRes.json()) as ShoppingRecommendResponsePayload;
-      if (compRes.ok && compData.success && compData.comparison) {
-        setComparison(compData.comparison);
-        setEvidenceFacts(compData.evidenceFacts || {});
-        setTopRecommendations(compData.topRecommendations || []);
-        setOtherMatches(compData.otherMatches || []);
-        setAiStatus("complete");
+        const compRes = await fetch("/api/shopping/recommend", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: chatSession.originalRequest,
+            budget: majorBudget,
+            currency: chatSession.currency || currency,
+            products: toCompare,
+            canonicalAttributes: chatSession.canonicalAttributes,
+          }),
+        });
+
+        const compData = (await compRes.json()) as ShoppingRecommendResponsePayload;
+        if (compRes.ok && compData.success && compData.comparison) {
+          setComparison(compData.comparison);
+          setEvidenceFacts(compData.evidenceFacts || {});
+          if (compData.allProducts && compData.allProducts.length > 0) {
+            setProducts(compData.allProducts);
+          }
+        }
+      } catch {
+        // Keep existing results
+      } finally {
+        setIsRankingAi(false);
       }
-    } catch {
-      setAiStatus("unavailable");
-    } finally {
+    },
+    [products, chatSession.budget, chatSession.originalRequest, chatSession.currency, chatSession.canonicalAttributes, currency]
+  );
+
+  /**
+   * Executes verified Channel3 product discovery and background AI comparison
+   */
+  const executeDirectSearch = useCallback(
+    async (
+      searchQuery: string,
+      searchBudget: number | null,
+      searchCurrency: CurrencyCode = "USD",
+      searchCanonicalAttrs?: Record<string, CanonicalShoppingAttribute>
+    ) => {
+      const currentId = ++activeSearchId.current;
+      const majorBudget = minorToMajorUnits(searchBudget);
+
+      setHasSearched(true);
+      setSearchError(null);
+      setIsSearchingProducts(true);
+
+      const reqCategory = chatSession.shoppingBrief?.productRequirements?.[0]?.category || "";
+      const isWinter =
+        searchQuery.toLowerCase().includes("winter") ||
+        (chatSession.shoppingBrief?.userGoal?.toLowerCase().includes("winter") ?? false);
+
+      // Stage B: Searching (animated dots)
+      const searchingMsg = getProgressMessage("searching", searchQuery, reqCategory, { isWinter });
+      setSearchProgress({
+        stage: "searching",
+        message: searchingMsg,
+      });
+      setChatStatusText(searchingMsg);
       setIsRankingAi(false);
-    }
-  };
+      setComparison(null);
+      setEvidenceFacts({});
 
-  const handleSendChatMessage = async (
-    messageText: string,
-    metaOrSession?:
-      | AuthoritativeShoppingSession
-      | { questionId?: string; attributeKey?: string; clientMessageId?: string },
-    explicitSession?: AuthoritativeShoppingSession
-  ) => {
-    let sessionToUse = chatSession;
-    let meta: { questionId?: string; attributeKey?: string; clientMessageId?: string } | undefined;
+      try {
+        const searchRes = await fetch("/api/products/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: searchQuery,
+            budget: majorBudget,
+            currency: searchCurrency,
+            mode: "single",
+            pricePreference: "near_budget",
+            expandRange: false,
+            canonicalAttributes: searchCanonicalAttrs ?? chatSession.canonicalAttributes,
+          }),
+        });
 
-    if (metaOrSession && "sessionId" in metaOrSession) {
-      sessionToUse = metaOrSession;
-    } else if (metaOrSession) {
-      meta = metaOrSession;
-      if (explicitSession) sessionToUse = explicitSession;
-    }
+        const searchData = (await searchRes.json()) as SearchProductsResponsePayload;
+        if (currentId !== activeSearchId.current) return;
 
-    setIsChatLoading(true);
+        if (!searchRes.ok || !searchData.success) {
+          setProducts([]);
+          setIsSearchingProducts(false);
+          setSearchProgress(null);
+          setSearchError(searchData.error || "Unable to retrieve products. Please try again.");
+          setChatSession((prev) => ({
+            ...prev,
+            messages: [
+              ...prev.messages,
+              {
+                id: `msg_err_${Date.now()}`,
+                role: "assistant",
+                content: "I ran into a temporary issue retrieving live products. Your requirements are preserved. Please click below or reply to try again.",
+                createdAt: Date.now(),
+              },
+            ],
+          }));
+          return;
+        }
 
-    if (sessionToUse.messages.length === 0) {
-      setChatStatusText("Understanding what you're looking for...");
-    } else {
-      setChatStatusText("Got it. Narrowing down your options...");
-    }
+        const retrievedProducts = searchData.products || [];
+        setProducts(retrievedProducts);
+        setIsSearchingProducts(false);
 
-    const currentSummary = products.slice(0, 6).map((p) => ({
-      id: p.sourceProductId || p.title,
-      title: p.title,
-      price: p.priceMinor !== null ? p.priceMinor / 100 : null,
-      currency: p.currency,
-      brand: p.brand,
-      availability: p.availability,
-    }));
+        if (retrievedProducts.length === 0) {
+          setSearchProgress(null);
+          setChatSession((prev) => ({
+            ...prev,
+            stage: "product_selection",
+            messages: [
+              ...prev.messages,
+              {
+                id: `msg_empty_${Date.now()}`,
+                role: "assistant",
+                content: "I couldn't find any products matching those exact specifications. Would you like to adjust your price range, brand, or key features?",
+                createdAt: Date.now(),
+              },
+            ],
+          }));
+          return;
+        }
 
-    try {
-      const res = await fetch("/api/shopping/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        // Stage C: Search completed
+        const searchCompletedMsg = getProgressMessage("search_completed", searchQuery, reqCategory, { isWinter });
+        setSearchProgress({
+          stage: "search_completed",
+          message: searchCompletedMsg,
+        });
+
+        // Stage D: Comparing
+        const comparingMsg = getProgressMessage("comparing", searchQuery, reqCategory, { isWinter });
+        setSearchProgress({
+          stage: "comparing",
+          message: comparingMsg,
+        });
+        setChatStatusText(comparingMsg);
+        setIsRankingAi(true);
+
+        try {
+          const recRes = await fetch("/api/shopping/recommend", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: searchQuery,
+              products: retrievedProducts,
+              budget: majorBudget,
+              currency: searchCurrency,
+              canonicalAttributes: searchCanonicalAttrs ?? chatSession.canonicalAttributes,
+            }),
+          });
+
+          const recData = (await recRes.json()) as ShoppingRecommendResponsePayload;
+          if (currentId !== activeSearchId.current) return;
+
+          if (recRes.ok && recData.success && recData.comparison) {
+            setComparison(recData.comparison);
+            setEvidenceFacts(recData.evidenceFacts || {});
+            if (recData.allProducts && recData.allProducts.length > 0) {
+              setProducts(recData.allProducts);
+            }
+          }
+        } catch {
+          // AI comparison failure: product catalog remains visible without pretending comparison succeeded
+          setComparison(null);
+        } finally {
+          if (currentId === activeSearchId.current) {
+            setIsRankingAi(false);
+          }
+        }
+
+        // Stage E: Completed -> Clear transient progress and append exactly ONE final message
+        setSearchProgress(null);
+        const finalMsg = getProgressMessage("completed", searchQuery, reqCategory, { isWinter });
+
+        setChatSession((prev) => {
+          const hasRecentIntro = prev.messages.slice(-3).some(
+            (m) =>
+              m.role === "assistant" &&
+              (m.content === finalMsg ||
+                m.content.includes("compared the available options") ||
+                m.content.includes("best matches"))
+          );
+          return {
+            ...prev,
+            stage: "product_selection",
+            retrievedProductIds: retrievedProducts.map((p) => p.sourceProductId || p.title),
+            messages: hasRecentIntro
+              ? prev.messages
+              : [
+                ...prev.messages,
+                {
+                  id: `msg_completed_${Date.now()}`,
+                  role: "assistant",
+                  content: finalMsg,
+                  createdAt: Date.now(),
+                },
+              ],
+          };
+        });
+
+        // Ensure showcase section is smoothly visible and accessible once products & comparison are ready
+        setTimeout(() => {
+          scrollToShowcase();
+        }, 150);
+      } catch {
+        if (currentId !== activeSearchId.current) return;
+        setProducts([]);
+        setIsSearchingProducts(false);
+        setIsRankingAi(false);
+        setSearchProgress(null);
+        setSearchError("Failed to connect to product search service. Please try again.");
+      }
+    },
+    [chatSession.canonicalAttributes, chatSession.shoppingBrief, scrollToShowcase]
+  );
+
+  const handleSendChatMessage = useCallback(
+    async (
+      messageText: string,
+      metaOrSession?:
+        | AuthoritativeShoppingSession
+        | { questionId?: string; attributeKey?: string; clientMessageId?: string },
+      explicitSession?: AuthoritativeShoppingSession
+    ) => {
+      let sessionToUse = chatSession;
+      let meta: { questionId?: string; attributeKey?: string; clientMessageId?: string } | undefined;
+
+      if (metaOrSession && "sessionId" in metaOrSession) {
+        sessionToUse = metaOrSession;
+      } else if (metaOrSession) {
+        meta = metaOrSession;
+        if (explicitSession) sessionToUse = explicitSession;
+      }
+
+      const cleanMsg = messageText.trim().toLowerCase();
+      if (
+        cleanMsg === "i'm done for now" ||
+        cleanMsg === "done for now" ||
+        cleanMsg === "i am done" ||
+        cleanMsg === "done"
+      ) {
+        const ws = sessionToUse.workspace || createInitialWorkspace({ currency });
+        const summary = calculateWorkspaceBudgetSummary(ws, currency);
+        const selectedItems = ws.groups.flatMap((g) =>
+          g.items.filter((i) => i.status === "selected")
+        );
+
+        let summaryText = "";
+        if (selectedItems.length === 0) {
+          summaryText =
+            "You haven't selected any products yet. Tell me what you're looking for whenever you're ready!";
+        } else {
+          summaryText =
+            `Here is your final shopping summary:\n\n` +
+            selectedItems
+              .map((item, idx) => {
+                const p = item.selectedProduct;
+                const o = item.selectedOffer || p?.selectedOffer || p?.offers?.[0];
+                const priceStr =
+                  o?.priceMinor != null
+                    ? formatCurrency(o.priceMinor, o.currency || currency)
+                    : "Price unconfirmed";
+                const retailerStr = o?.domain || p?.retailerName || "Retailer";
+                return `${idx + 1}. **${p?.title || item.productRequest}** — ${priceStr} (${retailerStr})`;
+              })
+              .join("\n") +
+            `\n\n**Total:** ${formatCurrency(summary.totalSelectedMinor, summary.currency)}` +
+            (summary.remainingMinor != null
+              ? `\n**Remaining Budget:** ${formatCurrency(summary.remainingMinor, summary.currency)}`
+              : "") +
+            `\n\nYou can review your full list and retailer links in My Shopping List on the right.`;
+        }
+
+        const userMsg = {
+          id: meta?.clientMessageId || `msg_u_${Date.now()}`,
+          role: "user" as const,
+          content: messageText,
+          createdAt: Date.now(),
+        };
+        const assistantMsg = {
+          id: `msg_a_done_${Date.now()}`,
+          role: "assistant" as const,
+          content: summaryText,
+          createdAt: Date.now() + 10,
+        };
+
+        setChatSession((prev) => ({
+          ...prev,
+          messages: [...prev.messages.filter((m) => m.id !== userMsg.id), userMsg, assistantMsg],
+        }));
+        return;
+      }
+
+      if (
+        cleanMsg === "add another item" ||
+        cleanMsg === "add another" ||
+        cleanMsg === "add item"
+      ) {
+        const userMsg = {
+          id: meta?.clientMessageId || `msg_u_${Date.now()}`,
+          role: "user" as const,
+          content: messageText,
+          createdAt: Date.now(),
+        };
+        const assistantMsg = {
+          id: `msg_a_add_${Date.now()}`,
+          role: "assistant" as const,
+          content:
+            "What would you like to find next? Tell me what you're looking for and your budget if you have one.",
+          createdAt: Date.now() + 10,
+        };
+
+        setChatSession((prev) => ({
+          ...prev,
+          messages: [...prev.messages.filter((m) => m.id !== userMsg.id), userMsg, assistantMsg],
+        }));
+        return;
+      }
+
+      setIsChatLoading(true);
+
+      const reqCategory = sessionToUse.shoppingBrief?.productRequirements?.[0]?.category || "";
+      const isWinter =
+        messageText.toLowerCase().includes("winter") ||
+        (sessionToUse.shoppingBrief?.userGoal?.toLowerCase().includes("winter") ?? false);
+
+      // Stage A: Understanding / Thinking (only shown while processing)
+      const isDelegatedChoice = isDelegatedOrNoPreference(messageText);
+      if (isDelegatedChoice) {
+        setSearchProgress(null);
+        setChatStatusText("Thinking");
+      } else {
+        const understandingMsg = getProgressMessage("understanding", messageText, reqCategory, { isWinter });
+        setSearchProgress({
+          stage: "understanding",
+          message: understandingMsg,
+        });
+        setChatStatusText(understandingMsg);
+      }
+
+      const currentSummary = products.slice(0, 6).map((p) => ({
+        id: p.sourceProductId || p.title,
+        title: p.title,
+        price: p.priceMinor !== null ? p.priceMinor / 100 : null,
+        currency: p.currency,
+        brand: p.brand,
+        availability: p.availability,
+      }));
+
+      const metaObj = (meta && typeof meta === "object" && !("sessionId" in meta)) ? meta : null;
+      const effectiveBudget: number | null = (metaObj && "budgetMinor" in metaObj && typeof metaObj.budgetMinor === "number")
+        ? metaObj.budgetMinor
+        : (sessionToUse.budget ?? null);
+      const effectiveCurrency: CurrencyCode = (metaObj && "currency" in metaObj && typeof metaObj.currency === "string")
+        ? (metaObj.currency as CurrencyCode)
+        : (sessionToUse.currency || currency);
+
+      try {
+        const payloadBody = {
           sessionId: sessionToUse.sessionId,
           message: messageText,
           clientMessageId: meta?.clientMessageId,
           answeredQuestionId: meta?.questionId,
           answeredAttributeKey: meta?.attributeKey,
-          mode: sessionToUse.mode,
-          budget: sessionToUse.budget,
-          currency: sessionToUse.currency,
-          sessionState: sessionToUse,
+          mode: "single",
+          budget: effectiveBudget,
+          currency: effectiveCurrency,
+          sessionState: {
+            ...sessionToUse,
+            budget: effectiveBudget,
+            currency: effectiveCurrency,
+          },
           currentProductIds: products.map((p) => p.sourceProductId || p.title),
           currentProductsSummary: currentSummary,
-        }),
-      });
+        };
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Unable to process message.");
-      }
+        // Optimistically append user message ONLY (no empty assistant bubble)
+        const userMsgId = meta?.clientMessageId || `msg_u_${Date.now()}`;
+        const placeholderAssistantId = `msg_a_stream_${Date.now()}`;
+        const newUserMsg = {
+          id: userMsgId,
+          role: "user" as const,
+          content: messageText,
+          createdAt: Date.now(),
+        };
 
-      setChatSession(data.session);
+        setChatSession((prev) => ({
+          ...prev,
+          budget: effectiveBudget,
+          currency: effectiveCurrency,
+          messages: [...prev.messages.filter((m) => m.id !== userMsgId), newUserMsg],
+        }));
 
-      try {
-        if (typeof window !== "undefined") {
-          window.sessionStorage.setItem(
-            "spendpilot_guided_shopping_session",
-            JSON.stringify(data.session)
-          );
-        }
-      } catch {
-        // Ignore session storage errors
-      }
-
-      if (data.shouldExecuteSearch) {
-        const queryTerm = data.session.originalRequest || query || messageText;
-        const cat = data.requirements?.[0]?.categorySlug || "products";
-        const catName = cat.includes("headphone") ? "headphones" : cat.includes("sneak") ? "sneakers" : "products";
-        setChatStatusText(`Finding ${catName} that match your preferences...`);
-
-        await executeDirectSearch(
-          queryTerm,
-          data.session.budget || budget,
-          data.session.currency || currency,
-          data.session.mode || mode,
-          pricePreference,
-          data.requirements?.[0]?.searchFilters
-        );
-      } else if (data.shouldExecuteComparison && data.comparisonRequestedProductIds?.length) {
-        setChatStatusText("Comparing the best matches...");
-        await handleCompareProducts(data.comparisonRequestedProductIds);
-      } else if (data.variantConfiguration?.productId) {
-        const prodToConfig = products.find(
-          (p) => (p.sourceProductId || p.title) === data.variantConfiguration.productId
-        );
-        if (prodToConfig) {
-          setConfiguringProduct(prodToConfig);
-        }
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error communicating with assistant.";
-      setError(msg);
-    } finally {
-      setIsChatLoading(false);
-      setChatStatusText(null);
-    }
-  };
-
-  /**
-   * Initial submission handler from prompt composer.
-   * Starts the continuous conversational shopping experience.
-   */
-  const handleSearch = async (
-    searchQuery: string,
-    searchBudget: number | null,
-    searchCurrency: CurrencyCode,
-    searchMode: ShoppingMode = "single",
-    searchPricePreference: PricePreference = "near_budget"
-  ) => {
-    const minorBudget = parseToMinorUnits(searchBudget);
-    setQuery(searchQuery);
-    setBudget(minorBudget);
-    setCurrency(searchCurrency);
-    setMode(searchMode);
-    setPricePreference(searchPricePreference);
-    setError(null);
-    setSetupError(null);
-    setEmptyInPreferredRange(false);
-    setIsRangeExpanded(false);
-    setPreferredRangeText(null);
-    setHasSearched(false);
-    setProducts([]);
-    setComparison(null);
-    setSetupStage("idle");
-
-    const initialSession = createInitialSession({
-      initialQuery: searchQuery,
-      mode: searchMode,
-      budget: minorBudget,
-      currency: searchCurrency,
-    });
-    setChatSession(initialSession);
-
-    await handleSendChatMessage(searchQuery, initialSession);
-    scrollToChat();
-  };
-
-  /**
-   * Executes the actual product discovery (Channel3 + Gemini comparison)
-   * with the confirmed requirements and filters.
-   */
-  const executeDirectSearch = async (
-    searchQuery: string,
-    searchBudget: number | null,
-    searchCurrency: CurrencyCode,
-    searchMode: ShoppingMode = "single",
-    searchPricePreference: PricePreference = "near_budget",
-    searchFilters?: StructuredRequirementSearchFilters
-  ) => {
-    const currentId = ++activeSearchId.current;
-    const majorBudget = minorToMajorUnits(searchBudget);
-
-    // ─────────────────────────────────────────────────────────────
-    // BRANCH A: MULTI-PRODUCT SETUP MODE
-    // ─────────────────────────────────────────────────────────────
-    if (searchMode === "setup") {
-      setHasSearched(false);
-      setProducts([]);
-      setComparison(null);
-      setSetupDecomposition(null);
-      setSetupRequirements([]);
-      setSetupCategories([]);
-      setSetupComparisons([]);
-      setSetupBundle(null);
-      setSelectedItemIds({});
-
-      if (!searchBudget || searchBudget <= 0) {
-        setSetupError("A total budget is required for multi-product setup mode so SpendPilot can allocate categories.");
-        setSetupStage("idle");
-        scrollToResults();
-        return;
-      }
-
-      setSetupStage("decomposing");
-      scrollToResults();
-
-      try {
-        const decompRes = await fetch("/api/setup/decompose", {
+        // Attempt SSE streaming first
+        const streamRes = await fetch("/api/shopping/chat/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: searchQuery,
-            totalBudget: majorBudget,
-            currency: searchCurrency,
-          }),
+          body: JSON.stringify(payloadBody),
         });
 
-        const decompData = (await decompRes.json()) as SetupDecomposeResponsePayload;
-        if (currentId !== activeSearchId.current) return;
+        if (streamRes.ok && streamRes.body && streamRes.headers.get("content-type")?.includes("text/event-stream")) {
+          const reader = streamRes.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let buffer = "";
+          let accumulatedText = "";
+          let finalSession: AuthoritativeShoppingSession | null = null;
+          let shouldSearchAfterStream = false;
 
-        if (!decompRes.ok || !decompData.success || !decompData.decomposition) {
-          setSetupError(decompData.error || "Unable to decompose setup requirements. Please try again.");
-          setSetupStage("idle");
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const blocks = buffer.split("\n\n");
+            buffer = blocks.pop() || "";
+
+            for (const block of blocks) {
+              const trimmed = block.trim();
+              if (!trimmed.startsWith("data:")) continue;
+              const jsonStr = trimmed.slice(5).trim();
+              try {
+                const event = JSON.parse(jsonStr);
+                if (event.type === "delta" && event.text) {
+                  accumulatedText += event.text;
+                  setChatSession((prev) => {
+                    const msgs = [...prev.messages];
+                    const lastIdx = msgs.length - 1;
+                    if (lastIdx >= 0 && msgs[lastIdx]?.role === "assistant" && msgs[lastIdx]?.id === placeholderAssistantId) {
+                      msgs[lastIdx] = { ...msgs[lastIdx], content: accumulatedText };
+                    } else {
+                      msgs.push({
+                        id: placeholderAssistantId,
+                        role: "assistant",
+                        content: accumulatedText,
+                        createdAt: Date.now(),
+                      });
+                    }
+                    return { ...prev, messages: msgs };
+                  });
+                } else if (event.type === "question" || event.type === "clarification") {
+                  shouldSearchAfterStream = false;
+                  setSearchProgress(null);
+                } else if (event.type === "action") {
+                  if (event.action === "start_new_task" || event.action === "new_shopping_task") {
+                    setProducts([]);
+                    setComparison(null);
+                    setEvidenceFacts({});
+                    setHasSearched(false);
+                    setSearchError(null);
+                    setConfiguredProductIds(new Set());
+                    setConfiguredVariants({});
+                  }
+                  if (event.shouldExecuteSearch) {
+                    shouldSearchAfterStream = true;
+                  }
+                } else if (event.type === "done") {
+                  finalSession = event.session;
+                  setChatSession(event.session);
+                  if (event.session?.currency) {
+                    setCurrency(event.session.currency);
+                  }
+                  if (event.shouldExecuteSearch !== undefined) {
+                    shouldSearchAfterStream = Boolean(event.shouldExecuteSearch);
+                  }
+                  if (
+                    event.session?.activeQuestion ||
+                    (event.session?.pendingQuestions && event.session.pendingQuestions.length > 0) ||
+                    event.session?.stage === "needs_clarification"
+                  ) {
+                    shouldSearchAfterStream = false;
+                    setSearchProgress(null);
+                  }
+                }
+              } catch {
+                // Ignore partial JSON parse errors
+              }
+            }
+          }
+
+          const textEndsWithQuestion = /\?\s*$/.test(accumulatedText.trim());
+          if (textEndsWithQuestion) {
+            shouldSearchAfterStream = false;
+          }
+
+          const hasPendingClarification = Boolean(
+            finalSession?.activeQuestion ||
+            (finalSession?.pendingQuestions && finalSession.pendingQuestions.length > 0) ||
+            finalSession?.stage === "needs_clarification" ||
+            textEndsWithQuestion
+          );
+
+          if (finalSession && shouldSearchAfterStream && !hasPendingClarification) {
+            const activeReq =
+              finalSession.shoppingBrief?.productRequirements?.find((r) => r.searchQuery) ||
+              finalSession.shoppingBrief?.productRequirements?.[0];
+            const queryTerm = activeReq?.searchQuery || activeReq?.displayName || finalSession.originalRequest || messageText;
+            await executeDirectSearch(
+              queryTerm,
+              finalSession.budget,
+              finalSession.currency || currency,
+              finalSession.canonicalAttributes
+            );
+          } else {
+            setSearchProgress(null);
+          }
           return;
         }
 
-        setSetupDecomposition(decompData.decomposition);
-        setSetupRequirements(decompData.decomposition.items);
-        setSetupStage("review");
-      } catch (err: unknown) {
-        if (currentId !== activeSearchId.current) return;
-        setSetupError(err instanceof Error ? err.message : "Network error during setup decomposition.");
-        setSetupStage("idle");
-      }
-      return;
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // BRANCH B: SINGLE PRODUCT MODE
-    // ─────────────────────────────────────────────────────────────
-    setSetupStage("idle");
-    setHasSearched(true);
-    setComparison(null);
-    setEvidenceFacts({});
-    setTopRecommendations([]);
-    setOtherMatches([]);
-    setIsSearchingProducts(true);
-    setIsRankingAi(false);
-    scrollToResults();
-
-    try {
-      const searchRes = await fetch("/api/products/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: searchQuery,
-          budget: majorBudget,
-          currency: searchCurrency,
-          mode: "single",
-          pricePreference: searchPricePreference,
-          expandRange: false,
-          categorySlug: searchFilters?.categorySlug,
-          attributes: searchFilters?.attributes,
-          gender: searchFilters?.gender,
-        }),
-      });
-
-      const searchData = (await searchRes.json()) as SearchProductsResponsePayload;
-      if (currentId !== activeSearchId.current) return;
-
-      if (!searchRes.ok || !searchData.success) {
-        setError(searchData.error || "Unable to search Channel3 products at this time.");
-        setProducts([]);
-        setIsSearchingProducts(false);
-        return;
-      }
-
-      if (searchData.isUnrelated) {
-        setPlayfulNotice({
-          message:
-            searchData.playfulMessage ||
-            "I calculate budgets, not punchlines. Tell me what you're looking to buy!",
-          suggestedProducts: searchData.suggestedProducts || [],
-        });
-        setProducts([]);
-        setIsSearchingProducts(false);
-        return;
-      }
-
-      if (searchData.emptyInPreferredRange) {
-        setProducts([]);
-        setEmptyInPreferredRange(true);
-        setPreferredRangeText(searchData.preferredRangeText || null);
-        setIsSearchingProducts(false);
-        return;
-      }
-
-      const retrievedProducts = searchData.products || [];
-      setProducts(retrievedProducts);
-      setChatSession((prev) => ({
-        ...prev,
-        stage: "product_selection",
-        retrievedProductIds: retrievedProducts.map((p) => p.sourceProductId || p.title),
-      }));
-      setCached(Boolean(searchData.cached));
-      setIsSearchingProducts(false);
-
-      if (retrievedProducts.length === 0) {
-        return;
-      }
-
-      // Asynchronous Gemini Candidate Comparison in Background
-      setIsRankingAi(true);
-      setAiStatus("complete");
-      setAiMessage(null);
-
-      try {
-        const recRes = await fetch("/api/shopping/recommend", {
+        // Fallback to standard JSON endpoint if SSE stream was unavailable
+        const res = await fetch("/api/shopping/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: searchQuery,
-            products: retrievedProducts,
-            budget: majorBudget,
-            currency: searchCurrency,
-          }),
+          body: JSON.stringify(payloadBody),
         });
 
-        const recData = (await recRes.json()) as ShoppingRecommendResponsePayload;
-        if (currentId !== activeSearchId.current) return;
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || "Unable to process message.");
+        }
 
-        if (recRes.ok && recData.success && recData.comparison) {
-          setComparison(recData.comparison);
-          setEvidenceFacts(recData.evidenceFacts || {});
-          setTopRecommendations(recData.topRecommendations || []);
-          setOtherMatches(recData.otherMatches || []);
-          setAiStatus("complete");
+        setChatSession(data.session);
+        if (data.session?.currency) {
+          setCurrency(data.session.currency);
+        }
+
+        if (data.action === "new_shopping_task" || data.action === "start_new_task") {
+          setProducts([]);
+          setComparison(null);
+          setEvidenceFacts({});
+          setHasSearched(false);
+          setSearchError(null);
+          setConfiguredProductIds(new Set());
+          setConfiguredVariants({});
+        }
+
+        const assistantMsgContent = (data.message || data.assistantMessage || "").trim();
+        const textEndsWithQuestion = /\?\s*$/.test(assistantMsgContent);
+
+        const hasPendingClarification = Boolean(
+          data.clarification ||
+          data.nextQuestion ||
+          data.session?.activeQuestion ||
+          (data.session?.pendingQuestions && data.session.pendingQuestions.length > 0) ||
+          data.session?.stage === "needs_clarification" ||
+          textEndsWithQuestion
+        );
+
+        if (data.shouldExecuteSearch && !hasPendingClarification && !textEndsWithQuestion) {
+          const activeReq =
+            data.session?.shoppingBrief?.productRequirements?.find((r: { searchQuery?: string }) => r.searchQuery) ||
+            data.session?.shoppingBrief?.productRequirements?.[0];
+          const queryTerm = activeReq?.searchQuery || activeReq?.displayName || data.session?.originalRequest || messageText;
+          await executeDirectSearch(
+            queryTerm,
+            data.session?.budget,
+            data.session?.currency || currency,
+            data.session?.canonicalAttributes
+          );
         } else {
-          setAiStatus("unavailable");
-          setAiMessage(recData.aiMessage || "Catalog view available.");
+          setSearchProgress(null);
+          if (data.shouldExecuteComparison && data.comparisonRequestedProductIds?.length) {
+            setChatStatusText("Comparing the best matches...");
+            await handleCompareProducts(data.comparisonRequestedProductIds);
+          } else if (data.variantConfiguration?.productId) {
+            const prodToConfig = products.find(
+              (p) => (p.sourceProductId || p.title) === data.variantConfiguration.productId
+            );
+            if (prodToConfig) {
+              setConfiguringProduct(prodToConfig);
+            }
+          }
         }
       } catch {
-        if (currentId !== activeSearchId.current) return;
-        setAiStatus("unavailable");
-        setAiMessage("Product catalog retrieved successfully. AI comparison temporarily delayed.");
+        // Keep existing conversational state
       } finally {
-        if (currentId === activeSearchId.current) {
-          setIsRankingAi(false);
-        }
+        setIsChatLoading(false);
+        setChatStatusText(null);
       }
-    } catch (err: unknown) {
-      if (currentId !== activeSearchId.current) return;
-      setError(err instanceof Error ? err.message : "Network error while searching Channel3.");
-      setProducts([]);
-      setIsSearchingProducts(false);
-      setIsRankingAi(false);
-    }
-  };
+    },
+    [chatSession, products, currency, executeDirectSearch, handleCompareProducts]
+  );
 
   /**
-   * Action when user confirms the reviewed shopping specifications
+   * Action when user clicks Re-run search
    */
   const handleConfirmAndSearch = () => {
-    const filters = chatSession.requirements[0]?.searchFilters;
+    if (
+      chatSession.activeQuestion ||
+      (chatSession.pendingQuestions && chatSession.pendingQuestions.length > 0) ||
+      chatSession.stage === "needs_clarification"
+    ) {
+      return;
+    }
+    const activeReq =
+      chatSession.shoppingBrief?.productRequirements?.find((r) => r.searchQuery) ||
+      chatSession.shoppingBrief?.productRequirements?.[0];
+    const queryTerm =
+      activeReq?.searchQuery || activeReq?.displayName || chatSession.originalRequest || "products";
     executeDirectSearch(
-      chatSession.originalRequest || query!,
-      chatSession.budget || budget,
+      queryTerm,
+      chatSession.budget,
       chatSession.currency || currency,
-      chatSession.mode || mode,
-      pricePreference,
-      filters
+      chatSession.canonicalAttributes
     );
   };
 
@@ -558,139 +855,90 @@ export default function Home() {
       [selection.productId]: selection,
     }));
 
-    try {
-      const planToSave = {
-        timestamp: new Date().toISOString(),
-        productId: selection.productId,
-        title: selection.title,
-        priceMinor: selection.confirmedPriceMinor,
-        retailerUrl: selection.confirmedRetailerUrl,
-        selectedOptions: selection.selectedOptions,
-      };
-      if (typeof window !== "undefined") {
-        window.sessionStorage.setItem("spendpilot_configured_item", JSON.stringify(planToSave));
+    // Update product pricing and metadata in current product results
+    setProducts((prev) =>
+      prev.map((p) => {
+        const pid = p.sourceProductId || p.title;
+        if (pid === selection.productId) {
+          return {
+            ...p,
+            title: selection.title || p.title,
+            priceMinor: selection.confirmedPriceMinor ?? p.priceMinor,
+            retailerUrl: selection.confirmedRetailerUrl || p.retailerUrl,
+            imageUrl: selection.imageUrl || p.imageUrl,
+            retailerName: selection.retailerName || p.retailerName,
+          };
+        }
+        return p;
+      })
+    );
+
+    // Sync updated selection and color image to shopping workspace / cart if already added
+    setChatSession((prev) => {
+      let ws = prev.workspace;
+      let hasUpdatedWs = false;
+      if (ws && ws.groups) {
+        const newGroups = ws.groups.map((group) => ({
+          ...group,
+          items: group.items.map((item) => {
+            const isMatch =
+              item.selectedProduct &&
+              (item.selectedProduct.sourceProductId === selection.productId ||
+                item.selectedProduct.title === selection.title);
+            if (isMatch && item.selectedProduct) {
+              hasUpdatedWs = true;
+              return {
+                ...item,
+                selectedProduct: {
+                  ...item.selectedProduct,
+                  title: selection.title || item.selectedProduct.title,
+                  priceMinor: selection.confirmedPriceMinor ?? item.selectedProduct.priceMinor,
+                  retailerUrl: selection.confirmedRetailerUrl || item.selectedProduct.retailerUrl,
+                  imageUrl: selection.imageUrl || item.selectedProduct.imageUrl,
+                  retailerName: selection.retailerName || item.selectedProduct.retailerName,
+                },
+              };
+            }
+            return item;
+          }),
+        }));
+        if (hasUpdatedWs) {
+          ws = { ...ws, groups: newGroups, updatedAt: Date.now() };
+          saveWorkspaceToStorage(ws);
+        }
       }
-    } catch {
-      // Ignore
-    }
+      return {
+        ...prev,
+        workspace: ws,
+      };
+    });
 
     setConfiguringProduct(null);
   };
 
-  // Multi-Product Setup Handlers
-  const handleConfirmSetup = async (
-    confirmedItems: SetupRequirementItem[],
-    totalBudget: number
-  ) => {
-    const currentId = ++activeSearchId.current;
-    setSetupRequirements(confirmedItems);
-    setSetupStage("searching");
-    scrollToResults();
+  const handleSelectOffer = (product: NormalizedProduct, offer: ProductOfferItem) => {
+    const updated = selectRetailerOffer(product, offer.url, chatSession.canonicalAttributes);
+    const pid = product.sourceProductId || product.title;
 
-    try {
-      const searchRes = await fetch("/api/setup/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          items: confirmedItems,
-          currency,
-          totalBudget,
-        }),
-      });
-
-      const searchData = (await searchRes.json()) as SetupSearchResponsePayload;
-      if (currentId !== activeSearchId.current) return;
-
-      if (!searchRes.ok || !searchData.success || !searchData.categories) {
-        setSetupError(searchData.error || "Failed to search product candidates for categories.");
-        setSetupStage("review");
-        return;
-      }
-
-      setSetupCategories(searchData.categories);
-      setSetupStage("comparing");
-
-      const compareRes = await fetch("/api/setup/compare", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          setupQuery: query,
-          totalBudget,
-          currency,
-          categories: searchData.categories,
-          requirements: confirmedItems,
-        }),
-      });
-
-      const compareData = (await compareRes.json()) as SetupCompareResponsePayload;
-      if (currentId !== activeSearchId.current) return;
-
-      if (!compareRes.ok || !compareData.success || !compareData.bundle) {
-        setSetupError(compareData.error || "Failed to generate recommended setup bundle.");
-        setSetupStage("review");
-        return;
-      }
-
-      setSetupComparisons(compareData.comparisons || []);
-      setSetupBundle(compareData.bundle);
-
-      const initialSelected: Record<string, string> = {};
-      compareData.bundle.items.forEach((item) => {
-        initialSelected[item.requirementId] = item.selectedProductId;
-      });
-      setSelectedItemIds(initialSelected);
-
-      setSetupStage("workspace");
-    } catch (err: unknown) {
-      if (currentId !== activeSearchId.current) return;
-      setSetupError(err instanceof Error ? err.message : "Network error during setup search.");
-      setSetupStage("review");
-    }
-  };
-
-  const handleSelectBundleProduct = (requirementId: string, productId: string) => {
-    if (!setupBundle || !setupCategories.length) return;
-    const updatedSelected = { ...selectedItemIds, [requirementId]: productId };
-    setSelectedItemIds(updatedSelected);
-
-    const recomputed = calculateRecommendedBundle({
-      totalBudget: setupBundle.totalBudgetMinor / 100,
-      currency,
-      requirements: setupRequirements,
-      categories: setupCategories,
-      comparisons: setupComparisons,
-      selectedItemIds: updatedSelected,
-    });
-
-    setSetupBundle(recomputed);
-  };
-
-  const handleExpandRange = () => {
-    setIsRangeExpanded(true);
-    setEmptyInPreferredRange(false);
-    executeDirectSearch(query!, budget, currency, mode, pricePreference, undefined);
-  };
-
-  const handleRetry = () => {
-    if (query) {
-      handleSearch(query, minorToMajorUnits(budget), currency, mode, pricePreference);
-    }
+    setProducts((prev) =>
+      prev.map((p) => ((p.sourceProductId || p.title) === pid ? updated : p))
+    );
   };
 
   const handleRefinePriority = async (priorityText: string) => {
-    if (!query || products.length === 0) return;
+    if (products.length === 0) return;
     setIsRefining(true);
 
     try {
-      const majorBudget = minorToMajorUnits(budget);
+      const majorBudget = minorToMajorUnits(chatSession.budget);
       const recRes = await fetch("/api/shopping/recommend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          query,
+          query: chatSession.originalRequest,
           products,
           budget: majorBudget,
-          currency,
+          currency: chatSession.currency || currency,
           priorityOverride: priorityText,
         }),
       });
@@ -699,8 +947,6 @@ export default function Home() {
       if (recRes.ok && recData.success && recData.comparison) {
         setComparison(recData.comparison);
         setEvidenceFacts(recData.evidenceFacts || {});
-        setTopRecommendations(recData.topRecommendations || []);
-        setOtherMatches(recData.otherMatches || []);
       }
     } catch {
       // Keep existing comparison
@@ -709,223 +955,178 @@ export default function Home() {
     }
   };
 
-  const handleRetryComparison = () => {
-    if (query && products.length > 0) {
-      handleRefinePriority("");
-    }
-  };
+  /**
+   * Action when user selects a product: adds to authoritative workspace
+   * and triggers conversational follow-up (Section 4 & 15).
+   */
+  const handleSelectProduct = useCallback(
+    (product: NormalizedProduct) => {
+      const productId = product.sourceProductId || product.title;
+      setSelectedProductIds((prev) => new Set([...prev, productId]));
 
-  const handleSelectPrompt = (suggestedPrompt: string) => {
-    handleSearch(suggestedPrompt, minorToMajorUnits(budget), currency, mode, pricePreference);
-  };
+      let ws = chatSession.workspace || createInitialWorkspace({ currency });
+
+      // Determine target item: active item, or unresolved item, or create one
+      let targetItemId = ws.activeItemId;
+      if (!targetItemId) {
+        const next = getNextUnresolvedItem(ws);
+        if (next) targetItemId = next.item.id;
+      }
+
+      // If workspace has no items yet, add independent item
+      if (!targetItemId || ws.groups.length === 0) {
+        ws = addIndependentItem(ws, {
+          productRequest: product.title,
+          category: product.source || "general",
+          displayName: product.title,
+        });
+        targetItemId = ws.activeItemId;
+      }
+
+      const activeOffer = product.selectedOffer || product.offers?.[0] || null;
+      if (targetItemId) {
+        ws = selectProductForItem(ws, targetItemId, product, activeOffer);
+        saveWorkspaceToStorage(ws);
+      }
+
+      // Determine parent group type (coordinated setup vs independent)
+      const targetGroup = ws.groups.find((g) => g.items.some((i) => i.id === targetItemId));
+      const isSetup = targetGroup?.type === "coordinated_setup";
+
+      if (isSetup && targetGroup) {
+        // Coordinated setup continuation
+        const unresolved = targetGroup.items.find((i) => i.status !== "selected" && i.status !== "skipped");
+        if (unresolved) {
+          const totalItems = targetGroup.items.length;
+          const currentIndex = targetGroup.items.filter((i) => i.status === "selected").length;
+          const progressMsg = `Saved ${product.title} to your setup. Next, finding the ${unresolved.displayName || unresolved.productRequest} (${currentIndex + 1} of ${totalItems}).`;
+
+          const assistantMsg = {
+            id: `msg_a_progress_${Date.now()}`,
+            role: "assistant" as const,
+            content: progressMsg,
+            createdAt: Date.now(),
+          };
+
+          setChatSession((prev) => ({
+            ...prev,
+            workspace: ws,
+            messages: [...prev.messages, assistantMsg],
+          }));
+
+          // Trigger search for the next unresolved component
+          executeDirectSearch(
+            unresolved.searchQuery || unresolved.productRequest,
+            unresolved.individualBudget?.amountMinor || targetGroup.budget?.amountMinor || null,
+            targetGroup.budget?.currency || currency
+          );
+        } else {
+          // Completed setup
+          const summary = calculateWorkspaceBudgetSummary(ws, currency);
+          const setupMsg = `All components for your ${targetGroup.title} have been selected! Total: ${formatCurrency(summary.totalSelectedMinor, summary.currency)}. Would you like to add anything else outside this setup?`;
+
+          const assistantMsg = {
+            id: `msg_a_complete_${Date.now()}`,
+            role: "assistant" as const,
+            content: setupMsg,
+            suggestedReplies: ["Add another item", "I'm done for now"],
+            createdAt: Date.now(),
+          };
+
+          setChatSession((prev) => ({
+            ...prev,
+            workspace: ws,
+            messages: [...prev.messages, assistantMsg],
+          }));
+        }
+      } else {
+        // Independent item selection (Section 4 & Section 15)
+        const naturalFollowUp = `Added ${product.title} to your shopping list. Anything else you'd like to find?`;
+        const assistantMsg = {
+          id: `msg_a_select_${Date.now()}`,
+          role: "assistant" as const,
+          content: naturalFollowUp,
+          suggestedReplies: ["Add another item", "I'm done for now"],
+          createdAt: Date.now(),
+        };
+
+        setChatSession((prev) => ({
+          ...prev,
+          workspace: ws,
+          messages: [...prev.messages, assistantMsg],
+        }));
+      }
+    },
+    [chatSession.workspace, currency, executeDirectSearch]
+  );
+
+  const currentWorkspace = chatSession.workspace || createInitialWorkspace({ currency });
+  const workspaceBudgetSummary = calculateWorkspaceBudgetSummary(currentWorkspace, currency);
+  const selectedCartCount = currentWorkspace.groups.reduce(
+    (acc, g) => acc + g.items.filter((i) => i.status === "selected").length,
+    0
+  );
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#080808] text-[#D4D4D4]">
-      {/* Header with supplied logo asset and navigation */}
-      <SiteHeader />
+    <div className="flex min-h-screen flex-col bg-transparent text-zinc-900 dark:text-[#E4E4E7]">
+      {/* Site Header with Brand Logo, Centered Rounded Navbar, and Cart Button */}
+      <SiteHeader
+        onResetSession={handleResetSession}
+        selectedItemCount={selectedCartCount}
+        totalSelectedMinor={workspaceBudgetSummary.totalSelectedMinor}
+        currency={currency}
+      />
 
-      {/* Main Page Landmark */}
-      <main className="flex-1">
-        {/* Hero Section: Dual-mode AI prompt composer */}
-        <HeroSection
-          onSearch={handleSearch}
-          isLoading={isSearchingProducts || isChatLoading || setupStage === "decomposing" || setupStage === "searching"}
-          initialPrompt={query || ""}
-          initialBudget={budget ? String(budget) : ""}
-          initialCurrency={currency}
-          initialMode={mode}
-          initialPricePreference={pricePreference}
-        />
-
-        {/* ─────────────────────────────────────────────────────────────
-            CONTINUOUS CONVERSATIONAL SHOPPING WORKSPACE (GEMINI INTERACTIONS API)
-           ───────────────────────────────────────────────────────────── */}
-        {chatSession.messages.length > 0 && (
+      {/* Main Conversational Shopping Interface & Dedicated Showcasing Section */}
+      <main className="flex-1 flex flex-col">
+        {/* Dedicated Chatting Section */}
+        <section aria-label="Shopping Chat Workspace">
           <ContinuousChatWorkspace
             session={chatSession}
-            isLoading={isChatLoading || isSearchingProducts || isRankingAi}
+            isLoading={isChatLoading || isSearchingProducts}
             activeStatusText={chatStatusText}
+            searchProgress={searchProgress}
             onSendMessage={handleSendChatMessage}
             onExecuteSearch={handleConfirmAndSearch}
             onResetSession={handleResetSession}
-            currency={currency}
+            currency={chatSession.currency || currency}
+            onCurrencyChange={(c) => {
+              setCurrency(c);
+              setChatSession((prev) => ({ ...prev, currency: c }));
+            }}
+            onBudgetChange={(b) => {
+              setChatSession((prev) => ({ ...prev, budget: b }));
+            }}
+            hasProductResults={products.length > 0}
+            productCount={products.length}
+            onViewProducts={scrollToShowcase}
           />
-        )}
+        </section>
 
-        {/* ─────────────────────────────────────────────────────────────
-            MULTI-PRODUCT SETUP WORKFLOW STAGES
-           ───────────────────────────────────────────────────────────── */}
-        {setupStage !== "idle" && (
-          <div id="setup-workspace" className="scroll-mt-6">
-            {/* Stage: Decomposing Loading Card */}
-            {setupStage === "decomposing" && (
-              <section className="py-16 sm:py-20 border-b border-[#242424] bg-[#090909]">
-                <div className="mx-auto max-w-xl px-4 sm:px-6 lg:px-8 text-center">
-                  <div className="rounded-2xl border border-[#242424] bg-[#0e0e0e] p-8 sm:p-12 shadow-2xl relative overflow-hidden">
-                    <div className="relative mx-auto mb-6 flex h-20 w-20 items-center justify-center">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#FF6A00]/15 motion-reduce:animate-none" />
-                      <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-[#FF6A00]/40 bg-[#161310] text-[#FF8126] shadow-lg shadow-[#FF6A00]/10">
-                        <Layers className="h-7 w-7 animate-pulse motion-reduce:animate-none" aria-hidden="true" />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/30 bg-[#FF6A00]/10 px-3 py-0.5 text-xs font-semibold text-[#FF8126]">
-                        <Sparkles className="h-3 w-3" />
-                        AI Setup Architect
-                      </span>
-                      <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#F5F5F5]">
-                        Analyzing setup requirements...
-                      </h2>
-                      <p className="text-xs sm:text-sm text-[#888888] max-w-md mx-auto">
-                        Breaking down your request &ldquo;{query}&rdquo; into individual components with target budget allocations.
-                      </p>
-                    </div>
-
-                    <div className="mt-8 h-1 w-full overflow-hidden rounded-full bg-[#1c1c1c]">
-                      <div className="h-full w-1/2 rounded-full bg-gradient-to-r from-[#FF6A00]/20 via-[#FF6A00] to-[#FF6A00]/20 animate-pulse motion-reduce:animate-none mx-auto" />
-                    </div>
-
-                    <div className="mt-4 text-[11px] text-[#737373]">
-                      Up to 8 discrete requirements &bull; Server-verified budget constraints
-                    </div>
-                  </div>
-                </div>
-              </section>
-            )}
-
-            {/* Stage: Review & Customize Decomposition */}
-            {setupStage === "review" && setupDecomposition && (
-              <SetupDecompositionReview
-                decomposition={setupDecomposition}
-                currency={currency}
-                onConfirm={handleConfirmSetup}
-                onCancel={() => setSetupStage("idle")}
-                isLoading={false}
-              />
-            )}
-
-            {/* Stage: Bounded Channel3 Discovery & Comparison Loading Card */}
-            {(setupStage === "searching" || setupStage === "comparing") && (
-              <section className="py-16 sm:py-20 border-b border-[#242424] bg-[#090909]">
-                <div className="mx-auto max-w-xl px-4 sm:px-6 lg:px-8 text-center">
-                  <div className="rounded-2xl border border-[#242424] bg-[#0e0e0e] p-8 sm:p-12 shadow-2xl relative overflow-hidden">
-                    <div className="relative mx-auto mb-6 flex h-20 w-20 items-center justify-center">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#FF6A00]/15 motion-reduce:animate-none" />
-                      <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl border border-[#FF6A00]/40 bg-[#161310] text-[#FF8126] shadow-lg shadow-[#FF6A00]/10">
-                        {setupStage === "searching" ? (
-                          <Search className="h-7 w-7 animate-pulse motion-reduce:animate-none" aria-hidden="true" />
-                        ) : (
-                          <Sparkles className="h-7 w-7 animate-spin text-[#FF6A00] motion-reduce:animate-none" aria-hidden="true" />
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/30 bg-[#FF6A00]/10 px-3 py-0.5 text-xs font-semibold text-[#FF8126]">
-                        {setupStage === "searching" ? "Channel3 Discovery" : "Consolidated AI Comparison"}
-                      </span>
-                      <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#F5F5F5]">
-                        {setupStage === "searching"
-                          ? `Searching ${setupRequirements.length} component categories...`
-                          : "Evaluating bundle alternatives & hardware compatibility..."}
-                      </h2>
-                      <p className="text-xs sm:text-sm text-[#888888] max-w-md mx-auto">
-                        {setupStage === "searching"
-                          ? "Querying up to 2 top product alternatives per category with bounded concurrency."
-                          : "Running single consolidated comparison to determine the optimal budget bundle."}
-                      </p>
-                    </div>
-
-                    <div className="mt-8 h-1 w-full overflow-hidden rounded-full bg-[#1c1c1c]">
-                      <div className="h-full w-1/2 rounded-full bg-gradient-to-r from-[#FF6A00]/20 via-[#FF6A00] to-[#FF6A00]/20 animate-pulse motion-reduce:animate-none mx-auto" />
-                    </div>
-
-                    <div className="mt-4 text-[11px] text-[#737373]">
-                      Deterministic minor-unit math &bull; Direct verified merchant stock
-                    </div>
-                  </div>
-                </div>
-              </section>
-            )}
-
-            {/* Stage: Interactive Bundle Workspace */}
-            {setupStage === "workspace" && setupBundle && (
-              <SetupBundleWorkspace
-                bundle={setupBundle}
-                requirements={setupRequirements}
-                categories={setupCategories}
-                comparisons={setupComparisons}
-                onSelectProduct={handleSelectBundleProduct}
-                onAdjustRequirements={() => setSetupStage("review")}
-                onConfigureProduct={(p) => setConfiguringProduct(p)}
-                configuredProductIds={configuredProductIds}
-                currency={currency}
-              />
-            )}
-
-            {/* Setup Error Display */}
-            {setupError && (
-              <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-8">
-                <div className="rounded-xl border border-[#F05B5B]/30 bg-[#F05B5B]/10 p-5 text-sm flex items-start gap-3">
-                  <ShieldAlert className="h-5 w-5 text-[#F05B5B] shrink-0 mt-0.5" />
-                  <div className="flex-1 space-y-2">
-                    <p className="text-sm font-semibold text-[#F5F5F5]">Multi-Product Setup Issue</p>
-                    <p className="text-xs text-[#D4D4D4]">{setupError}</p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (setupRequirements.length > 0) {
-                          handleConfirmSetup(setupRequirements, minorToMajorUnits(budget) || 0);
-                        } else if (query) {
-                          handleSearch(query, minorToMajorUnits(budget), currency, "setup", pricePreference);
-                        }
-                      }}
-                      className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-[#F05B5B] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#ff7070] transition-colors"
-                    >
-                      <RefreshCw className="h-3 w-3" />
-                      <span>Retry Setup Step</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ─────────────────────────────────────────────────────────────
-            SINGLE PRODUCT MODE LIVE RESULTS
-           ───────────────────────────────────────────────────────────── */}
-        {hasSearched && mode === "single" ? (
+        {/* Dedicated Product Showcasing Section (Separate section below chat) */}
+        {hasSearched && (products.length > 0 || isSearchingProducts || searchError) && (
           <LiveProductResults
-            query={query}
-            budget={budget}
-            currency={currency}
+            query={chatSession.originalRequest || "products"}
+            budget={minorToMajorUnits(chatSession.budget)}
+            currency={chatSession.currency || currency}
             products={products}
             comparison={comparison}
             evidenceFacts={evidenceFacts}
-            topRecommendations={topRecommendations}
-            otherMatches={otherMatches}
             isSearchingProducts={isSearchingProducts}
             isRankingAi={isRankingAi}
             isRefining={isRefining}
-            aiStatus={aiStatus}
-            aiMessage={aiMessage}
-            playfulNotice={playfulNotice}
-            emptyInPreferredRange={emptyInPreferredRange}
-            preferredRangeText={preferredRangeText}
-            isRangeExpanded={isRangeExpanded}
-            onExpandRange={handleExpandRange}
-            error={error}
-            onRetry={handleRetry}
-            onRetryComparison={handleRetryComparison}
-            onRefinePriority={handleRefinePriority}
-            onSelectPrompt={handleSelectPrompt}
-            cached={cached}
+            aiStatus={comparison ? "complete" : isRankingAi ? "partial" : "unavailable"}
+            error={searchError}
+            onRetry={handleConfirmAndSearch}
+            onSearchAgain={handleConfirmAndSearch}
             onConfigureProduct={(p) => setConfiguringProduct(p)}
+            onSelectOffer={handleSelectOffer}
+            onSelectProduct={handleSelectProduct}
             configuredProductIds={configuredProductIds}
+            selectedProductIds={selectedProductIds}
+            onRefinePriority={handleRefinePriority}
           />
-        ) : null}
+        )}
 
         {/* Product Variant Configurator Modal */}
         {configuringProduct && (
@@ -940,17 +1141,16 @@ export default function Home() {
                 : {}),
               ...(configuredVariants[configuringProduct.sourceProductId || configuringProduct.title]?.selectedOptions || {}),
             }}
-            currency={currency}
+            currency={chatSession.currency || currency}
+            budgetMinor={chatSession.budget}
             isOpen={Boolean(configuringProduct)}
             onClose={() => setConfiguringProduct(null)}
             onConfirmSelection={handleConfirmVariantSelection}
           />
         )}
 
-        {/* How It Works: 3-step explanation */}
+        {/* How It Works & Trust Principles */}
         <HowItWorks />
-
-        {/* Trust & Transparency: Clear disclosures and principles */}
         <TrustSection />
       </main>
 

@@ -1,5 +1,10 @@
 export type CurrencyCode = "USD" | "EUR" | "GBP";
 
+import type { ShoppingBrief } from "../lib/orchestrator/types.ts";
+import type { ShoppingWorkspace } from "../lib/workspace/types.ts";
+export * from "../lib/orchestrator/types.ts";
+export * from "../lib/workspace/types.ts";
+
 /**
  * Validated structured shopping intent parsed from user request (PRD Section 11)
  */
@@ -32,10 +37,17 @@ export interface ParsedShoppingIntent {
   clarificationMessage?: string | null;
 }
 
+export type ConfigurationVerificationStatus =
+  | "verified"
+  | "unverified"
+  | "stale"
+  | "unavailable";
+
 /**
  * An individual retailer offer associated with a product
  */
 export interface ProductOfferItem {
+  id?: string;
   domain: string;
   url: string;
   priceMinor: number;
@@ -43,6 +55,9 @@ export interface ProductOfferItem {
   currency: CurrencyCode;
   availability: "in_stock" | "out_of_stock" | "unknown";
   condition?: string | null;
+  verificationStatus?: ConfigurationVerificationStatus;
+  configurationAttributes?: Record<string, string>;
+  verificationReason?: string | null;
 }
 
 /**
@@ -64,6 +79,9 @@ export interface NormalizedProduct {
   availability: "in_stock" | "out_of_stock" | "unknown";
   offers?: ProductOfferItem[];
   offersCount?: number;
+  selectedOffer?: ProductOfferItem | null;
+  configurationStatus?: ConfigurationVerificationStatus;
+  configurationNotice?: string | null;
   specifications: Record<string, string>;
   sourceFacts: string[];
   explanation?: string;
@@ -149,6 +167,9 @@ export interface SearchProductsResponsePayload {
   preferredRangeText?: string | null;
   emptyInPreferredRange?: boolean;
   isRangeExpanded?: boolean;
+  isNoMatch?: boolean;
+  noMatchReason?: string;
+  suggestedAlternatives?: string[];
   timings?: {
     durationMs: number;
     requestId?: string;
@@ -187,6 +208,9 @@ export interface SetupRequirementItem {
   diversityGroup?: string; // e.g. "wall-lighting", "bedding", "figurine"
   maxAlternatives?: number; // default 2
   maximumAlternatives?: number; // default 2
+  userRequirements?: string[]; // strictly explicit user requirements
+  baselineRequirements?: string[]; // AI-suggested engineering baseline
+  attributeOrigins?: Record<string, AttributeOrigin>;
 }
 
 /**
@@ -453,6 +477,7 @@ export interface ShoppingRecommendRequestPayload {
   currency?: CurrencyCode;
   intent?: ParsedShoppingIntent;
   priorityOverride?: string;
+  canonicalAttributes?: Record<string, CanonicalShoppingAttribute>;
 }
 
 export type GeminiErrorCategory =
@@ -624,6 +649,7 @@ export interface ProductVariantOptionValue {
     | "Unknown";
   thumbnailUrl?: string | null;
   productId?: string | null;
+  priceMinor?: number | null;
 }
 
 export interface ProductVariantDimension {
@@ -636,6 +662,7 @@ export interface ProductVariantState {
   productId: string;
   title: string;
   imageUrl?: string | null;
+  status: "variants_found" | "no_variants_verified" | "unavailable" | "relaxation_mismatch";
   options: ProductVariantDimension[];
   selected: Record<string, string>;
   effectiveSelected: Record<string, string>;
@@ -654,6 +681,8 @@ export interface ProductVariantState {
   verifiedPriceMinor?: number | null;
   retailerUrl?: string;
   retailerName?: string | null;
+  offers?: ProductOfferItem[];
+  specifications?: Record<string, string>;
 }
 
 export interface ProductVariantSelection {
@@ -710,6 +739,7 @@ export interface GuidedInterviewResponsePayload {
 
 export interface ProductVariantRequestPayload {
   productId: string;
+  retailerUrl?: string;
   selectedOptions?: Record<string, string>;
   currency?: CurrencyCode;
 }
@@ -733,8 +763,12 @@ export type DomainScope =
 
 export type ConversationalAction =
   | "continue_conversation"
+  | "conversation_reply"
   | "ask_follow_up"
+  | "clarify"
+  | "update_state"
   | "show_requirement_summary"
+  | "confirm_requirements"
   | "request_confirmation"
   | "search_products"
   | "compare_products"
@@ -742,7 +776,8 @@ export type ConversationalAction =
   | "configure_variant"
   | "confirm_configuration"
   | "out_of_scope"
-  | "clarify_intent";
+  | "clarify_intent"
+  | "new_shopping_task";
 
 export type AttributeOrigin =
   | "user_explicit"
@@ -763,14 +798,22 @@ export type ConversationStageState =
   | "configuring_variant"
   | "error";
 
+export type ConstraintImportance =
+  | "hard_requirement"
+  | "soft_preference"
+  | "optional_preference";
+
 export interface CanonicalShoppingAttribute {
   key: string;
   label: string;
   value: string | string[];
+  normalizedValue?: string;
   displayValue: string;
   source: AttributeOrigin;
+  constraint?: ConstraintImportance;
   status: "confirmed" | "suggested" | "skipped";
   updatedAt: number;
+  revision?: number;
 }
 
 export interface SingleNextQuestion {
@@ -783,6 +826,18 @@ export interface SingleNextQuestion {
   allowSkip?: boolean;
 }
 
+export interface ClarificationOption {
+  label: string;
+  value: string;
+}
+
+export interface Clarification {
+  questionId: string;
+  attributeKey: string;
+  question: string;
+  options: ClarificationOption[];
+}
+
 export type ChatMessageRole = "user" | "assistant" | "system";
 
 export interface ChatMessage {
@@ -793,6 +848,7 @@ export interface ChatMessage {
   suggestedReplies?: string[];
   questions?: GuidedQuestion[];
   nextQuestion?: SingleNextQuestion | null;
+  clarification?: Clarification | null;
   actionProposed?: ConversationalAction;
   scope?: DomainScope;
   productsReferenced?: string[];
@@ -804,6 +860,7 @@ export interface ChatMessage {
 export interface ConversationalActionContract {
   scope: DomainScope;
   action: ConversationalAction;
+  taskIntent?: "new_task" | "refine_current" | "general_query";
   assistantMessage: string;
   requirementsUpdate?: {
     productCategory?: string;
@@ -814,6 +871,7 @@ export interface ConversationalActionContract {
     attributes?: Record<string, string | number | boolean | string[]>;
   };
   nextQuestion?: SingleNextQuestion | null;
+  clarification?: Clarification | null;
   questions?: Array<{
     id: string;
     attribute: string;
@@ -835,6 +893,7 @@ export interface ConversationalActionContract {
 
 export interface AuthoritativeShoppingSession {
   sessionId: string;
+  currentTaskId?: string;
   stage: ShoppingStage;
   conversationState?: ConversationStageState;
   turnId?: string;
@@ -859,6 +918,9 @@ export interface AuthoritativeShoppingSession {
   selectedProductId?: string | null;
   selectedVariants?: Record<string, ProductVariantSelection>;
   lastAction?: ConversationalAction;
+  shoppingBrief?: ShoppingBrief;
+  workspace?: ShoppingWorkspace;
+  welcomeMessage?: string;
   updatedAt: number;
 }
 
@@ -890,10 +952,15 @@ export interface ChatResponsePayload {
   turnId?: string;
   revision?: number;
   message: string;
+  assistantMessage?: string;
+  quickReplies?: string[];
+  conversationStatus?: string;
+  products?: NormalizedProduct[];
   action: ConversationalAction;
   scope: DomainScope;
   requirements: StructuredRequirement[];
   nextQuestion?: SingleNextQuestion | null;
+  clarification?: Clarification | null;
   questions: GuidedQuestion[];
   suggestedReplies: string[];
   canSearch: boolean;
@@ -908,6 +975,8 @@ export interface ChatResponsePayload {
   modelUsed?: string;
   usedFallback?: boolean;
   previousInteractionId?: string | null;
+  brief?: ShoppingBrief;
+  taskId?: string;
   error?: string;
 }
 

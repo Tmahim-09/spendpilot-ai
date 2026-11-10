@@ -47,13 +47,13 @@ describe("Channel3 Product Normalization", () => {
     assert.strictEqual(normalized.brand, "Logitech");
     // Preferred cleaned image
     assert.strictEqual(normalized.imageUrl, "https://cdn.trychannel3.com/cleaned/clean.png");
-    // Sorted starting price: 89.99 (cheapest offer) -> 8999 minor units
-    assert.strictEqual(normalized.priceMinor, 8999);
-    assert.strictEqual(normalized.retailerName, "amazon.com");
-    assert.strictEqual(normalized.retailerUrl, "https://buy.trychannel3.com/p101-amazon-affiliate?tag=sp");
+    // Preserves offer order without blind cheapest-first sorting
+    assert.strictEqual(normalized.priceMinor, 9999);
+    assert.strictEqual(normalized.retailerName, "bestbuy.com");
+    assert.strictEqual(normalized.retailerUrl, "https://buy.trychannel3.com/p101-bestbuy-affiliate?tag=sp");
     assert.strictEqual(normalized.offersCount, 2);
-    assert.strictEqual(normalized.offers?.[0]?.priceMinor, 8999);
-    assert.strictEqual(normalized.offers?.[1]?.priceMinor, 9999);
+    assert.strictEqual(normalized.offers?.[0]?.priceMinor, 9999);
+    assert.strictEqual(normalized.offers?.[1]?.priceMinor, 8999);
     // Specifications extracted
     assert.strictEqual(normalized.specifications["Connectivity"], "Bluetooth, 2.4GHz USB");
     assert.strictEqual(normalized.specifications["Hand Orientation"], "Right");

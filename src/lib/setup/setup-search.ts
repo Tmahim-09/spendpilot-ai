@@ -2,6 +2,7 @@ import { searchChannel3Products } from "../channel3/client.ts";
 import { normalizeChannel3Products } from "../channel3/normalize-products.ts";
 import { filterQualifyingProducts } from "../shopping/price-policy.ts";
 import { filterEligibleCandidates, type RelevanceEvaluationResult } from "../relevance/relevance-evaluator.ts";
+import { normalizeProductTechnicalClaims } from "../shopping/spec-normalizer.ts";
 import type {
   CurrencyCode,
   NormalizedProduct,
@@ -279,22 +280,10 @@ export async function executeSetupSearch({
       });
 
       // ─────────────────────────────────────────────────────────────
-      // Pass 5: Deduplicate Distinct Products (Max 2 alternatives)
+      // Pass 5: Deduplicate Distinct Products & Merge Multi-Retailer Offers (Max 2 alternatives)
       // ─────────────────────────────────────────────────────────────
       const maxAlts = item.maximumAlternatives || item.maxAlternatives || 2;
-      const distinctProducts: NormalizedProduct[] = [];
-      const seenProductIds = new Set<string>();
-
-      for (const prod of qualifyingProducts) {
-        const id = prod.sourceProductId || prod.title;
-        if (!seenProductIds.has(id)) {
-          seenProductIds.add(id);
-          distinctProducts.push(prod);
-        }
-        if (distinctProducts.length >= maxAlts) {
-          break;
-        }
-      }
+      const distinctProducts = deduplicateAndMergeCandidateOffers(qualifyingProducts, maxAlts);
 
       const status: SetupCategorySearchResult["status"] =
         distinctProducts.length >= 2
@@ -347,4 +336,155 @@ export async function executeSetupSearch({
   };
 
   return asyncPool(concurrencyLimit, items, searchCategory);
+}
+
+/**
+ * Normalizes title into core model tokens for cross-listing matching.
+ */
+export function extractModelTokens(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/\(.*?\)/g, " ")
+    .replace(/\[.*?\]/g, " ")
+    .replace(/-(?:\s*black|\s*white|\s*grey|\s*gray|\s*rgb)/gi, " ")
+    .replace(/\b(?:gaming|headset|headphones|mousepad|mouse pad|mat|keyboard|monitor|desktop|pc|usb|wired|wireless|closed back|open back|edition|series)\b/gi, " ")
+    .replace(/[^a-z0-9]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w.length > 1)
+    .join(" ");
+}
+
+/**
+ * Checks whether two product listings represent the exact same physical product model
+ * across retailers or duplicate listings, while respecting distinct versions (e.g. Pack A vs Pack B).
+ */
+export function isSameProductModel(prodA: NormalizedProduct, prodB: NormalizedProduct): boolean {
+  // 1. Same sourceProductId
+  if (prodA.sourceProductId && prodB.sourceProductId && prodA.sourceProductId === prodB.sourceProductId) {
+    return true;
+  }
+
+  // 2. Exact same title (case-insensitive trimmed)
+  if (prodA.title.trim().toLowerCase() === prodB.title.trim().toLowerCase()) {
+    return true;
+  }
+
+  // 3. Exact same brand and exact same canonical model
+  const brandA = (prodA.brand || "").toLowerCase().trim();
+  const brandB = (prodB.brand || "").toLowerCase().trim();
+
+  // If brands are provided and differ, they are different products
+  if (brandA && brandB && brandA !== brandB) {
+    return false;
+  }
+
+  const modelA = extractModelTokens(prodA.title);
+  const modelB = extractModelTokens(prodB.title);
+
+  // If models are non-empty and identical
+  if (modelA && modelB && modelA === modelB) {
+    // Check if there are distinguishing version/model tokens in raw titles (e.g. "Pack A" vs "Pack B", "0" vs "1", "V2" vs "V3")
+    const wordsA = prodA.title.toLowerCase().replace(/[^a-z0-9]/g, " ").split(/\s+/).filter(Boolean);
+    const wordsB = prodB.title.toLowerCase().replace(/[^a-z0-9]/g, " ").split(/\s+/).filter(Boolean);
+
+    const diffTokensA = wordsA.filter((w) => !wordsB.includes(w) && (w.length === 1 || /^\d+$/.test(w)));
+    const diffTokensB = wordsB.filter((w) => !wordsA.includes(w) && (w.length === 1 || /^\d+$/.test(w)));
+
+    if (diffTokensA.length > 0 || diffTokensB.length > 0) {
+      return false; // Distinct versions or sequence items
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Clusters and merges identical/near-duplicate listings (across merchants or duplicates)
+ * into a single canonical product with an aggregated `offers` array.
+ * Selects up to `maxAlternatives` genuinely distinct product models.
+ */
+export function deduplicateAndMergeCandidateOffers(
+  products: NormalizedProduct[],
+  maxAlternatives: number = 2
+): NormalizedProduct[] {
+  if (!products || products.length === 0) return [];
+
+  const canonicalClusters: NormalizedProduct[] = [];
+
+  for (const rawProd of products) {
+    const prod = normalizeProductTechnicalClaims(rawProd);
+
+    // Check if this product matches any existing cluster
+    const matchedCluster = canonicalClusters.find((cluster) => isSameProductModel(cluster, prod));
+
+    if (!matchedCluster) {
+      canonicalClusters.push({
+        ...prod,
+        offers: prod.offers && prod.offers.length > 0 ? [...prod.offers] : [
+          {
+            domain: prod.retailerName || "Verified Retailer",
+            url: prod.retailerUrl,
+            priceMinor: prod.priceMinor ?? 0,
+            currency: prod.currency || "USD",
+            availability: prod.availability,
+          },
+        ],
+        offersCount: prod.offers && prod.offers.length > 0 ? prod.offers.length : 1,
+      });
+    } else {
+      // Merge into matchedCluster:
+      const existingOffers = matchedCluster.offers || [];
+      const incomingOffers = prod.offers && prod.offers.length > 0 ? prod.offers : [
+        {
+          domain: prod.retailerName || "Verified Retailer",
+          url: prod.retailerUrl,
+          priceMinor: prod.priceMinor ?? 0,
+          currency: prod.currency || "USD",
+          availability: prod.availability,
+        },
+      ];
+
+      for (const inOffer of incomingOffers) {
+        const isDuplicateOffer = existingOffers.some(
+          (eo) => eo.url === inOffer.url || (eo.domain === inOffer.domain && eo.priceMinor === inOffer.priceMinor)
+        );
+        if (!isDuplicateOffer) {
+          existingOffers.push(inOffer);
+        }
+      }
+
+      existingOffers.sort((a, b) => a.priceMinor - b.priceMinor);
+      matchedCluster.offers = existingOffers;
+      matchedCluster.offersCount = existingOffers.length;
+
+      // Update primary offer to lowest price
+      if (prod.priceMinor !== null && (matchedCluster.priceMinor === null || prod.priceMinor < matchedCluster.priceMinor)) {
+        matchedCluster.priceMinor = prod.priceMinor;
+        matchedCluster.retailerName = prod.retailerName;
+        matchedCluster.retailerUrl = prod.retailerUrl;
+        matchedCluster.availability = prod.availability;
+      }
+
+      matchedCluster.specifications = { ...prod.specifications, ...matchedCluster.specifications };
+      const factSet = new Set([...matchedCluster.sourceFacts, ...prod.sourceFacts]);
+      matchedCluster.sourceFacts = Array.from(factSet);
+    }
+  }
+
+  // Select up to maxAlternatives genuinely distinct products
+  const distinct: NormalizedProduct[] = [];
+  for (const cand of canonicalClusters) {
+    const isDuplicateOfSelected = distinct.some((existing) => isSameProductModel(existing, cand));
+    if (!isDuplicateOfSelected) {
+      distinct.push(cand);
+      if (distinct.length >= maxAlternatives) {
+        break;
+      }
+    }
+  }
+
+  return distinct;
 }

@@ -66,10 +66,14 @@ export function extractAttributesFromText(text: string): Record<string, string> 
     }
   }
 
-  // 4. Operating System (for Laptops / Tech)
-  if (lower.includes("macbook") || lower.includes("macos") || lower.includes("apple")) {
+  // 4. Operating System & Ecosystem (for Laptops / Tech)
+  if (lower.includes("macbook") || lower.includes("macos") || lower.includes("apple mac") || lower.includes("apple")) {
     extracted["operating-system"] = "macOS";
     extracted["operating_system"] = "macOS";
+    extracted["manufacturer"] = "Apple";
+    extracted["brand"] = "Apple";
+    extracted["product-family"] = "MacBook";
+    extracted["product_family"] = "MacBook";
   } else if (lower.includes("windows") || lower.includes("pc")) {
     extracted["operating-system"] = "Windows 11";
     extracted["operating_system"] = "Windows 11";
@@ -79,6 +83,31 @@ export function extractAttributesFromText(text: string): Record<string, string> 
   } else if (lower.includes("linux")) {
     extracted["operating-system"] = "Linux Friendly";
     extracted["operating_system"] = "Linux Friendly";
+  }
+
+  // 4b. Primary and Secondary Laptop Use Case
+  const isDev = /\b(?:programming|coding|software|developer|dev|engineer|development)\b/i.test(lower);
+  const isStudy = /\b(?:university|college|student|study|studying|school|academic|productivity)\b/i.test(lower);
+  const isGaming = /\b(?:gaming|gamer|games)\b/i.test(lower);
+  const isCreative = /\b(?:video editing|photo editing|graphic design|creative|rendering)\b/i.test(lower);
+
+  if (isDev && isStudy) {
+    extracted["primary-use"] = "Programming & Software Dev";
+    extracted["primary_use"] = "Programming & Software Dev";
+    extracted["secondary-use"] = "University & General Productivity";
+    extracted["secondary_use"] = "University & General Productivity";
+  } else if (isDev) {
+    extracted["primary-use"] = "Programming & Software Dev";
+    extracted["primary_use"] = "Programming & Software Dev";
+  } else if (isStudy) {
+    extracted["primary-use"] = "University & General Productivity";
+    extracted["primary_use"] = "University & General Productivity";
+  } else if (isGaming) {
+    extracted["primary-use"] = "Gaming";
+    extracted["primary_use"] = "Gaming";
+  } else if (isCreative) {
+    extracted["primary-use"] = "Video Editing & Creative Work";
+    extracted["primary_use"] = "Video Editing & Creative Work";
   }
 
   // 5. Connectivity (for Headphones)
@@ -111,6 +140,16 @@ export function extractAttributesFromText(text: string): Record<string, string> 
   if (storageMatch) {
     extracted["storage"] = storageMatch[1].toUpperCase();
     extracted["storage-capacity"] = storageMatch[1].toUpperCase();
+  }
+
+  // 8b. Memory / RAM capacity (e.g., "16GB RAM", "16 GB", "32GB memory", "8GB unified memory")
+  const ramMatch =
+    lower.match(/\b(8gb|16gb|24gb|32gb|64gb)(?:\s*(?:ram|memory|unified\s*memory))?\b/i) ||
+    lower.match(/\b(?:ram|memory)(?:\s*(?:is|of|:))?\s*(8gb|16gb|24gb|32gb|64gb)\b/i);
+  if (ramMatch) {
+    const val = (ramMatch[1] || ramMatch[2]).toUpperCase();
+    extracted["memory"] = val;
+    extracted["ram"] = val;
   }
 
   // 9. Gaming PC Setup resolution target
@@ -157,6 +196,35 @@ export async function analyzeShoppingRequirements(params: {
       allKnownAttrs[k] = val;
       allKnownAttrs[k.replace(/-/g, "_")] = val;
       allKnownAttrs[k.replace(/_/g, "-")] = val;
+    }
+  }
+
+  // Cross-alias primary use and intended use
+  const knownUse =
+    allKnownAttrs["primary-use"] ||
+    allKnownAttrs["primary_use"] ||
+    allKnownAttrs["intended-use"] ||
+    allKnownAttrs["intended_use"];
+  if (knownUse) {
+    allKnownAttrs["primary-use"] = knownUse;
+    allKnownAttrs["primary_use"] = knownUse;
+    allKnownAttrs["intended-use"] = knownUse;
+    allKnownAttrs["intended_use"] = knownUse;
+  }
+
+  // Cross-alias operating system
+  const knownOs =
+    allKnownAttrs["operating-system"] ||
+    allKnownAttrs["operating_system"] ||
+    allKnownAttrs["os"];
+  if (knownOs) {
+    allKnownAttrs["operating-system"] = knownOs;
+    allKnownAttrs["operating_system"] = knownOs;
+    allKnownAttrs["os"] = knownOs;
+    if (/\b(?:mac|macos|macbook|apple)\b/i.test(knownOs)) {
+      allKnownAttrs["manufacturer"] = "Apple";
+      allKnownAttrs["product-family"] = "MacBook";
+      allKnownAttrs["product_family"] = "MacBook";
     }
   }
 
@@ -349,7 +417,15 @@ async function analyzeSingleProductRequirements(params: {
     }
   } else if (categorySlug === "laptops") {
     // 1. Operating System
-    if (!allKnownAttrs["operating-system"]) {
+    const hasOs = Boolean(
+      allKnownAttrs["operating-system"] ||
+      allKnownAttrs["operating_system"] ||
+      allKnownAttrs["os"] ||
+      existingAnswers["q-operating-system"] ||
+      existingAnswers["operating-system"] ||
+      existingAnswers["operating_system"]
+    );
+    if (!hasOs) {
       requiredMissing.push("operating-system");
       questions.push({
         id: "q-operating-system",
@@ -370,7 +446,18 @@ async function analyzeSingleProductRequirements(params: {
     }
 
     // 2. Primary Use
-    if (!allKnownAttrs["primary-use"]) {
+    const hasUse = Boolean(
+      allKnownAttrs["primary-use"] ||
+      allKnownAttrs["primary_use"] ||
+      allKnownAttrs["intended-use"] ||
+      allKnownAttrs["intended_use"] ||
+      existingAnswers["q-primary-use"] ||
+      existingAnswers["primary-use"] ||
+      existingAnswers["primary_use"] ||
+      existingAnswers["intended-use"] ||
+      existingAnswers["intended_use"]
+    );
+    if (!hasUse) {
       optionalMissing.push("primary-use");
       questions.push({
         id: "q-primary-use",

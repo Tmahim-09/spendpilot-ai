@@ -29,16 +29,16 @@ export function HowItWorks() {
   ];
 
   return (
-    <section id="how-it-works" className="py-16 md:py-24 border-b border-[#242424] bg-[#0c0c0c]">
+    <section id="how-it-works" className="py-16 md:py-24 border-b border-orange-200/60 dark:border-[#221c29] bg-transparent">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="text-center max-w-2xl mx-auto mb-12 sm:mb-16">
-          <span className="text-xs font-semibold uppercase tracking-wider text-[#FF6A00]">
+          <span className="text-xs font-bold uppercase tracking-wider text-[#FF6A00]">
             How It Works
           </span>
-          <h2 className="mt-2 text-2xl font-bold tracking-tight text-[#F5F5F5] sm:text-3xl md:text-4xl">
+          <h2 className="mt-2 text-2xl font-bold tracking-tight text-zinc-900 dark:text-[#F5F5F5] sm:text-3xl md:text-4xl">
             A shopping assistant designed around your budget
           </h2>
-          <p className="mt-3 text-sm sm:text-base text-[#A3A3A3]">
+          <p className="mt-3 text-sm sm:text-base text-zinc-600 dark:text-[#A3A3A3]">
             SpendPilot combines conversational intelligence with source-grounded product comparisons in three simple steps.
           </p>
         </div>
@@ -49,23 +49,23 @@ export function HowItWorks() {
             return (
               <div
                 key={step.number}
-                className="relative flex flex-col justify-between rounded-xl border border-[#262626] bg-[#101010] p-6 sm:p-8 transition-all hover:border-[#383838] hover:bg-[#121212]"
+                className="relative flex flex-col justify-between rounded-2xl border border-orange-200 dark:border-[#2b2436] bg-white dark:bg-[#121015] p-6 sm:p-8 transition-all shadow-sm hover:border-[#FF6A00] dark:hover:border-[#FF6A00]/80 hover:shadow-md"
               >
                 <div>
                   <div className="flex items-center justify-between mb-6">
-                    <span className="text-xs font-mono font-semibold text-[#FF6A00] tracking-widest bg-[#FF6A00]/10 px-2.5 py-1 rounded-md border border-[#FF6A00]/20">
+                    <span className="text-xs font-mono font-bold text-[#FF6A00] tracking-widest bg-[#FF6A00]/10 px-2.5 py-1 rounded-md border border-[#FF6A00]/30">
                       STEP {step.number}
                     </span>
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[#303030] bg-[#171717] text-[#D4D4D4]">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-orange-200 dark:border-[#382e46] bg-[#FFF8F2] dark:bg-[#1a1622] text-[#FF6A00]">
                       <Icon className="h-5 w-5 text-[#FF6A00]" aria-hidden="true" />
                     </div>
                   </div>
 
-                  <h3 className="text-lg font-semibold text-[#F5F5F5] mb-2.5">
+                  <h3 className="text-lg font-bold text-zinc-900 dark:text-[#F5F5F5] mb-2.5">
                     {step.title}
                   </h3>
 
-                  <p className="text-sm text-[#A3A3A3] leading-relaxed">
+                  <p className="text-sm text-zinc-600 dark:text-[#A3A3A3] leading-relaxed">
                     {step.description}
                   </p>
                 </div>

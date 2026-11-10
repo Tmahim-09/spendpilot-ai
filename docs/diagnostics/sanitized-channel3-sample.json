@@ -1,0 +1,468 @@
+{
+  "timestamp": "2026-11-01T14:23:09.568Z",
+  "sdkVersion": "4.6.0",
+  "searchQuery": "Apple MacBook laptop 1TB SSD",
+  "searchResults": [
+    {
+      "id": "nAlxfTo",
+      "title": "MacBook Air Laptop 13.6-Inch M5 Chip 16GB RAM 1TB SSD",
+      "brand": "Apple",
+      "structuredAttributes": {
+        "pattern": [
+          "Solid"
+        ],
+        "display-technology": [
+          "LED",
+          "IPS"
+        ],
+        "computer-form": [
+          "Ultrabook",
+          "Notebook"
+        ],
+        "cosmetic-condition": [
+          "New"
+        ],
+        "computer-specialized-features": [
+          "AI-powered"
+        ],
+        "ram": [
+          "16 GB"
+        ],
+        "storage-types-supported": [
+          "Solid-state drive (SSD)"
+        ],
+        "operating-system": [
+          "macOS"
+        ],
+        "graphics-card-type": [
+          "Integrated"
+        ],
+        "storage-capacity": [
+          "1 TB"
+        ],
+        "processor-family": [
+          "Apple M5",
+          "Apple M1"
+        ],
+        "processor-cores": [
+          "Deca"
+        ],
+        "storage-drive-type-installed": [
+          "Solid-state drive (SSD)"
+        ],
+        "memory-technology": [
+          "DDR5"
+        ],
+        "power-source": [
+          "Battery-powered",
+          "Rechargeable"
+        ],
+        "keyboard-type": [
+          "Backlit"
+        ]
+      },
+      "variants": null,
+      "offersCount": 2,
+      "offers": [
+        {
+          "domain": "abt.com",
+          "price": 1299,
+          "compareAtPrice": null,
+          "currency": "USD",
+          "availability": "InStock",
+          "condition": "new",
+          "sanitizedUrl": "https://buy.trychannel3.com/nAlxfTo-DO3T-8uAj6S",
+          "isAttributedRedirect": true
+        },
+        {
+          "domain": "cdw.com",
+          "price": 1688.99,
+          "compareAtPrice": null,
+          "currency": "USD",
+          "availability": "InStock",
+          "condition": "new",
+          "sanitizedUrl": "https://buy.trychannel3.com/nAlxfTo-TgS4-8uAj6S",
+          "isAttributedRedirect": true
+        }
+      ]
+    },
+    {
+      "id": "4QUI5Gs",
+      "title": "MacBook Pro 16\" Laptop",
+      "brand": "Apple",
+      "structuredAttributes": {
+        "processor-family": [
+          "Apple M2 Pro"
+        ],
+        "processor-cores": [
+          "Multi"
+        ],
+        "keyboard-layout": [
+          "QWERTY"
+        ],
+        "memory-technology": [
+          "DDR4",
+          "DDR"
+        ],
+        "storage-drive-type-installed": [
+          "Solid-state drive (SSD)"
+        ],
+        "keyboard-type": [
+          "Standard",
+          "Backlit"
+        ],
+        "computer-form": [
+          "Notebook"
+        ],
+        "power-source": [
+          "AC-powered",
+          "Rechargeable"
+        ],
+        "graphics-card-type": [
+          "Dedicated",
+          "Integrated"
+        ],
+        "display-technology": [
+          "LCD"
+        ],
+        "storage-types-supported": [
+          "Solid-state drive (SSD)"
+        ],
+        "operating-system": [
+          "macOS"
+        ],
+        "removable-storage-formats-supported": [
+          "SDXC",
+          "SD",
+          "SDHC"
+        ],
+        "ram": [
+          "32 GB"
+        ],
+        "storage-capacity": [
+          "1 TB"
+        ]
+      },
+      "variants": null,
+      "offersCount": 2,
+      "offers": [
+        {
+          "domain": "backmarket.com",
+          "price": 1425.99,
+          "compareAtPrice": 3099,
+          "currency": "USD",
+          "availability": "InStock",
+          "condition": null,
+          "sanitizedUrl": "https://buy.trychannel3.com/4QUI5Gs-n0yg-8uAj6S",
+          "isAttributedRedirect": true
+        },
+        {
+          "domain": "bestbuy.com",
+          "price": 2099,
+          "compareAtPrice": 2499,
+          "currency": "USD",
+          "availability": "InStock",
+          "condition": "new",
+          "sanitizedUrl": "https://buy.trychannel3.com/4QUI5Gs-p1PB-8uAj6S",
+          "isAttributedRedirect": true
+        }
+      ]
+    },
+    {
+      "id": "0uT6aDV",
+      "title": "MacBook Air 13-inch Laptop",
+      "brand": "Apple",
+      "structuredAttributes": {
+        "graphics-card-type": [
+          "Integrated"
+        ],
+        "power-source": [
+          "AC-powered",
+          "Rechargeable"
+        ],
+        "display-technology": [
+          "LCD"
+        ],
+        "computer-specialized-features": [
+          "Quiet operation",
+          "Touchscreen"
+        ],
+        "keyboard-type": [
+          "Backlit"
+        ],
+        "keyboard-layout": [
+          "QWERTY"
+        ],
+        "storage-types-supported": [
+          "Solid-state drive (SSD)"
+        ],
+        "pattern": [
+          "Graphic"
+        ],
+        "display-resolution": [
+          "2560 x 1440"
+        ],
+        "operating-system": [
+          "macOS"
+        ],
+        "processor-cores": [
+          "Multi"
+        ],
+        "computer-form": [
+          "Notebook"
+        ],
+        "memory-technology": [
+          "DDR4"
+        ],
+        "storage-drive-type-installed": [
+          "Solid-state drive (SSD)"
+        ],
+        "processor-family": [
+          "Apple M5"
+        ]
+      },
+      "variants": null,
+      "offersCount": 1,
+      "offers": [
+        {
+          "domain": "bestbuy.com",
+          "price": 1149,
+          "compareAtPrice": 1299,
+          "currency": "USD",
+          "availability": "InStock",
+          "condition": "new",
+          "sanitizedUrl": "https://buy.trychannel3.com/0uT6aDV-p1PB-8uAj6S",
+          "isAttributedRedirect": true
+        }
+      ]
+    },
+    {
+      "id": "SrdWIv0",
+      "title": "MacBook Air 13-inch Laptop",
+      "brand": "Apple",
+      "structuredAttributes": {
+        "operating-system": [
+          "Windows",
+          "macOS"
+        ],
+        "power-source": [
+          "Rechargeable"
+        ],
+        "storage-types-supported": [
+          "Solid-state drive (SSD)"
+        ],
+        "processor-family": [
+          "Apple M5"
+        ],
+        "keyboard-type": [
+          "Backlit"
+        ],
+        "display-resolution": [
+          "2560 x 1440"
+        ],
+        "computer-form": [
+          "Notebook"
+        ],
+        "memory-technology": [
+          "DDR4"
+        ],
+        "graphics-card-type": [
+          "Integrated"
+        ],
+        "processor-cores": [
+          "Multi"
+        ],
+        "computer-specialized-features": [
+          "Quiet operation"
+        ],
+        "storage-drive-type-installed": [
+          "Solid-state drive (SSD)"
+        ],
+        "display-technology": [
+          "LCD"
+        ],
+        "storage-capacity": [
+          "1 TB"
+        ],
+        "ram": [
+          "16 GB"
+        ]
+      },
+      "variants": null,
+      "offersCount": 2,
+      "offers": [
+        {
+          "domain": "bestbuy.com",
+          "price": 1149,
+          "compareAtPrice": 1299,
+          "currency": "USD",
+          "availability": "InStock",
+          "condition": "new",
+          "sanitizedUrl": "https://buy.trychannel3.com/SrdWIv0-p1PB-8uAj6S",
+          "isAttributedRedirect": true
+        },
+        {
+          "domain": "quickshipelectronics.com",
+          "price": 1199,
+          "compareAtPrice": null,
+          "currency": "USD",
+          "availability": "InStock",
+          "condition": "used",
+          "sanitizedUrl": "https://buy.trychannel3.com/SrdWIv0-xO6g-8uAj6S",
+          "isAttributedRedirect": true
+        }
+      ]
+    },
+    {
+      "id": "DME4uhl",
+      "title": "Apple MacBook Pro 14\" M5 Chip 16GB 1TB Laptop Bundle",
+      "brand": "Apple",
+      "structuredAttributes": {
+        "ram": [
+          "16 GB"
+        ],
+        "computer-form": [
+          "Notebook"
+        ],
+        "processor-family": [
+          "Apple M5"
+        ],
+        "storage-types-supported": [
+          "Solid-state drive (SSD)"
+        ],
+        "operating-system": [
+          "macOS"
+        ],
+        "graphics-card-type": [
+          "Integrated"
+        ],
+        "cosmetic-condition": [
+          "New"
+        ],
+        "storage-capacity": [
+          "1 TB"
+        ],
+        "processor-cores": [
+          "Deca"
+        ],
+        "storage-drive-type-installed": [
+          "Solid-state drive (SSD)"
+        ],
+        "removable-storage-formats-supported": [
+          "SDXC"
+        ],
+        "power-source": [
+          "Rechargeable"
+        ]
+      },
+      "variants": null,
+      "offersCount": 1,
+      "offers": [
+        {
+          "domain": "hsn.com",
+          "price": 2899.99,
+          "compareAtPrice": null,
+          "currency": "USD",
+          "availability": "InStock",
+          "condition": "new",
+          "sanitizedUrl": "https://buy.trychannel3.com/DME4uhl-oOY7-8uAj6S",
+          "isAttributedRedirect": true
+        }
+      ]
+    }
+  ],
+  "topCandidateDetail": {
+    "id": "nAlxfTo",
+    "title": "MacBook Air Laptop 13.6-Inch M5 Chip 16GB RAM 1TB SSD",
+    "brand": "Apple",
+    "structuredAttributes": {
+      "pattern": [
+        "Solid"
+      ],
+      "display-technology": [
+        "LED",
+        "IPS"
+      ],
+      "computer-form": [
+        "Ultrabook",
+        "Notebook"
+      ],
+      "cosmetic-condition": [
+        "New"
+      ],
+      "computer-specialized-features": [
+        "AI-powered"
+      ],
+      "ram": [
+        "16 GB"
+      ],
+      "storage-types-supported": [
+        "Solid-state drive (SSD)"
+      ],
+      "operating-system": [
+        "macOS"
+      ],
+      "graphics-card-type": [
+        "Integrated"
+      ],
+      "storage-capacity": [
+        "1 TB"
+      ],
+      "processor-family": [
+        "Apple M5",
+        "Apple M1"
+      ],
+      "processor-cores": [
+        "Deca"
+      ],
+      "storage-drive-type-installed": [
+        "Solid-state drive (SSD)"
+      ],
+      "memory-technology": [
+        "DDR5"
+      ],
+      "power-source": [
+        "Battery-powered",
+        "Rechargeable"
+      ],
+      "keyboard-type": [
+        "Backlit"
+      ]
+    },
+    "variants": null,
+    "offersCount": 3,
+    "offers": [
+      {
+        "domain": "abt.com",
+        "price": 1299,
+        "compareAtPrice": null,
+        "currency": "USD",
+        "availability": "InStock",
+        "condition": "new",
+        "sanitizedUrl": "https://buy.trychannel3.com/nAlxfTo-DO3T-8uAj6S",
+        "isAttributedRedirect": true
+      },
+      {
+        "domain": "cdw.com",
+        "price": 1688.99,
+        "compareAtPrice": null,
+        "currency": "USD",
+        "availability": "InStock",
+        "condition": "new",
+        "sanitizedUrl": "https://buy.trychannel3.com/nAlxfTo-TgS4-8uAj6S",
+        "isAttributedRedirect": true
+      },
+      {
+        "domain": "microcenter.com",
+        "price": 1439.99,
+        "compareAtPrice": null,
+        "currency": "USD",
+        "availability": "OutOfStock",
+        "condition": "new",
+        "sanitizedUrl": "https://buy.trychannel3.com/nAlxfTo-yqJJ-8uAj6S",
+        "isAttributedRedirect": true
+      }
+    ]
+  },
+  "lookupAttributedResult": "success"
+}

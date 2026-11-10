@@ -129,6 +129,7 @@ export interface RunAiComparisonOptions {
   currency?: string;
   priorityOverride?: string;
   requestId?: string;
+  aiClient?: import("@google/genai").GoogleGenAI;
 }
 
 export interface RunAiComparisonResult {
@@ -144,7 +145,45 @@ export interface RunAiComparisonResult {
 }
 
 /**
- * Runs an evidence-grounded AI product comparison across a shortlist of 4 to 6 candidate products.
+ * Selects and sorts the top 4 candidate products for side-by-side comparison:
+ * - When budget is set, prioritizes products closest to budget for maximum features and quality (unless budget-saver requested).
+ * - When budget-saver / lowest price requested, prioritizes lowest prices.
+ * - Strictly caps to at most 4 products so the comparison table fits the screen cleanly.
+ */
+export function prepareComparisonShortlist(
+  products: NormalizedProduct[],
+  budget?: number | null,
+  priorityOverride?: string
+): NormalizedProduct[] {
+  if (!products || products.length === 0) return [];
+
+  const sortedCandidates = [...products];
+  const isBudgetSaver =
+    Boolean(
+      priorityOverride &&
+      /\b(lowest price|best(?: \w+)? value|budget[- ]?(?:friendly|saver|value)|cheapest|economical|save[s]? money|budget)\b/i.test(priorityOverride)
+    );
+
+  if (budget && budget > 0) {
+    if (isBudgetSaver) {
+      sortedCandidates.sort((a, b) => (a.priceMinor ?? 0) - (b.priceMinor ?? 0));
+    } else {
+      // Prioritize products closest to the budget to maximize quality and performance
+      const budgetCents = budget * 100;
+      sortedCandidates.sort((a, b) => {
+        const priceA = a.priceMinor ?? 0;
+        const priceB = b.priceMinor ?? 0;
+        return Math.abs(budgetCents - priceA) - Math.abs(budgetCents - priceB);
+      });
+    }
+  }
+
+  // Exactly 4 best candidate products for side-by-side comparison (fits screen cleanly)
+  return sortedCandidates.slice(0, 4);
+}
+
+/**
+ * Runs an evidence-grounded AI product comparison across a shortlist of 4 candidate products.
  */
 export async function runAiComparison({
   query,
@@ -153,6 +192,7 @@ export async function runAiComparison({
   currency = "USD",
   priorityOverride,
   requestId,
+  aiClient,
 }: RunAiComparisonOptions): Promise<RunAiComparisonResult> {
   if (!products || products.length === 0) {
     return {
@@ -180,8 +220,13 @@ export async function runAiComparison({
     };
   }
 
-  // PRD Section 2: Compare a shortlist of 4 to 6 actual products
-  const shortlist = products.slice(0, 6);
+  // Select the top 4 candidates calibrated to budget and screen fit
+  const shortlist = prepareComparisonShortlist(products, budget, priorityOverride);
+  const isBudgetSaver =
+    Boolean(
+      priorityOverride &&
+      /\b(lowest price|best(?: \w+)? value|budget[- ]?(?:friendly|saver|value)|cheapest|economical|save[s]? money|budget)\b/i.test(priorityOverride)
+    );
 
   // Extract verified evidence facts with stable IDs
   const { evidenceFacts, candidateSummariesForPrompt } = extractEvidenceFacts(shortlist);
@@ -221,15 +266,19 @@ Your job is to produce a rigorous, grounded, side-by-side comparison of genuine 
 Rules:
 1. Grounding: Every claim must be grounded in the supplied listing facts. Never fabricate ratings, customer reviews, battery life, weight, or unlisted specs.
 2. Evidence Citation: For each assessment, cite ONLY the fact IDs (e.g. 'fact-prod123-1') provided in that product's verifiedFacts list. NEVER cite a fact ID belonging to a different product.
-3. Missing Information: If an important specification like battery life, weight, or connection mode is not in the verifiedFacts list, set assessment to 'unknown' and log it in missingInformation.
-4. Objective: Avoid promotional hype like "world-class" or "best ever". Use objective, evidence-based comparisons.
-5. Allowed assessments: 'strong', 'partial', 'weak', 'unknown'.`;
+3. Missing Information: If an important specification like battery life, weight, or connection mode is not in the verifiedFacts list, set assessment to 'unknown' and log it in missingInformation. Never guess or estimate missing battery life.
+4. Storage Accuracy: Strictly distinguish internal SSD from bundled external accessories (e.g., 1TB SSD + 1TB docking station must NOT be described as '2TB internal storage').
+5. Hard Requirements & OS: If an explicit operating system (e.g. macOS) is required, an incompatible or unverified OS cannot pass or be chosen as bestMatch.
+6. Objective: Avoid promotional hype like "world-class" or "best ever". Use objective, evidence-based comparisons.
+7. Allowed assessments: 'strong', 'partial', 'weak', 'unknown'.
+8. No Invented User Requirements: Only treat specifications explicitly stated in the User Shopping Query or Priority Refinement as user requirements. Never claim the user asked for 32GB RAM, 1440p resolution, or unmentioned specs unless explicitly stated.
+9. Budget Proximity & Calibration: When a budget limit is provided (e.g. $100), unless the user explicitly requested "lowest price" or "best value/saver", users expect the #1 Top Recommendation (bestMatchProductId) to be a high-quality product that maximizes performance close to their budget (e.g., 75%–100% of budget), rather than an entry-level product that leaves a large portion of the budget unspent (e.g., $44 on a $100 budget). Highlight lower-cost budget-saver products under alternativePicks (e.g., "Best Value / Budget Saver"), allowing the user to choose whether to maximize quality near their budget or save money.`;
 
   const userPrompt = `User Shopping Query: "${query}"
-${budget ? `Budget Limit: ${currency} ${budget}` : "Budget: No strict limit set"}
+${budget ? `Budget Limit: ${currency} ${budget} (${isBudgetSaver ? "User requested budget-saver / lowest-price focus" : "Prioritize options closest to budget for maximum features & quality"})` : "Budget: No strict limit set"}
 ${priorityOverride ? `User Priority Refinement: "${priorityOverride}" (Prioritize this requirement in your comparison)` : ""}
 
-Candidate Products with Verified Facts:
+Candidate Products with Verified Facts (Top 4 Best Candidates for Screen-Fit Comparison):
 ${JSON.stringify(candidateSummariesForPrompt, null, 2)}
 
 Provide a structured, side-by-side comparison evaluating these candidate products against the user's requirements.`;
@@ -237,6 +286,7 @@ Provide a structured, side-by-side comparison evaluating these candidate product
   const failoverResult = await executeWithModelFailover<Record<string, unknown>>({
     requestId,
     totalTimeoutMs: 18000,
+    aiClient,
     executeFn: async (ai, model, signal) => {
       const config = buildModelGenerationConfig(model, {
         abortSignal: signal,
@@ -266,16 +316,45 @@ Provide a structured, side-by-side comparison evaluating these candidate product
   // Validate the comparison server-side
   const validation = validateAndCleanComparison(failoverResult.data, shortlist, evidenceFacts, query);
 
-  // Combine top recommendations with remaining candidate products (from outside the shortlist)
-  const remainingProducts = products.slice(6);
-  const otherMatches = [...validation.otherMatches, ...remainingProducts];
-  const allProducts = [...validation.topRecommendations, ...otherMatches];
+  // Combine top recommendations with remaining candidate products with strict identity deduplication
+  const assignedIds = new Set<string>();
+
+  // 1. Top recommendations always come first
+  const deduplicatedTop: NormalizedProduct[] = [];
+  for (const p of validation.topRecommendations) {
+    const id = p.sourceProductId || p.title;
+    if (id && !assignedIds.has(id)) {
+      assignedIds.add(id);
+      deduplicatedTop.push(p);
+    }
+  }
+
+  // 2. Other matches from the comparison shortlist
+  const deduplicatedOther: NormalizedProduct[] = [];
+  for (const p of validation.otherMatches) {
+    const id = p.sourceProductId || p.title;
+    if (id && !assignedIds.has(id)) {
+      assignedIds.add(id);
+      deduplicatedOther.push(p);
+    }
+  }
+
+  // 3. Add any remaining candidate products from the initial catalog that weren't in the shortlist
+  for (const p of products) {
+    const id = p.sourceProductId || p.title;
+    if (id && !assignedIds.has(id)) {
+      assignedIds.add(id);
+      deduplicatedOther.push(p);
+    }
+  }
+
+  const allProducts = [...deduplicatedTop, ...deduplicatedOther];
 
   return {
     comparison: validation.comparison,
     evidenceFacts,
-    topRecommendations: validation.topRecommendations,
-    otherMatches,
+    topRecommendations: deduplicatedTop,
+    otherMatches: deduplicatedOther,
     allProducts,
     validation,
     modelUsed: failoverResult.modelUsed,

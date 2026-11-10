@@ -15,15 +15,85 @@ export const CURRENCY_SYMBOLS: Record<string, string> = {
 export const MAX_BUDGET_DOLLARS = 1_000_000;
 export const MAX_BUDGET_CENTS = MAX_BUDGET_DOLLARS * 100;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CANONICAL MONEY ADAPTER FUNCTIONS (PART 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Converts user-entered major dollar amounts (e.g. 1200 or "$1,200.00")
+ * strictly into integer minor units (e.g. 120000 cents).
+ */
+export function parseMajorToMinor(dollars: number | string | null | undefined): number {
+  if (dollars === null || dollars === undefined) return 0;
+  if (typeof dollars === "number") {
+    if (!Number.isFinite(dollars) || dollars <= 0) return 0;
+    const cents = Math.round(dollars * 100);
+    return cents <= MAX_BUDGET_CENTS ? cents : MAX_BUDGET_CENTS;
+  }
+  const clean = String(dollars).trim().replace(/,/g, "");
+  const match = clean.match(/\$?([0-9]+(?:\.[0-9]{1,2})?)/);
+  if (!match) return 0;
+  const parsed = parseFloat(match[1]);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  const cents = Math.round(parsed * 100);
+  return cents <= MAX_BUDGET_CENTS ? cents : MAX_BUDGET_CENTS;
+}
+
+/**
+ * Formats internal integer minor units (cents) into user-facing currency string.
+ * Example: 120000 -> "$1,200.00"
+ */
+export function formatMinorMoney(
+  cents: number | null | undefined,
+  currency: CurrencyCode = "USD"
+): string {
+  if (cents === null || cents === undefined || !Number.isFinite(cents)) {
+    return "No budget limit";
+  }
+  const symbol = CURRENCY_SYMBOLS[currency] || "$";
+  const major = cents / 100;
+  return `${symbol}${major.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/**
+ * Converts internal integer minor units (cents) to external Channel3 price filter (float/int dollars).
+ * Example: 120000 cents -> 1200 USD
+ */
+export function toChannel3Price(cents: number | null | undefined): number {
+  if (cents === null || cents === undefined || !Number.isFinite(cents) || cents <= 0) {
+    return 0;
+  }
+  return Math.round((cents / 100) * 100) / 100;
+}
+
+/**
+ * Converts internal integer minor units (cents) to Gemini prompt money context string.
+ * Example: 120000 cents -> "$1,200" or "$1,200.50"
+ */
+export function toGeminiMoneyContext(
+  cents: number | null | undefined,
+  currency: CurrencyCode = "USD"
+): string {
+  if (cents === null || cents === undefined || !Number.isFinite(cents) || cents <= 0) {
+    return "No budget limit";
+  }
+  const symbol = CURRENCY_SYMBOLS[currency] || "$";
+  const major = cents / 100;
+  const formatted = Number.isInteger(major)
+    ? major.toLocaleString("en-US")
+    : major.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${symbol}${formatted}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BACKWARD-COMPATIBLE UTILITIES
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Converts a raw user input, parsed number, or string amount into integer minor units (cents).
- *
- * Rules:
- * - If input is a string like "$150", "150", "150.00", it parses the numeric component.
- * - Detects whether a numeric value is already in minor units (e.g. 15000) or major units (150)
- *   when passed from session state, ensuring values are never multiplied by 100 repeatedly.
- * - Enforces positive, finite numbers and upper bounds.
- * - Returns null for empty, invalid, negative, or out-of-range inputs.
  */
 export function parseToMinorUnits(
   input: string | number | null | undefined,
@@ -37,7 +107,6 @@ export function parseToMinorUnits(
       const integerCents = Math.round(input);
       return integerCents <= MAX_BUDGET_CENTS ? integerCents : null;
     }
-    // If not flagged as already minor, treat as major units (e.g. 150 -> 15000 cents)
     const cents = Math.round(input * 100);
     return cents <= MAX_BUDGET_CENTS ? cents : null;
   }
@@ -59,40 +128,26 @@ export function parseToMinorUnits(
 
 /**
  * Converts internal minor units (cents) to integer/decimal major currency units (USD dollars)
- * for external services like Channel3 search filters and Gemini prompt contexts.
- *
- * Example: 15000 cents -> 150 USD
+ * for external services.
  */
 export function minorToMajorUnits(minorUnits: number | null | undefined): number | null {
   if (minorUnits === null || minorUnits === undefined) return null;
   if (!Number.isFinite(minorUnits) || minorUnits <= 0) return null;
-  return Math.round((minorUnits / 100) * 100) / 100;
+  return toChannel3Price(minorUnits);
 }
 
 /**
  * Formats internal integer minor units (cents) into a clean user-facing currency string.
- *
- * Examples:
- * - formatMinorUnits(15000, "USD") -> "$150.00"
- * - formatMinorUnits(15050, "USD") -> "$150.50"
- * - formatMinorUnits(null) -> "No budget limit"
  */
 export function formatMinorUnits(
   minorUnits: number | null | undefined,
   currency: CurrencyCode = "USD"
 ): string {
-  if (minorUnits === null || minorUnits === undefined || !Number.isFinite(minorUnits)) {
-    return "No budget limit";
-  }
-
-  const symbol = CURRENCY_SYMBOLS[currency] || "$";
-  const major = minorUnits / 100;
-  return `${symbol}${major.toFixed(2)}`;
+  return formatMinorMoney(minorUnits, currency);
 }
 
 /**
  * Compact formatting for pill badges and summary tags.
- * If whole dollar amount (e.g. $150.00), formats as "$150".
  */
 export function formatMinorUnitsCompact(
   minorUnits: number | null | undefined,
@@ -105,14 +160,17 @@ export function formatMinorUnitsCompact(
   const symbol = CURRENCY_SYMBOLS[currency] || "$";
   const major = minorUnits / 100;
   if (Number.isInteger(major)) {
-    return `${symbol}${major}`;
+    return `${symbol}${major.toLocaleString("en-US")}`;
   }
-  return `${symbol}${major.toFixed(2)}`;
+  return `${symbol}${major.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 /**
- * Safely formats any budget value whether it is already in minor units (15000)
- * or in major units (150), preventing multiple multiplications by 100.
+ * Safely formats a budget value: if already minor units (e.g. 15000 or 120000), formats as $150.00 / $1,200.00;
+ * if legacy major units (e.g. 150), also converts and formats as $150.00.
  */
 export function formatSafeBudget(
   amount: number | null | undefined,
@@ -123,6 +181,151 @@ export function formatSafeBudget(
   }
   const isMinor = amount >= 10000;
   const minor = isMinor ? Math.round(amount) : Math.round(amount * 100);
-  return formatMinorUnits(minor, currency);
+  return formatMinorMoney(minor, currency);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NATURAL-LANGUAGE BUDGET & CURRENCY PARSER (SECTION 7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ExtractedBudgetAndCurrency {
+  budgetMinor: number | null;
+  currency: CurrencyCode;
+  hasExplicitCurrency: boolean;
+  minBudgetMinor?: number | null;
+}
+
+/**
+ * Extracts budget amount and currency from natural language messages.
+ * Handles:
+ * - "$1000", "under 500 bucks", "around 80 euros", "£200 max", "between 300 and 500 dollars"
+ * - Currency detection: EUR (€, euro/euros), GBP (£, pound/pounds), USD ($, dollar/dollars, buck/bucks)
+ * - Defaults currency to USD if not specified
+ */
+export function extractBudgetAndCurrency(
+  text: string,
+  defaultCurrency: CurrencyCode = "USD"
+): ExtractedBudgetAndCurrency {
+  const clean = text.replace(/,/g, "");
+  let currency: CurrencyCode = defaultCurrency;
+  let hasExplicitCurrency = false;
+
+  // 1. Detect explicit currency
+  if (/€|\beuros?\b/i.test(clean)) {
+    currency = "EUR";
+    hasExplicitCurrency = true;
+  } else if (/£|\bpounds?\b/i.test(clean)) {
+    currency = "GBP";
+    hasExplicitCurrency = true;
+  } else if (/\$|\bdollars?\b|\bbucks?\b/i.test(clean)) {
+    currency = "USD";
+    hasExplicitCurrency = true;
+  }
+
+  // 2. Detect range: "between 300 and 500 dollars" or "from 300 to 500 euros"
+  const rangeMatch = clean.match(
+    /\b(?:between|from)\s*[\$€£]?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?:and|to|-)\s*[\$€£]?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?:dollars?|bucks?|euros?|pounds?)?\b/i
+  );
+  if (rangeMatch) {
+    const minVal = parseFloat(rangeMatch[1]);
+    const maxVal = parseFloat(rangeMatch[2]);
+    const minMinor = !isNaN(minVal) && minVal > 0 ? parseToMinorUnits(minVal) : null;
+    const maxMinor = !isNaN(maxVal) && maxVal > 0 ? parseToMinorUnits(maxVal) : null;
+    return {
+      budgetMinor: maxMinor, // Upper bound represents budget ceiling
+      minBudgetMinor: minMinor,
+      currency,
+      hasExplicitCurrency,
+    };
+  }
+
+  // 3. Detect "under / below / less than / up to / within / around / about 500 bucks"
+  const prefixWordMatch = clean.match(
+    /\b(?:under|below|less\s+than|within|up\s+to|around|about|approx(?:imately)?|~|for)\s*[\$€£]?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?:dollars?|bucks?|euros?|pounds?)?\b/i
+  );
+  if (prefixWordMatch) {
+    const val = parseFloat(prefixWordMatch[1]);
+    if (!isNaN(val) && val > 0) {
+      return {
+        budgetMinor: parseToMinorUnits(val),
+        currency,
+        hasExplicitCurrency,
+      };
+    }
+  }
+
+  // 4. Detect "budget / cap of / is 500"
+  const budgetWordMatch = clean.match(
+    /\b(?:budget|cap)(?:\s*(?:of|is|to|under|:))?\s*[\$€£]?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?:dollars?|bucks?|euros?|pounds?)?\b/i
+  );
+  if (budgetWordMatch) {
+    const val = parseFloat(budgetWordMatch[1]);
+    if (!isNaN(val) && val > 0) {
+      return {
+        budgetMinor: parseToMinorUnits(val),
+        currency,
+        hasExplicitCurrency,
+      };
+    }
+  }
+
+  // 5. Detect "500 max / 200 euros max / £200 max"
+  const maxSuffixMatch = clean.match(
+    /\b[\$€£]?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?:dollars?|bucks?|euros?|pounds?)?\s*max\b/i
+  );
+  if (maxSuffixMatch) {
+    const val = parseFloat(maxSuffixMatch[1]);
+    if (!isNaN(val) && val > 0) {
+      return {
+        budgetMinor: parseToMinorUnits(val),
+        currency,
+        hasExplicitCurrency,
+      };
+    }
+  }
+
+  // 6. Detect prefixed currency symbol "$1000", "€80", "£200"
+  const symbolMatch = clean.match(/[\$€£]([0-9]+(?:\.[0-9]{1,2})?)/);
+  if (symbolMatch) {
+    const val = parseFloat(symbolMatch[1]);
+    if (!isNaN(val) && val > 0) {
+      return {
+        budgetMinor: parseToMinorUnits(val),
+        currency,
+        hasExplicitCurrency,
+      };
+    }
+  }
+
+  // 7. Detect numeric followed by currency word "500 bucks", "80 euros", "200 pounds", "1200 dollars"
+  const wordSuffixMatch = clean.match(
+    /\b([0-9]+(?:\.[0-9]{1,2})?)\s*(?:dollars?|bucks?|euros?|pounds?)\b/i
+  );
+  if (wordSuffixMatch) {
+    const val = parseFloat(wordSuffixMatch[1]);
+    if (!isNaN(val) && val > 0) {
+      return {
+        budgetMinor: parseToMinorUnits(val),
+        currency,
+        hasExplicitCurrency,
+      };
+    }
+  }
+
+  return {
+    budgetMinor: null,
+    currency,
+    hasExplicitCurrency,
+  };
+}
+
+/**
+ * Extracts the currency code (USD, EUR, GBP) mentioned in user text.
+ */
+export function extractCurrencyFromText(
+  text: string,
+  defaultCurrency: CurrencyCode = "USD"
+): CurrencyCode {
+  return extractBudgetAndCurrency(text, defaultCurrency).currency;
 }
 

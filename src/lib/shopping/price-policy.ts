@@ -48,8 +48,11 @@ export function calculateBudgetRange(
 const BEST_VALUE_KEYWORDS = [
   "cheap",
   "cheapest",
-  "budget",
   "budget-friendly",
+  "budget saver",
+  "best budget",
+  "save money",
+  "cheaper",
   "affordable",
   "lowest price",
   "low cost",
@@ -59,11 +62,29 @@ const BEST_VALUE_KEYWORDS = [
   "economical",
 ];
 
+const NEAR_BUDGET_KEYWORDS = [
+  "close to budget",
+  "close to the budget",
+  "near budget",
+  "near the budget",
+  "closest to budget",
+  "closest to my budget",
+  "maximize budget",
+  "full budget",
+  "premium within budget",
+];
+
 /**
- * Detects whether the user's natural language query explicitly asks for cheap/best-value options.
+ * Detects whether the user's natural language query explicitly asks for cheap/best-value options or near-budget quality.
  */
 export function detectPricePreferenceFromQuery(query: string): PricePreference | null {
   const lower = query.toLowerCase();
+  for (const kw of NEAR_BUDGET_KEYWORDS) {
+    const regex = new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    if (regex.test(lower)) {
+      return "near_budget";
+    }
+  }
   for (const kw of BEST_VALUE_KEYWORDS) {
     // Word boundary or phrase check
     const regex = new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
@@ -170,18 +191,27 @@ export function filterQualifyingProducts({
       });
 
       if (qualifyingOffers.length > 0) {
-        // Clone product and keep its qualifying primary offer
-        const primaryOffer = qualifyingOffers[0];
+        // Respect verified selection or preserve explicit unverified status
+        const isAlreadyVerified =
+          product.configurationStatus === "verified" &&
+          product.selectedOffer?.verificationStatus === "verified";
+        const isExplicitlyUnverified =
+          product.configurationStatus === "unverified" && product.priceMinor === null;
+
+        const primaryOffer =
+          isAlreadyVerified && product.selectedOffer ? product.selectedOffer : qualifyingOffers[0];
+
         qualifyingProducts.push({
           ...product,
-          priceMinor: primaryOffer.priceMinor,
-          compareAtPriceMinor: primaryOffer.compareAtPriceMinor ?? null,
+          priceMinor: isExplicitlyUnverified ? null : primaryOffer.priceMinor,
+          compareAtPriceMinor: isExplicitlyUnverified ? null : (primaryOffer.compareAtPriceMinor ?? null),
           currency: primaryOffer.currency,
           retailerName: primaryOffer.domain,
           retailerUrl: primaryOffer.url,
           availability: primaryOffer.availability,
           offers: qualifyingOffers,
           offersCount: qualifyingOffers.length,
+          selectedOffer: product.selectedOffer || primaryOffer,
         });
       }
     } else if (
