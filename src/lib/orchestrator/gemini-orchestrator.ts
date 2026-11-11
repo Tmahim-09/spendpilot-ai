@@ -216,7 +216,7 @@ export function extractDeterministicPatches(
 
   // 1. Check out of scope (coding, homework, trivia, jokes)
   const isOutOfScope =
-    /\b(?:write\s+(?:a\s+)?(?:python|javascript|code|script|program)|solve\s+(?:calculus|math|equation)|write\s+(?:an?\s+)?essay|who\s+won|tell\s+me\s+a\s+joke)\b/i.test(lower);
+    /\b(?:write\s+(?:a\s+)?(?:python|javascript|code|script|program)|(?:(?:help\s+(?:me\s+)?|please\s+)?solve\s+(?:(?:this|the|an?|my)\s+)?(?:calculus|math|equation|integral|problem))|calculus\s+integral|integral\s+of|derivative\s+of|write\s+(?:an?\s+)?essay|who\s+won|tell\s+me\s+a\s+joke)\b/i.test(lower);
   if (isOutOfScope) {
     return {
       action: "reject_unrelated_request",

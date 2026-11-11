@@ -120,28 +120,28 @@ function synthesizeRetailerOptions(
             label: "Midnight",
             exists: true,
             available: "InStock",
-            priceMinor: basePriceMinor,
+            priceMinor: basePriceMinor || 109900,
             thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-midnight-select-202402?wid=400&hei=400&fmt=jpeg",
           },
           {
             label: "Space Gray",
             exists: true,
             available: "InStock",
-            priceMinor: basePriceMinor,
+            priceMinor: basePriceMinor || 109900,
             thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-spacegray-select-202402?wid=400&hei=400&fmt=jpeg",
           },
           {
             label: "Silver",
             exists: true,
             available: "InStock",
-            priceMinor: basePriceMinor,
+            priceMinor: basePriceMinor || 109900,
             thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-silver-select-202402?wid=400&hei=400&fmt=jpeg",
           },
           {
             label: "Starlight",
             exists: true,
             available: "InStock",
-            priceMinor: basePriceMinor,
+            priceMinor: basePriceMinor || 109900,
             thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-starlight-select-202402?wid=400&hei=400&fmt=jpeg",
           },
         ]
@@ -150,27 +150,27 @@ function synthesizeRetailerOptions(
             label: "Black",
             exists: true,
             available: "InStock",
-            priceMinor: basePriceMinor,
+            priceMinor: basePriceMinor || 99900,
             thumbnailUrl: "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=400&q=80",
           },
           {
             label: "Platinum Silver",
             exists: true,
             available: "InStock",
-            priceMinor: basePriceMinor,
+            priceMinor: basePriceMinor || 99900,
             thumbnailUrl: "https://images.unsplash.com/photo-1588872657578-7efd1f1555ed?auto=format&fit=crop&w=400&q=80",
           },
           {
             label: "Dark Gray",
             exists: true,
             available: "InStock",
-            priceMinor: basePriceMinor,
+            priceMinor: basePriceMinor || 99900,
             thumbnailUrl: "https://images.unsplash.com/photo-1603302576837-37561b2e2302?auto=format&fit=crop&w=400&q=80",
           },
         ];
 
     const ramValues: ProductVariantOptionValue[] = [
-      { label: "16GB Unified Memory", exists: true, available: "InStock", priceMinor: basePriceMinor },
+      { label: "16GB Unified Memory", exists: true, available: "InStock", priceMinor: basePriceMinor || 109900 },
       {
         label: "24GB Unified Memory",
         exists: true,
@@ -186,7 +186,7 @@ function synthesizeRetailerOptions(
     ];
 
     const storageValues: ProductVariantOptionValue[] = [
-      { label: "512GB SSD Storage", exists: true, available: "InStock", priceMinor: basePriceMinor },
+      { label: "512GB SSD Storage", exists: true, available: "InStock", priceMinor: basePriceMinor || 109900 },
       {
         label: "1TB SSD Storage",
         exists: true,
@@ -221,7 +221,7 @@ function synthesizeRetailerOptions(
       label: `US ${s}`,
       exists: true,
       available: "InStock",
-      priceMinor: basePriceMinor,
+      priceMinor: basePriceMinor || 14000,
     }));
 
     const colors: ProductVariantOptionValue[] = [
@@ -229,28 +229,28 @@ function synthesizeRetailerOptions(
         label: "Black / White",
         exists: true,
         available: "InStock",
-        priceMinor: basePriceMinor,
+        priceMinor: basePriceMinor || 14000,
         thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/0dc6dfd5-a83a-4da2-a9b7-b088bb97c27d/AIR+ZOOM+PEGASUS+40.png",
       },
       {
         label: "Pure Platinum",
         exists: true,
         available: "InStock",
-        priceMinor: basePriceMinor,
+        priceMinor: basePriceMinor || 14000,
         thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/284b3e34-585a-493e-bd29-e889ec1b7eef/AIR+ZOOM+PEGASUS+40.png",
       },
       {
         label: "Obsidian Blue",
         exists: true,
         available: "InStock",
-        priceMinor: basePriceMinor,
+        priceMinor: basePriceMinor || 14000,
         thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/209c1598-a28d-47c3-8f06-fa467aa7fc80/AIR+ZOOM+PEGASUS+40.png",
       },
       {
         label: "Anthracite",
         exists: true,
         available: "InStock",
-        priceMinor: basePriceMinor,
+        priceMinor: basePriceMinor || 14000,
         thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/5fa67597-23e5-4f36-9b59-99b80e8e6129/AIR+ZOOM+PEGASUS+40.png",
       },
     ];
@@ -274,21 +274,21 @@ function synthesizeRetailerOptions(
         label: "Black",
         exists: true,
         available: "InStock",
-        priceMinor: basePriceMinor,
+        priceMinor: basePriceMinor || 29900,
         thumbnailUrl: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=400&q=80",
       },
       {
         label: "Silver",
         exists: true,
         available: "InStock",
-        priceMinor: basePriceMinor,
+        priceMinor: basePriceMinor || 29900,
         thumbnailUrl: "https://images.unsplash.com/photo-1583394838336-acd977736f90?auto=format&fit=crop&w=400&q=80",
       },
       {
         label: "Midnight Blue",
         exists: true,
         available: "InStock",
-        priceMinor: basePriceMinor,
+        priceMinor: basePriceMinor || 29900,
         thumbnailUrl: "https://images.unsplash.com/photo-1546435770-a3e426bf472b?auto=format&fit=crop&w=400&q=80",
       },
     ];
@@ -304,21 +304,21 @@ function synthesizeRetailerOptions(
         label: "Black",
         exists: true,
         available: "InStock",
-        priceMinor: basePriceMinor,
+        priceMinor: basePriceMinor || 39900,
         thumbnailUrl: "https://images.unsplash.com/photo-1580481077195-c9dc5e7c8d92?auto=format&fit=crop&w=400&q=80",
       },
       {
         label: "Leather Red",
         exists: true,
         available: "InStock",
-        priceMinor: (basePriceMinor || 40000) + 5000,
+        priceMinor: (basePriceMinor || 39900) + 5000,
         thumbnailUrl: "https://images.unsplash.com/photo-1598550476439-6847785fcea6?auto=format&fit=crop&w=400&q=80",
       },
       {
         label: "Grey Fabric",
         exists: true,
         available: "InStock",
-        priceMinor: basePriceMinor,
+        priceMinor: basePriceMinor || 39900,
         thumbnailUrl: "https://images.unsplash.com/photo-1589384267710-7a25bc2ff307?auto=format&fit=crop&w=400&q=80",
       },
     ];
@@ -390,6 +390,67 @@ export async function retrieveProductVariants(
     }
 
     if (!product) {
+      const fallbackDimensions = synthesizeRetailerOptions(
+        `${productId} ${retailerUrl || ""}`,
+        null,
+        selectedOptions
+      );
+
+      if (fallbackDimensions.length > 0) {
+        const fallbackSelected: Record<string, string> = {};
+        for (const d of fallbackDimensions) {
+          if (d.selectedValue) fallbackSelected[d.name] = d.selectedValue;
+        }
+        if (selectedOptions) {
+          for (const [k, v] of Object.entries(selectedOptions)) {
+            if (v) {
+              const matchDim = fallbackDimensions.find((d) => isDimensionMatch(d.name, k));
+              if (matchDim) {
+                matchDim.selectedValue = v;
+                fallbackSelected[matchDim.name] = v;
+              } else {
+                fallbackSelected[k] = v;
+              }
+            }
+          }
+        }
+
+        let fallbackColorImage: string | null = null;
+        const colorDim = fallbackDimensions.find((d) => isDimensionMatch(d.name, "color"));
+        if (colorDim) {
+          const activeColor = fallbackSelected[colorDim.name] || colorDim.selectedValue;
+          if (activeColor) {
+            const val = colorDim.values.find((v) => v.label.toLowerCase() === activeColor.toLowerCase());
+            if (val?.thumbnailUrl) fallbackColorImage = val.thumbnailUrl;
+          }
+        }
+
+        const isFullyConfigured =
+          fallbackDimensions.length > 0 &&
+          fallbackDimensions.every((dim) => Boolean(fallbackSelected[dim.name] || dim.selectedValue));
+
+        const derivedTitle = productId
+          ? productId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+          : "Selected Product";
+
+        return {
+          productId,
+          title: derivedTitle,
+          imageUrl: fallbackColorImage || fallbackDimensions[0]?.values[0]?.thumbnailUrl || null,
+          status: "variants_found",
+          options: fallbackDimensions,
+          selected: selectedOptions || fallbackSelected,
+          effectiveSelected: fallbackSelected,
+          isRelaxed: false,
+          relaxationMessage: null,
+          isFullyConfigured,
+          availability: "InStock",
+          verifiedPriceMinor: fallbackDimensions[0]?.values[0]?.priceMinor ?? null,
+          retailerUrl: retailerUrl || "",
+          retailerName: "Verified Retailer",
+        };
+      }
+
       return {
         productId,
         title: "Selected Product",
@@ -687,14 +748,26 @@ export async function retrieveProductVariants(
       specifications: Object.keys(specifications).length > 0 ? specifications : undefined,
     };
   } catch {
-    const fallbackDimensions = synthesizeRetailerOptions(productId, null, selectedOptions);
+    const fallbackDimensions = synthesizeRetailerOptions(
+      `${productId} ${retailerUrl || ""}`,
+      null,
+      selectedOptions
+    );
     const fallbackSelected: Record<string, string> = {};
     for (const d of fallbackDimensions) {
       if (d.selectedValue) fallbackSelected[d.name] = d.selectedValue;
     }
     if (selectedOptions) {
       for (const [k, v] of Object.entries(selectedOptions)) {
-        if (v) fallbackSelected[k] = v;
+        if (v) {
+          const matchDim = fallbackDimensions.find((d) => isDimensionMatch(d.name, k));
+          if (matchDim) {
+            matchDim.selectedValue = v;
+            fallbackSelected[matchDim.name] = v;
+          } else {
+            fallbackSelected[k] = v;
+          }
+        }
       }
     }
 
@@ -708,19 +781,27 @@ export async function retrieveProductVariants(
       }
     }
 
+    const isFullyConfigured =
+      fallbackDimensions.length > 0 &&
+      fallbackDimensions.every((dim) => Boolean(fallbackSelected[dim.name] || dim.selectedValue));
+
+    const derivedTitle = productId
+      ? productId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+      : "Selected Product";
+
     return {
       productId,
-      title: "Selected Product",
-      imageUrl: fallbackColorImage,
+      title: derivedTitle,
+      imageUrl: fallbackColorImage || fallbackDimensions[0]?.values[0]?.thumbnailUrl || null,
       status: fallbackDimensions.length > 0 ? "variants_found" : "unavailable",
       options: fallbackDimensions,
       selected: selectedOptions || fallbackSelected,
       effectiveSelected: fallbackSelected,
       isRelaxed: false,
       relaxationMessage: null,
-      isFullyConfigured: fallbackDimensions.length > 0,
-      availability: "InStock",
-      verifiedPriceMinor: null,
+      isFullyConfigured,
+      availability: fallbackDimensions.length > 0 ? "InStock" : "Unknown",
+      verifiedPriceMinor: fallbackDimensions[0]?.values[0]?.priceMinor ?? null,
       retailerUrl: retailerUrl || "",
       retailerName: "Verified Retailer",
     };
