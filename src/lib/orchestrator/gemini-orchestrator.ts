@@ -157,7 +157,7 @@ Your responsibility is turning natural language user requests into a clean, stru
 
 CRITICAL ARCHITECTURAL RULES:
 1. DECISION LOGIC FOR ACTION:
-   - "ask_question": Choose this whenever essential missing information materially affects product discovery or compatibility (e.g. appliance model number, specific dimensions, skin type for winter skincare, crampon boot binding type, keyboard switch type, etc.).
+   - "ask_question": Choose this whenever essential missing information materially affects product discovery or compatibility (e.g. appliance model number, specific dimensions, skin type for winter skincare, crampon boot binding type, keyboard switch type, etc.). For replacement parts, adapters, or components where model compatibility is required (e.g. washer agitator dogs, replacement filters, lens adapters), always ask for the exact appliance/device model number with options: [].
      * When action="ask_question", "clarification" MUST NOT BE NULL!
      * You MUST populate "clarification" with attributeKey, question, and options.
      * Your "assistantMessage" must state the question naturally.
@@ -1578,10 +1578,12 @@ Detected Intent: "${intent?.type || "unknown"}"`;
       const response = await aiClient.models.generateContent({
         model,
         contents: contentsPayload,
-        config: buildModelGenerationConfig(systemInstruction, {
+        config: buildModelGenerationConfig(model, {
+          systemInstruction,
           responseMimeType: "application/json",
           responseSchema: geminiResponseSchema,
           temperature: 0.1,
+          abortSignal: AbortSignal.timeout(12000),
         }),
       });
 

@@ -61,10 +61,16 @@ export function getPayPalCredentials(): {
   partnerAttributionId?: string;
 } {
   const apiBase = assertSandboxEnvironment();
-  const clientId =
-    process.env.PAYPAL_CLIENT_ID ||
-    process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID ||
-    "";
+  const serverClientId = process.env.PAYPAL_CLIENT_ID?.trim() || "";
+  const publicClientId = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID?.trim() || "";
+
+  if (serverClientId && publicClientId && serverClientId !== publicClientId) {
+    throw new Error(
+      "Configuration Error: PAYPAL_CLIENT_ID and NEXT_PUBLIC_PAYPAL_CLIENT_ID do not match. Keep server and public client IDs consistent."
+    );
+  }
+
+  const clientId = serverClientId || publicClientId;
   const clientSecret = process.env.PAYPAL_CLIENT_SECRET || "";
   const partnerAttributionId = process.env.PAYPAL_PARTNER_ATTRIBUTION_ID;
 

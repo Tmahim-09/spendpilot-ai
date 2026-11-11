@@ -34,7 +34,7 @@ export function getChannel3Client(): Channel3 {
 
   if (!apiKey) {
     throw new Error(
-      "Missing CHANNEL3_API_KEY environment variable. Please set CHANNEL3_API_KEY in .env.local to enable live product searches."
+      "Missing CHANNEL3_API_KEY environment variable. Please configure CHANNEL3_API_KEY in your environment variables to enable live product searches."
     );
   }
 

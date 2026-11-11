@@ -3,7 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 export class MissingGeminiApiKeyError extends Error {
   constructor() {
     super(
-      "GEMINI_API_KEY is not configured on the server. Please add your Gemini API key to .env.local to enable AI shopping intelligence."
+      "GEMINI_API_KEY is not configured on the server. Please configure GEMINI_API_KEY in your environment variables to enable AI shopping intelligence."
     );
     this.name = "MissingGeminiApiKeyError";
   }

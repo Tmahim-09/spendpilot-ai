@@ -11,6 +11,8 @@ import type {
   AiProcessingStatus,
 } from "@/types";
 
+export const maxDuration = 30;
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => null);

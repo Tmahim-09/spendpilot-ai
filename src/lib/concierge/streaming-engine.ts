@@ -268,8 +268,10 @@ export async function* streamConciergeTurn(
               parts: [{ text: promptContext }],
             },
           ],
-          config: buildModelGenerationConfig(CONCIERGE_SYSTEM_INSTRUCTION, {
+          config: buildModelGenerationConfig(model, {
+            systemInstruction: CONCIERGE_SYSTEM_INSTRUCTION,
             temperature: 0.2,
+            abortSignal: AbortSignal.timeout(15000),
           }),
         });
 

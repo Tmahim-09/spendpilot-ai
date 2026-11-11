@@ -123,7 +123,7 @@ For detailed architectural specifications and data flow documentation, see [docs
 
 SpendPilot uses the official `@google/genai` SDK on the server-side with priority routing:
 - **Primary Model**: `gemini-3.1-flash-lite` (low latency, high reasoning fidelity).
-- **Automatic Failover Chain**: Fails over to `gemini-3.5-flash-lite` and `gemini-2.5-flash-lite` on upstream capacity spikes.
+- **Automatic Failover Chain**: Fails over to `gemini-3.5-flash-lite` and `gemini-3.8-flash` on upstream capacity spikes.
 - **Structured Orchestration**: Analyzes user input to construct and update an authoritative `ShoppingBrief` schema containing product category, constraints, and budget limits.
 - **Streaming Concierge**: Uses `generateContentStream` to stream natural assistant dialogue in real time via Server-Sent Events.
 - **Specification Contrast**: Analyzes technical attribute vectors to generate objective trade-off summaries between competing products.
@@ -168,16 +168,16 @@ SpendPilot demonstrates multi-seller e-commerce checkout using the official PayP
 
 ## 12. Prerequisites
 
-- **Node.js**: `v20.x` or `v22.x` (LTS recommended)
+- **Node.js**: `26.x` (`>=26.0.0` required, matching `package.json` engines and GitHub Actions CI)
 - **Package Manager**: `npm` (v10+)
-- **API Keys**:
+- **API Keys & Credentials**:
   - Google Gemini API Key ([Google AI Studio](https://aistudio.google.com/))
   - Channel3 API Key ([Channel3 Portal](https://trychannel3.com/))
   - PayPal Developer Sandbox Account ([PayPal Developer](https://developer.paypal.com/))
 
 ---
 
-## 13. Installation & Setup
+## 13. Installation & Local Setup
 
 1. **Clone the repository**:
    ```bash
@@ -185,39 +185,116 @@ SpendPilot demonstrates multi-seller e-commerce checkout using the official PayP
    cd spendpilot-ai
    ```
 
-2. **Install dependencies**:
+2. **Verify Node.js version**:
+   ```bash
+   node -v  # Must report v26.x
+   ```
+
+3. **Install dependencies**:
    ```bash
    npm ci
    ```
 
-3. **Configure environment variables**:
+4. **Configure environment variables**:
    ```bash
    cp .env.example .env.local
    ```
-   Edit `.env.local` with your credentials (see [Environment Variables](#14-environment-variables)).
+   Edit `.env.local` with your credentials (see [Environment Variables](#14-environment-variables)). Never commit `.env.local` to Git.
 
 ---
 
 ## 14. Environment Variables
 
-| Variable | Description | Required | Scope |
-| :--- | :--- | :--- | :--- |
-| `GEMINI_API_KEY` | Google Gemini API Key | **Yes** | Server-Only |
-| `GEMINI_MODEL` | Primary model (`gemini-3.1-flash-lite`) | Optional | Server-Only |
-| `GEMINI_FALLBACK_MODELS` | Fallback models list | Optional | Server-Only |
-| `CHANNEL3_API_KEY` | Channel3 Product Discovery API key | **Yes** | Server-Only |
-| `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | PayPal Sandbox REST Client ID | **Yes** | Public / Client |
-| `PAYPAL_CLIENT_ID` | PayPal Sandbox REST Client ID | **Yes** | Server-Only |
-| `PAYPAL_CLIENT_SECRET` | PayPal Sandbox REST Client Secret | **Yes** | Server-Only |
-| `PAYPAL_CHECKOUT_SIGNING_SECRET` | Cryptographic secret for signing server-authoritative checkout tokens | **Yes** | Server-Only |
-| `PAYPAL_ENV` | Environment (`sandbox`) | **Yes** | Server-Only |
-| `PAYPAL_API_BASE` | PayPal API endpoint (`https://api-m.sandbox.paypal.com`) | **Yes** | Server-Only |
-| `PAYPAL_DEMO_SELLER_A_MERCHANT_ID` | Demo Seller A Merchant ID | Optional | Server-Only |
-| `PAYPAL_DEMO_SELLER_B_MERCHANT_ID` | Demo Seller B Merchant ID | Optional | Server-Only |
+| Variable | Description | Requirement | Scope | Default / Example |
+| :--- | :--- | :--- | :--- | :--- |
+| `GEMINI_API_KEY` | Google Gemini API Key | **Required for AI** | Server-Only | — |
+| `GEMINI_MODEL` | Primary conversational model | Optional | Server-Only | `gemini-3.1-flash-lite` |
+| `GEMINI_FALLBACK_MODELS` | Fallback model chain for capacity spikes | Optional | Server-Only | `gemini-3.5-flash-lite,gemini-3.8-flash` |
+| `CHANNEL3_API_KEY` | Channel3 Product Discovery API key | **Required for Search** | Server-Only | — |
+| `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | PayPal Sandbox REST Client ID (browser SDK) | **Required for Checkout** | Public / Client | Sandbox Client ID |
+| `PAYPAL_CLIENT_ID` | PayPal Sandbox REST Client ID (server verification) | **Required for Checkout** | Server-Only | Must match `NEXT_PUBLIC_PAYPAL_CLIENT_ID` |
+| `PAYPAL_CLIENT_SECRET` | PayPal Sandbox REST Client Secret | **Required for Checkout** | Server-Only | — |
+| `PAYPAL_CHECKOUT_SIGNING_SECRET` | Cryptographic secret for signing server checkout tokens (min 32 chars) | **Required for Checkout** | Server-Only | Random 32+ hex chars |
+| `PAYPAL_ENV` | Target environment (strictly sandbox-only) | **Required** | Server-Only | `sandbox` |
+| `PAYPAL_API_BASE` | PayPal REST endpoint | **Required** | Server-Only | `https://api-m.sandbox.paypal.com` |
+| `PAYPAL_DEMO_SELLER_A_MERCHANT_ID` | Demo Seller A (SpendPilot Audio Lab) Account ID | **Required for Demo** | Server-Only | Sandbox Merchant Account ID |
+| `PAYPAL_DEMO_SELLER_A_EMAIL` | Demo Seller A Sandbox Account Email | Optional | Server-Only | `seller_a@spendpilot.test` |
+| `PAYPAL_DEMO_SELLER_B_MERCHANT_ID` | Demo Seller B (SpendPilot Workspace Gear) Account ID | **Required for Demo** | Server-Only | Sandbox Merchant Account ID |
+| `PAYPAL_DEMO_SELLER_B_EMAIL` | Demo Seller B Sandbox Account Email | Optional | Server-Only | `seller_b@spendpilot.test` |
+| `PAYPAL_PARTNER_ATTRIBUTION_ID` | PayPal Partner Attribution ID (Build Notation code) | Optional | Server-Only | — |
+
+> [!IMPORTANT]
+> - `NEXT_PUBLIC_PAYPAL_CLIENT_ID` is intentionally public for the PayPal JS SDK and must strictly reference your Sandbox Client ID.
+> - All other variables are **Server-Only** and must never be exposed to the browser or returned in API responses.
+> - `PAYPAL_ENV` and `PAYPAL_API_BASE` strictly reject live production endpoints.
 
 ---
 
-## 15. Local Development Commands
+## 15. Vercel Deployment Guide
+
+SpendPilot AI is configured to run as a serverless Next.js App Router application on Vercel Node.js Functions (`nodejs` runtime).
+
+### A. Deploying a Preview Deployment from `release/hardening`
+
+1. **Connect Repository to Vercel**:
+   - In the [Vercel Dashboard](https://vercel.com/), select **Add New Project** and import `Tmahim-09/spendpilot-ai`.
+   - Ensure the framework preset is detected as **Next.js**.
+
+2. **Configure Node.js Version**:
+   - SpendPilot requires **Node.js 26.x**.
+   - In **Project Settings -> General -> Node.js Version**, select `26.x`.
+
+3. **Configure Environment Variables**:
+   - In **Project Settings -> Environment Variables**, add the required variables listed in the [Environment Variables](#14-environment-variables) table.
+   - For a Preview Deployment, ensure you enable the **Preview** environment checkbox for each variable.
+   - For `NEXT_PUBLIC_PAYPAL_CLIENT_ID`, add the public Sandbox Client ID.
+
+4. **Trigger Preview Build**:
+   - Push commits to `release/hardening` (or create a pull request into `main`).
+   - Vercel automatically creates an isolated Preview Deployment with a unique URL (`https://spendpilot-ai-git-release-hardening-...vercel.app`).
+   - **Do not publish or promote this deployment to Production.**
+
+### B. Configuring the PayPal Sandbox Demonstration
+
+1. In the [PayPal Developer Dashboard](https://developer.paypal.com/), navigate to **Testing Tools -> Sandbox Accounts**.
+2. Note your primary Sandbox REST App Client ID and Secret (`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`).
+3. Create or select two Sandbox Business accounts for the demonstration:
+   - Copy Account ID for Seller A -> set `PAYPAL_DEMO_SELLER_A_MERCHANT_ID`.
+   - Copy Account ID for Seller B -> set `PAYPAL_DEMO_SELLER_B_MERCHANT_ID`.
+4. Generate a random 32-character secret for `PAYPAL_CHECKOUT_SIGNING_SECRET`:
+   ```bash
+   openssl rand -hex 32
+   ```
+5. Add these variables to your Vercel Project Settings under the **Preview** scope.
+
+### C. Redeploying After Updating Environment Variables
+
+Vercel environment variables are injected at deployment time. If you update or add environment variables:
+1. Navigate to **Deployments** in your Vercel Dashboard.
+2. Select your latest Preview deployment.
+3. Click the three dots (`...`) and select **Redeploy**.
+4. Leave *Use existing Build Cache* unchecked if you updated public (`NEXT_PUBLIC_`) variables.
+
+### D. Deployment Health Check Endpoint
+
+SpendPilot provides a lightweight, non-leaking diagnostic health endpoint at `GET /api/health`.
+
+Example response:
+```json
+{
+  "status": "ok",
+  "application": "SpendPilot AI",
+  "runtime": "v26.4.0",
+  "environment": "preview",
+  "commit": "e125551",
+  "timestamp": "2026-11-11T20:00:00.000Z"
+}
+```
+*Note: This endpoint strictly returns safe diagnostic metadata and never exposes credentials, keys, or seller information.*
+
+---
+
+## 16. Local Development Commands
 
 - **Start dev server**:
   ```bash
@@ -227,7 +304,7 @@ SpendPilot demonstrates multi-seller e-commerce checkout using the official PayP
 
 ---
 
-## 16. Testing and Verification Commands
+## 17. Testing and Verification Commands
 
 - **Typecheck**:
   ```bash
@@ -248,7 +325,7 @@ SpendPilot demonstrates multi-seller e-commerce checkout using the official PayP
 
 ---
 
-## 17. Security & Sandbox Safety
+## 18. Security & Sandbox Safety
 
 - **No Secrets in Browser Bundles**: All Gemini, Channel3, and PayPal Client Secrets are restricted strictly to server-side Node.js routes.
 - **Authoritative Server Pricing**: The client never passes order prices to the server. Pricing is validated and calculated on the server before dispatching to PayPal.
@@ -258,14 +335,14 @@ SpendPilot demonstrates multi-seller e-commerce checkout using the official PayP
 
 ---
 
-## 18. Current Limitations
+## 19. Current Limitations
 
 - **Channel3 Retailer Purchases**: External retailer cards link directly to merchant sites; SpendPilot does not process credit cards for external retailers.
 - **Sandbox Demo Merchants**: The PayPal multi-seller checkout demonstration executes across mock demo merchants (`SpendPilot Audio Lab`, `SpendPilot Workspace Gear`).
 
 ---
 
-## 19. Hackathon Documentation Links
+## 20. Hackathon Documentation Links
 
 - **[Judge Evaluation Guide (5-Minute Walkthrough)](docs/JUDGE_GUIDE.md)**
 - **[System Architecture & Data Flows](docs/ARCHITECTURE.md)**
@@ -275,13 +352,13 @@ SpendPilot demonstrates multi-seller e-commerce checkout using the official PayP
 
 ---
 
-## 20. Team & Acknowledgements
+## 21. Team & Acknowledgements
 
 Created for the **PayPal AI Hackathon 2026**. Special thanks to Google Cloud & Gemini for conversational AI models, Channel3 for real-time commerce data indexing, and PayPal for Orders v2 multi-seller developer APIs.
 
 ---
 
-## 21. License
+## 22. License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 

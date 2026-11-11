@@ -88,6 +88,11 @@ export async function POST(req: NextRequest) {
           controller.close();
         }
       },
+      async cancel() {
+        if (typeof generator.return === "function") {
+          await generator.return();
+        }
+      },
     });
 
     return new Response(stream, {

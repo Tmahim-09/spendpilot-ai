@@ -6,6 +6,8 @@ import type {
   SetupRequirementItem,
 } from "@/types";
 
+export const maxDuration = 30;
+
 export async function POST(request: NextRequest) {
   const t0 = performance.now();
   const requestId = `setupsrch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -42,7 +44,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: "CHANNEL3_API_KEY is not configured on the server.",
+          error: "CHANNEL3_API_KEY is not configured on the server. Please configure CHANNEL3_API_KEY in your environment variables to enable setup searches.",
         },
         { status: 503 }
       );
