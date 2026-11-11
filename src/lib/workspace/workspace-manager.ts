@@ -14,6 +14,7 @@ import type {
   AiComparisonResult,
   EvidenceFact,
   ProductVariantSelection,
+  CanonicalShoppingAttribute,
 } from "../../types/index.ts";
 import { revalidateGroupCompatibility } from "./compatibility-engine.ts";
 
@@ -465,8 +466,127 @@ export function getNextUnresolvedItem(
 }
 
 /**
+ * Canonical serializer for dictionary attributes to ensure stable key ordering.
+ */
+function stableSerializeDictionary(obj: Record<string, unknown> | undefined | null): string {
+  if (!obj || typeof obj !== "object") return "";
+  const sortedKeys = Object.keys(obj).sort();
+  const entries: string[] = [];
+  for (const k of sortedKeys) {
+    const val = obj[k];
+    if (val !== undefined && val !== null && val !== "") {
+      entries.push(`${k}:${typeof val === "object" ? JSON.stringify(val) : String(val)}`);
+    }
+  }
+  return entries.join(";");
+}
+
+/**
+ * Builds a deterministic, requirements-sensitive search fingerprint for an item.
+ * Includes product identity, query, budget, currency, hard constraints, preferences,
+ * and coordinated setup group shared requirements.
+ */
+export function buildItemSearchFingerprint(params: {
+  itemId: string;
+  searchQuery: string;
+  budgetMinor?: number | null;
+  currency?: CurrencyCode;
+  hardConstraints?: Record<string, unknown>;
+  preferences?: Record<string, unknown>;
+  groupRequirements?: Record<string, unknown>;
+}): string {
+  const normQuery = (params.searchQuery || "").trim().toLowerCase();
+  const budget = params.budgetMinor ?? 0;
+  const curr = params.currency || "USD";
+  const hcStr = stableSerializeDictionary(params.hardConstraints);
+  const prefStr = stableSerializeDictionary(params.preferences);
+  const grpStr = stableSerializeDictionary(params.groupRequirements);
+
+  return `fp_${params.itemId}_q=${normQuery}_b=${budget}_c=${curr}_hc=[${hcStr}]_pref=[${prefStr}]_grp=[${grpStr}]`;
+}
+
+/**
+ * Derives item-specific canonical shopping attributes strictly from that item's
+ * own hard constraints, preferences, and parent group shared requirements (if coordinated setup).
+ * Never leaks attributes from other independent items or global session attributes.
+ */
+export function deriveItemCanonicalAttributes(
+  item: ShoppingItem,
+  group?: ShoppingGroup | null,
+  explicitOverrides?: Record<string, CanonicalShoppingAttribute>
+): Record<string, CanonicalShoppingAttribute> {
+  const result: Record<string, CanonicalShoppingAttribute> = {};
+  const now = Date.now();
+
+  // 1. If in a coordinated setup, inherit group-level shared requirements
+  if (group && group.type === "coordinated_setup" && group.sharedRequirements) {
+    for (const [key, val] of Object.entries(group.sharedRequirements)) {
+      if (val !== undefined && val !== null && val !== "") {
+        result[key] = {
+          key,
+          label: key,
+          value: Array.isArray(val) ? val.map(String) : String(val),
+          displayValue: Array.isArray(val) ? val.join(", ") : String(val),
+          source: "ai_suggested",
+          status: "confirmed",
+          updatedAt: now,
+        };
+      }
+    }
+  }
+
+  // 2. Add item preferences (soft constraints)
+  if (item.preferences) {
+    for (const [key, val] of Object.entries(item.preferences)) {
+      if (val !== undefined && val !== null && val !== "") {
+        result[key] = {
+          key,
+          label: key,
+          value: Array.isArray(val) ? val.map(String) : String(val),
+          displayValue: Array.isArray(val) ? val.join(", ") : String(val),
+          source: "user_explicit",
+          constraint: "soft_preference",
+          status: "confirmed",
+          updatedAt: now,
+        };
+      }
+    }
+  }
+
+  // 3. Add item hard constraints (hard requirements take precedence)
+  if (item.hardConstraints) {
+    for (const [key, val] of Object.entries(item.hardConstraints)) {
+      if (val !== undefined && val !== null && val !== "") {
+        result[key] = {
+          key,
+          label: key,
+          value: Array.isArray(val) ? val.map(String) : String(val),
+          displayValue: Array.isArray(val) ? val.join(", ") : String(val),
+          source: "user_explicit",
+          constraint: "hard_requirement",
+          status: "confirmed",
+          updatedAt: now,
+        };
+      }
+    }
+  }
+
+  // 4. Apply any explicit overrides strictly provided for this item
+  if (explicitOverrides) {
+    for (const [key, attr] of Object.entries(explicitOverrides)) {
+      if (attr) {
+        result[key] = attr;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
  * Updates search results, candidates, comparison, and evidence facts on a specific item.
  * Preserves activeItemId and does not mutate other items.
+ * Enforces search ID matching: rejects stale updates if updates.searchId doesn't match item.searchId.
  */
 export function updateItemSearchResults(
   workspace: ShoppingWorkspace,
@@ -482,6 +602,9 @@ export function updateItemSearchResults(
   }
 ): ShoppingWorkspace {
   const now = Date.now();
+  let wasRejected = false;
+  let didUpdate = false;
+
   const updatedGroups = workspace.groups.map((group) => {
     const hasItem = group.items.some((i) => i.id === itemId);
     if (!hasItem) return group;
@@ -489,9 +612,26 @@ export function updateItemSearchResults(
     const updatedItems = group.items.map((item) => {
       if (item.id !== itemId) return item;
 
+      const isStartingNewSearch = updates.searchStatus === "searching";
+
+      // If item already has a registered searchId and this is not a new search start,
+      // require updates.searchId to match item.searchId.
+      if (!isStartingNewSearch && item.searchId) {
+        if (!updates.searchId || updates.searchId !== item.searchId) {
+          // Stale update or mismatched search ID -> REJECT!
+          wasRejected = true;
+          return item;
+        }
+      }
+
+      didUpdate = true;
+      const nextSearchId = isStartingNewSearch
+        ? (updates.searchId ?? item.searchId)
+        : (updates.searchId ?? item.searchId);
+
       return {
         ...item,
-        searchId: updates.searchId !== undefined ? updates.searchId : item.searchId,
+        searchId: nextSearchId,
         searchFingerprint: updates.searchFingerprint ?? item.searchFingerprint,
         searchStatus: updates.searchStatus !== undefined ? updates.searchStatus : item.searchStatus,
         candidates: updates.candidates !== undefined ? updates.candidates : item.candidates,
@@ -510,9 +650,13 @@ export function updateItemSearchResults(
     return {
       ...group,
       items: updatedItems,
-      updatedAt: now,
+      updatedAt: didUpdate ? now : group.updatedAt,
     };
   });
+
+  if (wasRejected || !didUpdate) {
+    return workspace;
+  }
 
   return {
     ...workspace,
@@ -524,15 +668,20 @@ export function updateItemSearchResults(
 
 /**
  * Updates AI comparison and evidence facts on a specific item.
+ * Rejects stale updates if searchId is provided and does not match item.searchId.
  */
 export function updateItemComparison(
   workspace: ShoppingWorkspace,
   itemId: string,
   comparison: AiComparisonResult | null,
   evidenceFacts?: Record<string, EvidenceFact>,
-  candidates?: NormalizedProduct[]
+  candidates?: NormalizedProduct[],
+  searchId?: string
 ): ShoppingWorkspace {
   const now = Date.now();
+  let wasRejected = false;
+  let didUpdate = false;
+
   const updatedGroups = workspace.groups.map((group) => {
     const hasItem = group.items.some((i) => i.id === itemId);
     if (!hasItem) return group;
@@ -540,6 +689,13 @@ export function updateItemComparison(
     const updatedItems = group.items.map((item) => {
       if (item.id !== itemId) return item;
 
+      // Guard against stale comparison results if searchId is passed
+      if (item.searchId && searchId && searchId !== item.searchId) {
+        wasRejected = true;
+        return item;
+      }
+
+      didUpdate = true;
       return {
         ...item,
         comparison,
@@ -551,9 +707,13 @@ export function updateItemComparison(
     return {
       ...group,
       items: updatedItems,
-      updatedAt: now,
+      updatedAt: didUpdate ? now : group.updatedAt,
     };
   });
+
+  if (wasRejected || !didUpdate) {
+    return workspace;
+  }
 
   return {
     ...workspace,

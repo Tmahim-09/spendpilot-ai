@@ -26,6 +26,8 @@ import {
   updateItemComparison,
   selectOfferForItem,
   updateVariantForItem,
+  buildItemSearchFingerprint,
+  deriveItemCanonicalAttributes,
 } from "@/lib/workspace/workspace-manager";
 import { resolveRequirementForItem } from "@/lib/workspace/sync-engine";
 import { saveWorkspaceToStorage } from "@/lib/workspace/workspace-storage";
@@ -107,6 +109,12 @@ export default function Home() {
   const [isSearchingProducts, setIsSearchingProducts] = useState(false);
   const [isRankingAi, setIsRankingAi] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
+
+  // Item-scoped search and progress tracking (prevents one item from clearing another's progress)
+  const [searchingItemIds, setSearchingItemIds] = useState<Set<string>>(new Set());
+  const [rankingItemIds, setRankingItemIds] = useState<Set<string>>(new Set());
+  const [itemProgressMap, setItemProgressMap] = useState<Map<string, SearchProgressState>>(new Map());
+  const [itemStatusTextMap, setItemStatusTextMap] = useState<Map<string, string>>(new Map());
 
   // Per-item monotonic search counter to prevent race conditions across items and late responses
   const activeItemSearches = useRef<Map<string, number>>(new Map());
@@ -232,6 +240,10 @@ export default function Home() {
       workspace: freshWorkspace,
     });
     activeItemSearches.current.clear();
+    setSearchingItemIds(new Set());
+    setRankingItemIds(new Set());
+    setItemProgressMap(new Map());
+    setItemStatusTextMap(new Map());
     setConfiguringProductInfo(null);
     setConfiguredProductIds(new Set());
     setConfiguredVariants({});
@@ -259,13 +271,19 @@ export default function Home() {
       );
       const toCompare = candidateProducts.length >= 2 ? candidateProducts : item.candidates.slice(0, 4);
       const majorBudget = minorToMajorUnits(
-        item.individualBudget?.amountMinor ?? itemRecord.group.budget?.amountMinor ?? chatSession.budget
+        item.individualBudget?.amountMinor ??
+        (itemRecord.group.type === "coordinated_setup" ? itemRecord.group.budget?.amountMinor : null) ??
+        null
       );
       const searchCurrency =
-        item.individualBudget?.currency ?? itemRecord.group.budget?.currency ?? chatSession.currency ?? currency;
+        item.individualBudget?.currency ??
+        (itemRecord.group.type === "coordinated_setup" ? itemRecord.group.budget?.currency : null) ??
+        currency;
 
+      setRankingItemIds((prev) => new Set([...prev, itemId]));
       setIsRankingAi(true);
       try {
+        const itemCanonicalAttrs = deriveItemCanonicalAttributes(item, itemRecord.group);
         const compRes = await fetch("/api/shopping/recommend", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -274,7 +292,7 @@ export default function Home() {
             budget: majorBudget,
             currency: searchCurrency,
             products: toCompare,
-            canonicalAttributes: item.hardConstraints || chatSession.canonicalAttributes,
+            canonicalAttributes: itemCanonicalAttrs,
           }),
         });
 
@@ -287,7 +305,8 @@ export default function Home() {
               itemId,
               compData.comparison ?? null,
               compData.evidenceFacts || {},
-              compData.allProducts && compData.allProducts.length > 0 ? compData.allProducts : undefined
+              compData.allProducts && compData.allProducts.length > 0 ? compData.allProducts : undefined,
+              item.searchId
             );
             saveWorkspaceToStorage(nextWs);
             return { ...prev, workspace: nextWs };
@@ -296,98 +315,119 @@ export default function Home() {
       } catch {
         // Keep existing comparison
       } finally {
+        setRankingItemIds((prev) => {
+          const next = new Set(prev);
+          next.delete(itemId);
+          return next;
+        });
         setIsRankingAi(false);
       }
     },
-    [chatSession.workspace, chatSession.budget, chatSession.originalRequest, chatSession.currency, chatSession.canonicalAttributes, currency]
+    [chatSession.workspace, chatSession.originalRequest, currency]
   );
 
   /**
    * Executes verified Channel3 product discovery and background AI comparison
-   * strictly scoped to originating item identity.
+   * strictly scoped to originating item identity. Requires validated explicit itemId.
    */
   const executeDirectSearch = useCallback(
-    async (
-      optionsOrQuery:
-        | {
-            itemId?: string;
-            searchQuery: string;
-            budgetMinor?: number | null;
-            currency?: CurrencyCode;
-            canonicalAttributes?: Record<string, CanonicalShoppingAttribute>;
-            workspaceRevision?: number;
-          }
-        | string,
-      legacyBudget?: number | null,
-      legacyCurrency: CurrencyCode = "USD",
-      legacyCanonicalAttrs?: Record<string, CanonicalShoppingAttribute>
-    ) => {
-      const isObjectParam = typeof optionsOrQuery === "object" && optionsOrQuery !== null;
-      const searchQuery = isObjectParam ? optionsOrQuery.searchQuery : optionsOrQuery;
-      const initialItemId = isObjectParam ? optionsOrQuery.itemId : undefined;
-      const initialBudget = isObjectParam ? optionsOrQuery.budgetMinor : legacyBudget;
-      const initialCurrency = isObjectParam ? optionsOrQuery.currency || "USD" : legacyCurrency;
-      const searchCanonicalAttrs = isObjectParam ? optionsOrQuery.canonicalAttributes : legacyCanonicalAttrs;
-
-      let ws = chatSession.workspace || createInitialWorkspace({ currency });
-      let targetItemId = initialItemId || ws.activeItemId;
-
-      // 1. Resolve exact originating item. If workspace is empty or item doesn't exist, create it
-      let itemRecord = targetItemId ? findItemInWorkspace(ws, targetItemId) : null;
-      if (!itemRecord) {
-        ws = addIndependentItem(ws, {
-          productRequest: searchQuery,
-          category: "general",
-          displayName: searchQuery,
-        });
-        targetItemId = ws.activeItemId!;
-        itemRecord = findItemInWorkspace(ws, targetItemId);
+    async (options: {
+      itemId: string;
+      searchQuery: string;
+      budgetMinor?: number | null;
+      currency?: CurrencyCode;
+      canonicalAttributes?: Record<string, CanonicalShoppingAttribute>;
+      workspaceRevision?: number;
+    }) => {
+      if (!options || typeof options !== "object" || !options.itemId) {
+        console.error("[SpendPilot] executeDirectSearch rejected: explicit itemId is required");
+        return;
       }
-      if (!targetItemId || !itemRecord) return;
 
-      const originatingItemId = targetItemId;
+      const originatingItemId = options.itemId;
+      const searchQuery = (options.searchQuery || "").trim();
+      if (!searchQuery) {
+        console.error("[SpendPilot] executeDirectSearch rejected: searchQuery is required");
+        return;
+      }
 
-      // 2. Generate unique per-item search sequence and searchId
+      const curWs = chatSession.workspace;
+      if (!curWs) {
+        console.error("[SpendPilot] executeDirectSearch rejected: no active workspace");
+        return;
+      }
+
+      const itemRecord = findItemInWorkspace(curWs, originatingItemId);
+      if (!itemRecord) {
+        console.error(`[SpendPilot] executeDirectSearch rejected: item ${originatingItemId} not found in workspace`);
+        return;
+      }
+
+      // Generate unique per-item search sequence and searchId
       const searchSeq = (activeItemSearches.current.get(originatingItemId) || 0) + 1;
       activeItemSearches.current.set(originatingItemId, searchSeq);
       const searchId = `search_${originatingItemId}_${searchSeq}_${Date.now()}`;
 
-      // 3. Resolve item-specific budget and currency (never mix with other items)
+      // Resolve item-specific budget and currency (strictly item-scoped or coordinated group budget)
       const effectiveBudgetMinor =
         itemRecord.item.individualBudget?.amountMinor ??
-        itemRecord.group.budget?.amountMinor ??
-        initialBudget ??
-        chatSession.budget ??
+        (itemRecord.group.type === "coordinated_setup" ? itemRecord.group.budget?.amountMinor : null) ??
+        options.budgetMinor ??
         null;
+
       const searchCurrency =
         itemRecord.item.individualBudget?.currency ??
-        itemRecord.group.budget?.currency ??
-        initialCurrency ??
-        chatSession.currency ??
+        (itemRecord.group.type === "coordinated_setup" ? itemRecord.group.budget?.currency : null) ??
+        options.currency ??
         currency;
+
       const majorBudget = minorToMajorUnits(effectiveBudgetMinor);
-      const searchFingerprint = `${searchQuery}_${majorBudget || 0}_${searchCurrency}`;
 
-      setIsSearchingProducts(true);
+      // Derive item canonical attributes strictly from item's own constraints/preferences or coordinated group requirements
+      const itemCanonicalAttrs = deriveItemCanonicalAttributes(
+        itemRecord.item,
+        itemRecord.group,
+        options.canonicalAttributes
+      );
 
-      const reqCategory = itemRecord.item.category || chatSession.shoppingBrief?.productRequirements?.[0]?.category || "";
+      // Build requirement-sensitive search fingerprint
+      const searchFingerprint = buildItemSearchFingerprint({
+        itemId: originatingItemId,
+        searchQuery,
+        budgetMinor: effectiveBudgetMinor,
+        currency: searchCurrency,
+        hardConstraints: itemRecord.item.hardConstraints,
+        preferences: itemRecord.item.preferences,
+        groupRequirements:
+          itemRecord.group.type === "coordinated_setup" ? itemRecord.group.sharedRequirements : undefined,
+      });
+
+      const activeReq = resolveRequirementForItem(chatSession.shoppingBrief, itemRecord.item);
+      const reqCategory = itemRecord.item.category || activeReq?.category || "";
       const isWinter =
         searchQuery.toLowerCase().includes("winter") ||
         (chatSession.shoppingBrief?.userGoal?.toLowerCase().includes("winter") ?? false);
 
-      // Stage B: Searching
+      // Set item-specific searching progress
       const searchingMsg = getProgressMessage("searching", searchQuery, reqCategory, { isWinter });
-      setSearchProgress({
-        stage: "searching",
-        message: searchingMsg,
+      setSearchingItemIds((prev) => new Set([...prev, originatingItemId]));
+      setItemProgressMap((prev) => {
+        const next = new Map(prev);
+        next.set(originatingItemId, { stage: "searching", message: searchingMsg });
+        return next;
       });
-      setChatStatusText(searchingMsg);
-      setIsRankingAi(false);
+      setItemStatusTextMap((prev) => {
+        const next = new Map(prev);
+        next.set(originatingItemId, searchingMsg);
+        return next;
+      });
+      setIsSearchingProducts(true);
 
-      // Mark only originating item as searching in workspace
+      // Mark only originating item as searching in workspace (registers searchId)
       setChatSession((prev) => {
-        const curWs = prev.workspace || ws;
-        const nextWs = updateItemSearchResults(curWs, originatingItemId, {
+        const currentWs = prev.workspace;
+        if (!currentWs) return prev;
+        const nextWs = updateItemSearchResults(currentWs, originatingItemId, {
           searchId,
           searchFingerprint,
           searchStatus: "searching",
@@ -408,7 +448,7 @@ export default function Home() {
             mode: "single",
             pricePreference: "near_budget",
             expandRange: false,
-            canonicalAttributes: searchCanonicalAttrs ?? chatSession.canonicalAttributes,
+            canonicalAttributes: itemCanonicalAttrs,
           }),
         });
 
@@ -418,8 +458,23 @@ export default function Home() {
         if (activeItemSearches.current.get(originatingItemId) !== searchSeq) return;
 
         if (!searchRes.ok || !searchData.success) {
+          setSearchingItemIds((prev) => {
+            const next = new Set(prev);
+            next.delete(originatingItemId);
+            return next;
+          });
+          setItemProgressMap((prev) => {
+            const next = new Map(prev);
+            next.delete(originatingItemId);
+            return next;
+          });
+          setItemStatusTextMap((prev) => {
+            const next = new Map(prev);
+            next.delete(originatingItemId);
+            return next;
+          });
           setIsSearchingProducts(false);
-          setSearchProgress(null);
+
           setChatSession((prev) => {
             if (!prev.workspace) return prev;
             const nextWs = updateItemSearchResults(prev.workspace, originatingItemId, {
@@ -446,10 +501,25 @@ export default function Home() {
         }
 
         const retrievedProducts = searchData.products || [];
-        setIsSearchingProducts(false);
+        setSearchingItemIds((prev) => {
+          const next = new Set(prev);
+          next.delete(originatingItemId);
+          return next;
+        });
 
         if (retrievedProducts.length === 0) {
-          setSearchProgress(null);
+          setItemProgressMap((prev) => {
+            const next = new Map(prev);
+            next.delete(originatingItemId);
+            return next;
+          });
+          setItemStatusTextMap((prev) => {
+            const next = new Map(prev);
+            next.delete(originatingItemId);
+            return next;
+          });
+          setIsSearchingProducts(false);
+
           setChatSession((prev) => {
             if (!prev.workspace) return prev;
             const nextWs = updateItemSearchResults(prev.workspace, originatingItemId, {
@@ -477,20 +547,20 @@ export default function Home() {
           return;
         }
 
-        // Stage C: Search completed
-        const searchCompletedMsg = getProgressMessage("search_completed", searchQuery, reqCategory, { isWinter });
-        setSearchProgress({
-          stage: "search_completed",
-          message: searchCompletedMsg,
-        });
-
-        // Stage D: Comparing
+        // Stage C: Search completed -> transition to comparing
         const comparingMsg = getProgressMessage("comparing", searchQuery, reqCategory, { isWinter });
-        setSearchProgress({
-          stage: "comparing",
-          message: comparingMsg,
+        setRankingItemIds((prev) => new Set([...prev, originatingItemId]));
+        setItemProgressMap((prev) => {
+          const next = new Map(prev);
+          next.set(originatingItemId, { stage: "comparing", message: comparingMsg });
+          return next;
         });
-        setChatStatusText(comparingMsg);
+        setItemStatusTextMap((prev) => {
+          const next = new Map(prev);
+          next.set(originatingItemId, comparingMsg);
+          return next;
+        });
+        setIsSearchingProducts(false);
         setIsRankingAi(true);
 
         // Mark item as comparing in workspace
@@ -517,7 +587,7 @@ export default function Home() {
               products: retrievedProducts,
               budget: majorBudget,
               currency: searchCurrency,
-              canonicalAttributes: searchCanonicalAttrs ?? chatSession.canonicalAttributes,
+              canonicalAttributes: itemCanonicalAttrs,
             }),
           });
 
@@ -535,13 +605,27 @@ export default function Home() {
           // AI comparison failure: product catalog remains visible without pretending comparison succeeded
           finalRecComparison = null;
         } finally {
+          setRankingItemIds((prev) => {
+            const next = new Set(prev);
+            next.delete(originatingItemId);
+            return next;
+          });
           if (activeItemSearches.current.get(originatingItemId) === searchSeq) {
             setIsRankingAi(false);
           }
         }
 
-        // Stage E: Completed -> Clear transient progress and append exactly ONE final message
-        setSearchProgress(null);
+        // Stage E: Completed -> Clear transient progress and append final message
+        setItemProgressMap((prev) => {
+          const next = new Map(prev);
+          next.delete(originatingItemId);
+          return next;
+        });
+        setItemStatusTextMap((prev) => {
+          const next = new Map(prev);
+          next.delete(originatingItemId);
+          return next;
+        });
         const finalMsg = getProgressMessage("completed", searchQuery, reqCategory, { isWinter });
 
         setChatSession((prev) => {
@@ -591,9 +675,29 @@ export default function Home() {
         });
       } catch {
         if (activeItemSearches.current.get(originatingItemId) !== searchSeq) return;
+        setSearchingItemIds((prev) => {
+          const next = new Set(prev);
+          next.delete(originatingItemId);
+          return next;
+        });
+        setRankingItemIds((prev) => {
+          const next = new Set(prev);
+          next.delete(originatingItemId);
+          return next;
+        });
+        setItemProgressMap((prev) => {
+          const next = new Map(prev);
+          next.delete(originatingItemId);
+          return next;
+        });
+        setItemStatusTextMap((prev) => {
+          const next = new Map(prev);
+          next.delete(originatingItemId);
+          return next;
+        });
         setIsSearchingProducts(false);
         setIsRankingAi(false);
-        setSearchProgress(null);
+
         setChatSession((prev) => {
           if (!prev.workspace) return prev;
           const nextWs = updateItemSearchResults(prev.workspace, originatingItemId, {
@@ -606,7 +710,7 @@ export default function Home() {
         });
       }
     },
-    [chatSession.workspace, chatSession.budget, chatSession.currency, chatSession.canonicalAttributes, chatSession.shoppingBrief, currency]
+    [chatSession.workspace, chatSession.shoppingBrief, currency]
   );
 
   const handleSendChatMessage = useCallback(
@@ -906,24 +1010,43 @@ export default function Home() {
 
           if (finalSession && shouldSearchAfterStream && !hasPendingClarification) {
             const ws = finalSession.workspace;
-            const activeItem = getActiveWorkspaceItem(ws);
-            const activeReq = resolveRequirementForItem(finalSession.shoppingBrief, activeItem);
-            const queryTerm =
-              activeReq?.searchQuery ||
-              activeReq?.displayName ||
-              activeItem?.productRequest ||
-              finalSession.originalRequest ||
-              messageText;
-            const itemBudget = activeItem?.individualBudget?.amountMinor ?? finalSession.budget;
-            const itemCurrency = activeItem?.individualBudget?.currency ?? finalSession.currency ?? currency;
+            let activeItem = getActiveWorkspaceItem(ws);
+            if (!activeItem && ws && ws.groups.length > 0) {
+              const next = getNextUnresolvedItem(ws);
+              if (next) activeItem = next.item;
+            }
+            if (!activeItem) {
+              const queryTerm = finalSession.originalRequest || messageText;
+              const newWs = addIndependentItem(ws || createInitialWorkspace({ currency }), {
+                productRequest: queryTerm,
+                category: "general",
+                displayName: queryTerm,
+              });
+              activeItem = getActiveWorkspaceItem(newWs);
+              if (activeItem) {
+                saveWorkspaceToStorage(newWs);
+                setChatSession((prev) => ({ ...prev, workspace: newWs }));
+              }
+            }
 
-            await executeDirectSearch({
-              itemId: activeItem?.id,
-              searchQuery: queryTerm,
-              budgetMinor: itemBudget,
-              currency: itemCurrency,
-              canonicalAttributes: finalSession.canonicalAttributes,
-            });
+            if (activeItem) {
+              const activeReq = resolveRequirementForItem(finalSession.shoppingBrief, activeItem);
+              const queryTerm =
+                activeReq?.searchQuery ||
+                activeReq?.displayName ||
+                activeItem.productRequest ||
+                finalSession.originalRequest ||
+                messageText;
+              const itemBudget = activeItem.individualBudget?.amountMinor ?? null;
+              const itemCurrency = activeItem.individualBudget?.currency ?? currency;
+
+              await executeDirectSearch({
+                itemId: activeItem.id,
+                searchQuery: queryTerm,
+                budgetMinor: itemBudget,
+                currency: itemCurrency,
+              });
+            }
           } else {
             setSearchProgress(null);
           }
@@ -967,24 +1090,43 @@ export default function Home() {
 
         if (data.shouldExecuteSearch && !hasPendingClarification && !textEndsWithQuestion) {
           const ws = data.session?.workspace;
-          const activeItem = getActiveWorkspaceItem(ws);
-          const activeReq = resolveRequirementForItem(data.session?.shoppingBrief, activeItem);
-          const queryTerm =
-            activeReq?.searchQuery ||
-            activeReq?.displayName ||
-            activeItem?.productRequest ||
-            data.session?.originalRequest ||
-            messageText;
-          const itemBudget = activeItem?.individualBudget?.amountMinor ?? data.session?.budget;
-          const itemCurrency = activeItem?.individualBudget?.currency ?? data.session?.currency ?? currency;
+          let activeItem = getActiveWorkspaceItem(ws);
+          if (!activeItem && ws && ws.groups.length > 0) {
+            const next = getNextUnresolvedItem(ws);
+            if (next) activeItem = next.item;
+          }
+          if (!activeItem) {
+            const queryTerm = data.session?.originalRequest || messageText;
+            const newWs = addIndependentItem(ws || createInitialWorkspace({ currency }), {
+              productRequest: queryTerm,
+              category: "general",
+              displayName: queryTerm,
+            });
+            activeItem = getActiveWorkspaceItem(newWs);
+            if (activeItem) {
+              saveWorkspaceToStorage(newWs);
+              setChatSession((prev) => ({ ...prev, workspace: newWs }));
+            }
+          }
 
-          await executeDirectSearch({
-            itemId: activeItem?.id,
-            searchQuery: queryTerm,
-            budgetMinor: itemBudget,
-            currency: itemCurrency,
-            canonicalAttributes: data.session?.canonicalAttributes,
-          });
+          if (activeItem) {
+            const activeReq = resolveRequirementForItem(data.session?.shoppingBrief, activeItem);
+            const queryTerm =
+              activeReq?.searchQuery ||
+              activeReq?.displayName ||
+              activeItem.productRequest ||
+              data.session?.originalRequest ||
+              messageText;
+            const itemBudget = activeItem.individualBudget?.amountMinor ?? null;
+            const itemCurrency = activeItem.individualBudget?.currency ?? currency;
+
+            await executeDirectSearch({
+              itemId: activeItem.id,
+              searchQuery: queryTerm,
+              budgetMinor: itemBudget,
+              currency: itemCurrency,
+            });
+          }
         } else {
           setSearchProgress(null);
           if (data.shouldExecuteComparison && data.comparisonRequestedProductIds?.length) {
@@ -1037,22 +1179,23 @@ export default function Home() {
     }
     const ws = chatSession.workspace;
     const activeItem = getActiveWorkspaceItem(ws);
+    if (!activeItem) return;
+
     const activeReq = resolveRequirementForItem(chatSession.shoppingBrief, activeItem);
     const queryTerm =
       activeReq?.searchQuery ||
       activeReq?.displayName ||
-      activeItem?.productRequest ||
+      activeItem.productRequest ||
       chatSession.originalRequest ||
       "products";
-    const itemBudget = activeItem?.individualBudget?.amountMinor ?? chatSession.budget;
-    const itemCurrency = activeItem?.individualBudget?.currency ?? chatSession.currency ?? currency;
+    const itemBudget = activeItem.individualBudget?.amountMinor ?? null;
+    const itemCurrency = activeItem.individualBudget?.currency ?? currency;
 
     executeDirectSearch({
-      itemId: activeItem?.id,
+      itemId: activeItem.id,
       searchQuery: queryTerm,
       budgetMinor: itemBudget,
       currency: itemCurrency,
-      canonicalAttributes: chatSession.canonicalAttributes,
     });
   };
 
@@ -1123,10 +1266,16 @@ export default function Home() {
     try {
       const item = itemRecord.item;
       const majorBudget = minorToMajorUnits(
-        item.individualBudget?.amountMinor ?? itemRecord.group.budget?.amountMinor ?? chatSession.budget
+        item.individualBudget?.amountMinor ??
+        (itemRecord.group.type === "coordinated_setup" ? itemRecord.group.budget?.amountMinor : null) ??
+        null
       );
       const searchCurrency =
-        item.individualBudget?.currency ?? itemRecord.group.budget?.currency ?? chatSession.currency ?? currency;
+        item.individualBudget?.currency ??
+        (itemRecord.group.type === "coordinated_setup" ? itemRecord.group.budget?.currency : null) ??
+        currency;
+
+      const itemCanonicalAttrs = deriveItemCanonicalAttributes(item, itemRecord.group);
 
       const recRes = await fetch("/api/shopping/recommend", {
         method: "POST",
@@ -1137,6 +1286,7 @@ export default function Home() {
           budget: majorBudget,
           currency: searchCurrency,
           priorityOverride: priorityText,
+          canonicalAttributes: itemCanonicalAttrs,
         }),
       });
 
@@ -1150,7 +1300,8 @@ export default function Home() {
             resolvedItemId,
             recData.comparison ?? null,
             recData.evidenceFacts || {},
-            item.candidates
+            item.candidates,
+            item.searchId
           );
           saveWorkspaceToStorage(nextWs);
           return { ...prev, workspace: nextWs };
@@ -1172,101 +1323,109 @@ export default function Home() {
       const productId = product.sourceProductId || product.title;
       setSelectedProductIds((prev) => new Set([...prev, productId]));
 
-      let ws = chatSession.workspace || createInitialWorkspace({ currency });
+      setChatSession((prev) => {
+        let ws = prev.workspace || createInitialWorkspace({ currency });
 
-      // Determine target item: explicit targetItemId, active item, or unresolved item, or create one
-      let resolvedItemId = targetItemId || ws.activeItemId;
-      if (!resolvedItemId) {
-        const next = getNextUnresolvedItem(ws);
-        if (next) resolvedItemId = next.item.id;
-      }
+        // Determine target item: explicit targetItemId, active item, or unresolved item, or create one
+        let resolvedItemId = targetItemId || ws.activeItemId;
+        if (!resolvedItemId) {
+          const next = getNextUnresolvedItem(ws);
+          if (next) resolvedItemId = next.item.id;
+        }
 
-      // If workspace has no items yet, add independent item
-      if (!resolvedItemId || ws.groups.length === 0) {
-        ws = addIndependentItem(ws, {
-          productRequest: product.title,
-          category: product.source || "general",
-          displayName: product.title,
-        });
-        resolvedItemId = ws.activeItemId;
-      }
-
-      const activeOffer = product.selectedOffer || product.offers?.[0] || null;
-      if (resolvedItemId) {
-        ws = selectProductForItem(ws, resolvedItemId, product, activeOffer);
-        saveWorkspaceToStorage(ws);
-      }
-
-      // Determine parent group type (coordinated setup vs independent)
-      const targetGroup = ws.groups.find((g) => g.items.some((i) => i.id === resolvedItemId));
-      const isSetup = targetGroup?.type === "coordinated_setup";
-
-      if (isSetup && targetGroup) {
-        // Coordinated setup continuation
-        const unresolved = targetGroup.items.find((i) => i.status !== "selected" && i.status !== "skipped");
-        if (unresolved) {
-          const totalItems = targetGroup.items.length;
-          const currentIndex = targetGroup.items.filter((i) => i.status === "selected").length;
-          const progressMsg = `Saved ${product.title} to your setup. Next, finding the ${unresolved.displayName || unresolved.productRequest} (${currentIndex + 1} of ${totalItems}).`;
-
-          const assistantMsg = {
-            id: `msg_a_progress_${Date.now()}`,
-            role: "assistant" as const,
-            content: progressMsg,
-            createdAt: Date.now(),
-          };
-
-          setChatSession((prev) => ({
-            ...prev,
-            workspace: ws,
-            messages: [...prev.messages, assistantMsg],
-          }));
-
-          // Trigger search for the next unresolved component with its exact itemId
-          executeDirectSearch({
-            itemId: unresolved.id,
-            searchQuery: unresolved.searchQuery || unresolved.productRequest,
-            budgetMinor: unresolved.individualBudget?.amountMinor || targetGroup.budget?.amountMinor || null,
-            currency: targetGroup.budget?.currency || currency,
+        // If workspace has no items yet, add independent item
+        if (!resolvedItemId || ws.groups.length === 0) {
+          ws = addIndependentItem(ws, {
+            productRequest: product.title,
+            category: product.source || "general",
+            displayName: product.title,
           });
-        } else {
-          // Completed setup
-          const summary = calculateWorkspaceBudgetSummary(ws, currency);
-          const setupMsg = `All components for your ${targetGroup.title} have been selected! Total: ${formatCurrency(summary.totalSelectedMinor, summary.currency)}. Would you like to add anything else outside this setup?`;
+          resolvedItemId = ws.activeItemId;
+        }
 
+        const activeOffer = product.selectedOffer || product.offers?.[0] || null;
+        if (resolvedItemId) {
+          ws = selectProductForItem(ws, resolvedItemId, product, activeOffer);
+          saveWorkspaceToStorage(ws);
+        }
+
+        // Determine parent group type (coordinated setup vs independent)
+        const targetGroup = ws.groups.find((g) => g.items.some((i) => i.id === resolvedItemId));
+        const isSetup = targetGroup?.type === "coordinated_setup";
+
+        if (isSetup && targetGroup) {
+          // Coordinated setup continuation
+          const unresolved = targetGroup.items.find((i) => i.status !== "selected" && i.status !== "skipped");
+          if (unresolved) {
+            const totalItems = targetGroup.items.length;
+            const currentIndex = targetGroup.items.filter((i) => i.status === "selected").length;
+            const progressMsg = `Saved ${product.title} to your setup. Next, finding the ${unresolved.displayName || unresolved.productRequest} (${currentIndex + 1} of ${totalItems}).`;
+
+            const assistantMsg = {
+              id: `msg_a_progress_${Date.now()}`,
+              role: "assistant" as const,
+              content: progressMsg,
+              createdAt: Date.now(),
+            };
+
+            const nextItemId = unresolved.id;
+            const nextQuery = unresolved.searchQuery || unresolved.productRequest;
+            const nextBudget = unresolved.individualBudget?.amountMinor || targetGroup.budget?.amountMinor || null;
+            const nextCurrency = targetGroup.budget?.currency || currency;
+
+            setTimeout(() => {
+              executeDirectSearch({
+                itemId: nextItemId,
+                searchQuery: nextQuery,
+                budgetMinor: nextBudget,
+                currency: nextCurrency,
+              });
+            }, 0);
+
+            return {
+              ...prev,
+              workspace: ws,
+              messages: [...prev.messages, assistantMsg],
+            };
+          } else {
+            // Completed setup
+            const summary = calculateWorkspaceBudgetSummary(ws, currency);
+            const setupMsg = `All components for your ${targetGroup.title} have been selected! Total: ${formatCurrency(summary.totalSelectedMinor, summary.currency)}. Would you like to add anything else outside this setup?`;
+
+            const assistantMsg = {
+              id: `msg_a_complete_${Date.now()}`,
+              role: "assistant" as const,
+              content: setupMsg,
+              suggestedReplies: ["Add another item", "I'm done for now"],
+              createdAt: Date.now(),
+            };
+
+            return {
+              ...prev,
+              workspace: ws,
+              messages: [...prev.messages, assistantMsg],
+            };
+          }
+        } else {
+          // Independent item selection (Section 4 & Section 15)
+          const naturalFollowUp = `Added ${product.title} to your shopping list. Anything else you'd like to find?`;
           const assistantMsg = {
-            id: `msg_a_complete_${Date.now()}`,
+            id: `msg_a_select_${Date.now()}`,
             role: "assistant" as const,
-            content: setupMsg,
+            content: naturalFollowUp,
             suggestedReplies: ["Add another item", "I'm done for now"],
             createdAt: Date.now(),
           };
 
-          setChatSession((prev) => ({
+          return {
             ...prev,
             workspace: ws,
             messages: [...prev.messages, assistantMsg],
-          }));
+          };
         }
-      } else {
-        // Independent item selection (Section 4 & Section 15)
-        const naturalFollowUp = `Added ${product.title} to your shopping list. Anything else you'd like to find?`;
-        const assistantMsg = {
-          id: `msg_a_select_${Date.now()}`,
-          role: "assistant" as const,
-          content: naturalFollowUp,
-          suggestedReplies: ["Add another item", "I'm done for now"],
-          createdAt: Date.now(),
-        };
-
-        setChatSession((prev) => ({
-          ...prev,
-          workspace: ws,
-          messages: [...prev.messages, assistantMsg],
-        }));
-      }
+      });
     },
-    [chatSession.workspace, currency, executeDirectSearch]
+    [currency, executeDirectSearch]
   );
 
   const currentWorkspace = chatSession.workspace || createInitialWorkspace({ currency });
@@ -1281,8 +1440,20 @@ export default function Home() {
   const displayedComparison = activeWorkspaceItem?.comparison ?? null;
   const displayedEvidenceFacts = activeWorkspaceItem?.evidenceFacts ?? {};
   const displayedSearchError = activeWorkspaceItem?.searchError ?? null;
-  const isItemSearching = isSearchingProducts || activeWorkspaceItem?.searchStatus === "searching";
-  const isItemComparing = isRankingAi || activeWorkspaceItem?.searchStatus === "comparing";
+
+  const isItemSearching = activeWorkspaceItem
+    ? searchingItemIds.has(activeWorkspaceItem.id) || activeWorkspaceItem.searchStatus === "searching" || isSearchingProducts
+    : isSearchingProducts;
+  const isItemComparing = activeWorkspaceItem
+    ? rankingItemIds.has(activeWorkspaceItem.id) || activeWorkspaceItem.searchStatus === "comparing" || isRankingAi
+    : isRankingAi;
+  const activeItemSearchProgress = activeWorkspaceItem
+    ? itemProgressMap.get(activeWorkspaceItem.id) ?? searchProgress
+    : searchProgress;
+  const activeItemChatStatusText = activeWorkspaceItem
+    ? itemStatusTextMap.get(activeWorkspaceItem.id) ?? chatStatusText
+    : chatStatusText;
+
   const displayedHasSearched = Boolean(
     activeWorkspaceItem?.searchFingerprint ||
     activeWorkspaceItem?.candidates?.length ||
@@ -1309,9 +1480,9 @@ export default function Home() {
         <section aria-label="Shopping Chat Workspace">
           <ContinuousChatWorkspace
             session={chatSession}
-            isLoading={isChatLoading || isSearchingProducts}
-            activeStatusText={chatStatusText}
-            searchProgress={searchProgress}
+            isLoading={isChatLoading || isItemSearching}
+            activeStatusText={activeItemChatStatusText}
+            searchProgress={activeItemSearchProgress}
             onSendMessage={handleSendChatMessage}
             onExecuteSearch={handleConfirmAndSearch}
             onResetSession={handleResetSession}
@@ -1333,8 +1504,8 @@ export default function Home() {
         {displayedHasSearched && (displayedProducts.length > 0 || isItemSearching || displayedSearchError) && (
           <LiveProductResults
             query={activeWorkspaceItem?.productRequest || chatSession.originalRequest || "products"}
-            budget={minorToMajorUnits(activeWorkspaceItem?.individualBudget?.amountMinor ?? chatSession.budget)}
-            currency={activeWorkspaceItem?.individualBudget?.currency ?? chatSession.currency ?? currency}
+            budget={minorToMajorUnits(activeWorkspaceItem?.individualBudget?.amountMinor ?? null)}
+            currency={activeWorkspaceItem?.individualBudget?.currency ?? currency}
             products={displayedProducts}
             comparison={displayedComparison}
             evidenceFacts={displayedEvidenceFacts}
