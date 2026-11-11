@@ -1,12 +1,36 @@
 import type { CurrencyCode } from "@/types";
 
 export type SupportedCurrency = "USD" | "EUR" | "GBP";
+export const SUPPORTED_CURRENCIES: readonly SupportedCurrency[] = ["USD", "EUR", "GBP"];
+
+/**
+ * Validates whether a currency string is one of the application's supported currencies.
+ */
+export function isSupportedCurrency(
+  currency: string | null | undefined
+): currency is SupportedCurrency {
+  if (!currency || typeof currency !== "string") return false;
+  const upper = currency.trim().toUpperCase();
+  return upper === "USD" || upper === "EUR" || upper === "GBP";
+}
 
 export const CURRENCY_SYMBOLS: Record<string, string> = {
   USD: "$",
   EUR: "€",
   GBP: "£",
 };
+
+/**
+ * Returns symbol for currency, or code if not standard symbol.
+ * Unsupported currencies (e.g. "JPY", "CAD") are never labeled with USD/EUR/GBP symbols.
+ */
+export function getCurrencySymbol(currency: string = "USD"): string {
+  const code = (currency || "USD").trim().toUpperCase();
+  if (CURRENCY_SYMBOLS[code]) {
+    return CURRENCY_SYMBOLS[code];
+  }
+  return `${code} `;
+}
 
 /**
  * Maximum allowable budget in dollars to prevent overflow / malformed amounts.
@@ -16,7 +40,7 @@ export const MAX_BUDGET_DOLLARS = 1_000_000;
 export const MAX_BUDGET_CENTS = MAX_BUDGET_DOLLARS * 100;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CANONICAL MONEY ADAPTER FUNCTIONS (PART 4)
+// CANONICAL MONEY ADAPTER FUNCTIONS (PART 4 & PHASE 2)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -40,6 +64,77 @@ export function parseMajorToMinor(dollars: number | string | null | undefined): 
 }
 
 /**
+ * Formats a major-unit amount (e.g. 150 -> "$150.00", 15000 -> "$15,000.00").
+ * Preserves correct handling of null, undefined, and zero.
+ */
+export function formatMajorUnits(
+  priceMajor: number | null | undefined,
+  currency: string = "USD",
+  fallbackText: string = "No budget limit"
+): string {
+  if (priceMajor === null || priceMajor === undefined || !Number.isFinite(priceMajor)) {
+    return fallbackText;
+  }
+  const symbol = getCurrencySymbol(currency);
+  return `${symbol}${priceMajor.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/**
+ * Formats internal integer minor units (e.g. 15000 -> "$150.00", 1500000 -> "$15,000.00").
+ * Preserves correct handling of null, undefined, and zero.
+ */
+export function formatMinorUnits(
+  priceMinor: number | null | undefined,
+  currency: string = "USD",
+  fallbackText: string = "No budget limit"
+): string {
+  if (priceMinor === null || priceMinor === undefined || !Number.isFinite(priceMinor)) {
+    return fallbackText;
+  }
+  const symbol = getCurrencySymbol(currency);
+  const major = priceMinor / 100;
+  return `${symbol}${major.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/**
+ * Formats a budget already stored in minor units.
+ * Returns fallbackText (default "No budget limit") if null, undefined, or <= 0.
+ * Example: 15000 cents -> "$150.00"
+ */
+export function formatBudgetMinor(
+  budgetMinor: number | null | undefined,
+  currency: string = "USD",
+  fallbackText: string = "No budget limit"
+): string {
+  if (budgetMinor === null || budgetMinor === undefined || !Number.isFinite(budgetMinor) || budgetMinor <= 0) {
+    return fallbackText;
+  }
+  return formatMinorUnits(budgetMinor, currency);
+}
+
+/**
+ * Formats a budget stored in major units.
+ * Returns fallbackText (default "No budget limit") if null, undefined, or <= 0.
+ * Example: 150 dollars -> "$150.00", 15000 dollars -> "$15,000.00"
+ */
+export function formatBudgetMajor(
+  budgetMajor: number | null | undefined,
+  currency: string = "USD",
+  fallbackText: string = "No budget limit"
+): string {
+  if (budgetMajor === null || budgetMajor === undefined || !Number.isFinite(budgetMajor) || budgetMajor <= 0) {
+    return fallbackText;
+  }
+  return formatMajorUnits(budgetMajor, currency);
+}
+
+/**
  * Formats internal integer minor units (cents) into user-facing currency string.
  * Example: 120000 -> "$1,200.00"
  */
@@ -50,12 +145,46 @@ export function formatMinorMoney(
   if (cents === null || cents === undefined || !Number.isFinite(cents)) {
     return "No budget limit";
   }
-  const symbol = CURRENCY_SYMBOLS[currency] || "$";
-  const major = cents / 100;
-  return `${symbol}${major.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return formatMinorUnits(cents, currency);
+}
+
+/**
+ * Backwards-compatible formatCurrency: takes integer minor units and formats to string.
+ */
+export function formatCurrency(
+  centsOrMinor: number | null | undefined,
+  currency: string = "USD"
+): string {
+  return formatMinorUnits(centsOrMinor, currency);
+}
+
+/**
+ * Formats currency-grouped totals into human-readable representation.
+ * Single currency: "$1,130.00"
+ * Multiple currencies: "USD: $950.00 | EUR: €180.00 | GBP: £75.00"
+ */
+export function formatCurrencyTotals(
+  totalsByCurrency: Partial<Record<CurrencyCode, number>>,
+  fallbackCurrency: CurrencyCode = "USD"
+): string {
+  const entries = (Object.keys(totalsByCurrency) as CurrencyCode[])
+    .filter((c) => (totalsByCurrency[c] ?? 0) > 0)
+    .map((c) => ({
+      currency: c,
+      amount: totalsByCurrency[c]!,
+    }));
+
+  if (entries.length === 0) {
+    return formatMinorUnits(0, fallbackCurrency);
+  }
+
+  if (entries.length === 1) {
+    return formatMinorUnits(entries[0].amount, entries[0].currency);
+  }
+
+  return entries
+    .map((e) => `${e.currency}: ${formatMinorUnits(e.amount, e.currency)}`)
+    .join(" | ");
 }
 
 /**
@@ -80,7 +209,7 @@ export function toGeminiMoneyContext(
   if (cents === null || cents === undefined || !Number.isFinite(cents) || cents <= 0) {
     return "No budget limit";
   }
-  const symbol = CURRENCY_SYMBOLS[currency] || "$";
+  const symbol = getCurrencySymbol(currency);
   const major = cents / 100;
   const formatted = Number.isInteger(major)
     ? major.toLocaleString("en-US")
@@ -137,16 +266,6 @@ export function minorToMajorUnits(minorUnits: number | null | undefined): number
 }
 
 /**
- * Formats internal integer minor units (cents) into a clean user-facing currency string.
- */
-export function formatMinorUnits(
-  minorUnits: number | null | undefined,
-  currency: CurrencyCode = "USD"
-): string {
-  return formatMinorMoney(minorUnits, currency);
-}
-
-/**
  * Compact formatting for pill badges and summary tags.
  */
 export function formatMinorUnitsCompact(
@@ -157,7 +276,7 @@ export function formatMinorUnitsCompact(
     return "Not capped";
   }
 
-  const symbol = CURRENCY_SYMBOLS[currency] || "$";
+  const symbol = getCurrencySymbol(currency);
   const major = minorUnits / 100;
   if (Number.isInteger(major)) {
     return `${symbol}${major.toLocaleString("en-US")}`;
@@ -169,8 +288,8 @@ export function formatMinorUnitsCompact(
 }
 
 /**
- * Safely formats a budget value: if already minor units (e.g. 15000 or 120000), formats as $150.00 / $1,200.00;
- * if legacy major units (e.g. 150), also converts and formats as $150.00.
+ * @deprecated Use formatBudgetMinor() for internal minor units or formatBudgetMajor() for major units.
+ * Heuristic magnitude checking is deprecated and retained strictly for backwards compatibility.
  */
 export function formatSafeBudget(
   amount: number | null | undefined,
@@ -181,7 +300,7 @@ export function formatSafeBudget(
   }
   const isMinor = amount >= 10000;
   const minor = isMinor ? Math.round(amount) : Math.round(amount * 100);
-  return formatMinorMoney(minor, currency);
+  return formatMinorUnits(minor, currency);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

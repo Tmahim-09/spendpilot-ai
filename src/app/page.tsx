@@ -12,8 +12,7 @@ import {
   createInitialSession,
   getRandomWelcomeMessage,
 } from "@/lib/ai/conversation-engine";
-import { minorToMajorUnits } from "@/lib/money";
-import { formatCurrency } from "@/lib/utils";
+import { minorToMajorUnits, formatMinorUnits, formatCurrencyTotals } from "@/lib/money";
 import {
   createInitialWorkspace,
   selectProductForItem,
@@ -772,24 +771,34 @@ export default function Home() {
           summaryText =
             "You haven't selected any products yet. Tell me what you're looking for whenever you're ready!";
         } else {
+          const totalsStr = formatCurrencyTotals(summary.totalsByCurrency);
+          const budgetStr =
+            summary.remainingMinor != null && summary.budgetCurrency
+              ? `\n**Remaining Budget (${summary.budgetCurrency}):** ${formatMinorUnits(summary.remainingMinor, summary.budgetCurrency)}`
+              : "";
+          const comparabilityStr =
+            summary.status === "partially_comparable" && summary.budgetCurrency
+              ? `\n*(Note: Selections in foreign currencies are excluded from the ${summary.budgetCurrency} target budget comparison.)*`
+              : "";
+
           summaryText =
             `Here is your final shopping summary:\n\n` +
             selectedItems
               .map((item, idx) => {
                 const p = item.selectedProduct;
                 const o = item.selectedOffer || p?.selectedOffer || p?.offers?.[0];
+                const itemCurr = (o?.currency || p?.currency || currency) as CurrencyCode;
                 const priceStr =
                   o?.priceMinor != null
-                    ? formatCurrency(o.priceMinor, o.currency || currency)
+                    ? formatMinorUnits(o.priceMinor, itemCurr)
                     : "Price unconfirmed";
                 const retailerStr = o?.domain || p?.retailerName || "Retailer";
                 return `${idx + 1}. **${p?.title || item.productRequest}** — ${priceStr} (${retailerStr})`;
               })
               .join("\n") +
-            `\n\n**Total:** ${formatCurrency(summary.totalSelectedMinor, summary.currency)}` +
-            (summary.remainingMinor != null
-              ? `\n**Remaining Budget:** ${formatCurrency(summary.remainingMinor, summary.currency)}`
-              : "") +
+            `\n\n**Total:** ${totalsStr}` +
+            budgetStr +
+            comparabilityStr +
             `\n\nYou can review your full list and retailer links in My Shopping List on the right.`;
         }
 
@@ -1416,7 +1425,7 @@ export default function Home() {
           } else {
             // Completed setup
             const summary = calculateWorkspaceBudgetSummary(ws, currency);
-            const setupMsg = `All components for your ${targetGroup.title} have been selected! Total: ${formatCurrency(summary.totalSelectedMinor, summary.currency)}. Would you like to add anything else outside this setup?`;
+            const setupMsg = `All components for your ${targetGroup.title} have been selected! Total: ${formatCurrencyTotals(summary.totalsByCurrency)}. Would you like to add anything else outside this setup?`;
 
             const assistantMsg = {
               id: `msg_a_complete_${Date.now()}`,
@@ -1498,6 +1507,7 @@ export default function Home() {
         selectedItemCount={selectedCartCount}
         totalSelectedMinor={workspaceBudgetSummary.totalSelectedMinor}
         currency={currency}
+        totalsByCurrency={workspaceBudgetSummary.totalsByCurrency}
       />
 
       {/* Main Conversational Shopping Interface & Dedicated Showcasing Section */}
@@ -1531,6 +1541,7 @@ export default function Home() {
           <LiveProductResults
             query={activeWorkspaceItem?.productRequest || chatSession.originalRequest || "products"}
             budget={minorToMajorUnits(activeWorkspaceItem?.individualBudget?.amountMinor ?? null)}
+            budgetMinor={activeWorkspaceItem?.individualBudget?.amountMinor ?? null}
             currency={activeWorkspaceItem?.individualBudget?.currency ?? currency}
             products={displayedProducts}
             comparison={displayedComparison}

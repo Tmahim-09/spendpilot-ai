@@ -6,6 +6,8 @@ import type {
   WorkspaceBudgetSummary,
   GroupBudgetSummary,
   ItemSearchStatus,
+  CurrencyTotals,
+  BudgetComparisonStatus,
 } from "./types.ts";
 import type {
   NormalizedProduct,
@@ -16,6 +18,7 @@ import type {
   ProductVariantSelection,
   CanonicalShoppingAttribute,
 } from "../../types/index.ts";
+import { isSupportedCurrency } from "../money.ts";
 import { revalidateGroupCompatibility } from "./compatibility-engine.ts";
 
 /**
@@ -240,6 +243,7 @@ export function createCoordinatedSetupGroup(
 /**
  * Saves a product selection to a shopping item.
  * Preserves all other selections, re-evaluates compatibility, and calculates updated budget.
+ * Keeps selectedProduct and selectedOffer in lockstep with verified offer price and currency.
  */
 export function selectProductForItem(
   workspace: ShoppingWorkspace,
@@ -251,6 +255,17 @@ export function selectProductForItem(
   const now = Date.now();
   const activeOffer = offer || product.selectedOffer || product.offers?.[0] || null;
 
+  // Synchronize resolved product attributes with active verified offer
+  const resolvedProduct: NormalizedProduct = {
+    ...product,
+    selectedOffer: activeOffer,
+    priceMinor: activeOffer?.priceMinor ?? product.priceMinor,
+    currency: activeOffer?.currency ?? product.currency,
+    retailerUrl: activeOffer?.url ?? product.retailerUrl,
+    retailerName: activeOffer?.domain ?? product.retailerName,
+    availability: activeOffer?.availability ?? product.availability,
+  };
+
   const updatedGroups = workspace.groups.map((group) => {
     const hasItem = group.items.some((i) => i.id === itemId);
     if (!hasItem) return group;
@@ -258,13 +273,32 @@ export function selectProductForItem(
     const updatedItems = group.items.map((item) => {
       if (item.id !== itemId) return item;
 
+      // Synchronize candidate in list if present
+      const updatedCandidates = item.candidates.map((c) => {
+        const cId = c.sourceProductId || c.title;
+        const pId = resolvedProduct.sourceProductId || resolvedProduct.title;
+        if (cId === pId) {
+          return {
+            ...c,
+            selectedOffer: activeOffer,
+            priceMinor: activeOffer?.priceMinor ?? c.priceMinor,
+            currency: activeOffer?.currency ?? c.currency,
+            retailerUrl: activeOffer?.url ?? c.retailerUrl,
+            retailerName: activeOffer?.domain ?? c.retailerName,
+            availability: activeOffer?.availability ?? c.availability,
+          };
+        }
+        return c;
+      });
+
       return {
         ...item,
         status: "selected" as const,
-        selectedProductId: product.sourceProductId || product.title,
-        selectedProduct: product,
+        selectedProductId: resolvedProduct.sourceProductId || resolvedProduct.title,
+        selectedProduct: resolvedProduct,
         selectedOffer: activeOffer,
         selectedVariant: variant || item.selectedVariant,
+        candidates: updatedCandidates,
       };
     });
 
@@ -375,61 +409,278 @@ export function removeItemFromWorkspace(
 
 /**
  * Calculates budget summaries across all groups and items.
+ * Currency-aware: never sums amounts of different currencies together.
+ * Groups and workspace summaries expose totalsByCurrency, budget comparison status,
+ * and individual budget currency tracking.
  */
 export function calculateWorkspaceBudgetSummary(
   workspace: ShoppingWorkspace,
   defaultCurrency: CurrencyCode = "USD"
 ): WorkspaceBudgetSummary {
-  let overallTotalMinor = 0;
-  const currency: CurrencyCode = workspace.overallBudget?.currency || defaultCurrency;
+  const wsCurrency: CurrencyCode = workspace.overallBudget?.currency || defaultCurrency;
+  const overallBudgetMinor = workspace.overallBudget?.amountMinor ?? null;
+  const overallBudgetCurrency = workspace.overallBudget?.currency ?? null;
+
+  const workspaceTotalsByCurrency: CurrencyTotals = {};
+  let workspaceUnpricedCount = 0;
+  let workspaceUnsupportedCurrencyCount = 0;
 
   const groupSummaries: GroupBudgetSummary[] = workspace.groups.map((group) => {
-    let groupTotalMinor = 0;
+    const groupTotalsByCurrency: CurrencyTotals = {};
+    let groupUnpricedCount = 0;
+    let groupUnsupportedCurrencyCount = 0;
     let selectedCount = 0;
 
     for (const item of group.items) {
-      if (item.status === "selected" && item.selectedOffer?.priceMinor != null) {
-        groupTotalMinor += item.selectedOffer.priceMinor;
+      if (item.status === "selected") {
         selectedCount += 1;
-      } else if (item.status === "selected" && item.selectedProduct?.priceMinor != null) {
-        groupTotalMinor += item.selectedProduct.priceMinor;
-        selectedCount += 1;
+        const activeOffer = item.selectedOffer || item.selectedProduct?.selectedOffer || null;
+        const priceMinor = activeOffer?.priceMinor ?? item.selectedProduct?.priceMinor ?? null;
+        const rawCurr = activeOffer?.currency ?? item.selectedProduct?.currency ?? null;
+
+        const isValidPrice = typeof priceMinor === "number" && Number.isFinite(priceMinor) && priceMinor > 0;
+        const isSupported = isSupportedCurrency(rawCurr);
+
+        if (!isValidPrice) {
+          groupUnpricedCount += 1;
+        }
+
+        if (!isSupported || !rawCurr) {
+          groupUnsupportedCurrencyCount += 1;
+        }
+
+        // Only include in monetary totals if price is valid and currency is supported
+        if (isValidPrice && isSupported && rawCurr) {
+          const currCode = rawCurr.toUpperCase() as CurrencyCode;
+          groupTotalsByCurrency[currCode] = (groupTotalsByCurrency[currCode] || 0) + priceMinor;
+        }
       }
     }
 
-    overallTotalMinor += groupTotalMinor;
+    // Merge into workspace totals
+    for (const [curr, total] of Object.entries(groupTotalsByCurrency)) {
+      const c = curr as CurrencyCode;
+      workspaceTotalsByCurrency[c] = (workspaceTotalsByCurrency[c] || 0) + (total || 0);
+    }
+    workspaceUnpricedCount += groupUnpricedCount;
+    workspaceUnsupportedCurrencyCount += groupUnsupportedCurrencyCount;
 
     const groupBudgetMinor = group.budget?.amountMinor ?? null;
-    const isOverBudget = groupBudgetMinor !== null ? groupTotalMinor > groupBudgetMinor : false;
-    const remainingBudgetMinor = groupBudgetMinor !== null ? groupBudgetMinor - groupTotalMinor : null;
+    const groupBudgetCurrency = group.budget?.currency ?? null;
+    const primaryCurrency: CurrencyCode = groupBudgetCurrency || wsCurrency;
+
+    // Foreign currency totals: any currency in groupTotalsByCurrency other than primaryCurrency
+    const foreignCurrencyTotals: CurrencyTotals = {};
+    for (const [curr, total] of Object.entries(groupTotalsByCurrency)) {
+      const c = curr as CurrencyCode;
+      if (c !== primaryCurrency && (total || 0) > 0) {
+        foreignCurrencyTotals[c] = total;
+      }
+    }
+
+    const selectedTotalInBudgetCurrencyMinor = groupBudgetCurrency
+      ? (groupTotalsByCurrency[groupBudgetCurrency] ?? 0)
+      : null;
+
+    // selectedTotalMinor: if budget currency specified, total in that currency; otherwise total in primary currency
+    const selectedTotalMinor = groupBudgetCurrency
+      ? (selectedTotalInBudgetCurrencyMinor ?? 0)
+      : (groupTotalsByCurrency[primaryCurrency] ?? 0);
+
+    // Group comparison status
+    let status: BudgetComparisonStatus;
+    let isOverBudget = false;
+    let remainingBudgetMinor: number | null = null;
+
+    if (groupBudgetMinor === null || groupBudgetCurrency === null) {
+      status = "no_budget";
+      remainingBudgetMinor = null;
+      isOverBudget = false;
+    } else {
+      const targetCurr = groupBudgetCurrency;
+      const totalInTargetCurr = groupTotalsByCurrency[targetCurr] ?? 0;
+      const hasForeignItems = Object.keys(foreignCurrencyTotals).length > 0 || groupUnsupportedCurrencyCount > 0;
+      const hasTargetItems = (groupTotalsByCurrency[targetCurr] !== undefined);
+
+      if (totalInTargetCurr > groupBudgetMinor) {
+        status = "over_budget";
+        isOverBudget = true;
+        remainingBudgetMinor = groupBudgetMinor - totalInTargetCurr;
+      } else {
+        remainingBudgetMinor = groupBudgetMinor - totalInTargetCurr;
+        isOverBudget = false;
+        if (hasForeignItems) {
+          status = hasTargetItems ? "partially_comparable" : "not_comparable";
+        } else {
+          status = "within_budget";
+        }
+      }
+    }
 
     return {
       groupId: group.id,
       groupTitle: group.title,
-      currency: group.budget?.currency || currency,
+      currency: primaryCurrency,
       allocatedBudgetMinor: groupBudgetMinor,
-      selectedTotalMinor: groupTotalMinor,
+      budgetCurrency: groupBudgetCurrency,
+      totalsByCurrency: groupTotalsByCurrency,
+      selectedTotalInBudgetCurrencyMinor,
+      selectedTotalMinor,
       remainingBudgetMinor,
+      status,
       isOverBudget,
       isStrict: group.budget?.strict ?? false,
       itemCount: group.items.length,
       selectedCount,
+      foreignCurrencyTotals,
+      unpricedCount: groupUnpricedCount,
+      unsupportedCurrencyCount: groupUnsupportedCurrencyCount,
     };
   });
 
-  const overallBudgetMinor = workspace.overallBudget?.amountMinor ?? null;
-  const totalAllocatedGroupBudgets = groupSummaries.reduce((sum, g) => sum + (g.allocatedBudgetMinor || 0), 0);
-  const effectiveBudgetMinor = overallBudgetMinor ?? (totalAllocatedGroupBudgets > 0 ? totalAllocatedGroupBudgets : null);
-  const isOverallOverBudget = effectiveBudgetMinor !== null ? overallTotalMinor > effectiveBudgetMinor : false;
-  const remainingOverallMinor = effectiveBudgetMinor !== null ? effectiveBudgetMinor - overallTotalMinor : null;
+  // Workspace-level foreign currency totals
+  const wsForeignCurrencyTotals: CurrencyTotals = {};
+  const wsPrimaryBudgetCurr = overallBudgetCurrency || wsCurrency;
+  for (const [curr, total] of Object.entries(workspaceTotalsByCurrency)) {
+    const c = curr as CurrencyCode;
+    if (c !== wsPrimaryBudgetCurr && (total || 0) > 0) {
+      wsForeignCurrencyTotals[c] = total;
+    }
+  }
+
+  const selectedTotalInBudgetCurrencyMinor = overallBudgetCurrency
+    ? (workspaceTotalsByCurrency[overallBudgetCurrency] ?? 0)
+    : null;
+
+  const totalSelectedMinor = overallBudgetCurrency
+    ? (selectedTotalInBudgetCurrencyMinor ?? 0)
+    : (workspaceTotalsByCurrency[wsCurrency] ?? 0);
+
+  // Workspace status
+  let status: BudgetComparisonStatus;
+  let isOverBudget = false;
+  let remainingMinor: number | null = null;
+
+  if (overallBudgetMinor === null || overallBudgetCurrency === null) {
+    const anyGroupOver = groupSummaries.some((g) => g.isOverBudget);
+    status = anyGroupOver ? "over_budget" : "no_budget";
+    isOverBudget = anyGroupOver;
+    remainingMinor = null;
+  } else {
+    const targetCurr = overallBudgetCurrency;
+    const totalInTargetCurr = workspaceTotalsByCurrency[targetCurr] ?? 0;
+    const hasForeignItems = Object.keys(wsForeignCurrencyTotals).length > 0 || workspaceUnsupportedCurrencyCount > 0;
+    const hasTargetItems = (workspaceTotalsByCurrency[targetCurr] !== undefined);
+
+    if (totalInTargetCurr > overallBudgetMinor) {
+      status = "over_budget";
+      isOverBudget = true;
+      remainingMinor = overallBudgetMinor - totalInTargetCurr;
+    } else {
+      remainingMinor = overallBudgetMinor - totalInTargetCurr;
+      isOverBudget = false;
+      if (hasForeignItems) {
+        status = hasTargetItems ? "partially_comparable" : "not_comparable";
+      } else {
+        status = "within_budget";
+      }
+    }
+
+    if (groupSummaries.some((g) => g.isOverBudget)) {
+      isOverBudget = true;
+    }
+  }
 
   return {
-    currency,
-    overallBudgetMinor: effectiveBudgetMinor,
-    totalSelectedMinor: overallTotalMinor,
-    remainingMinor: remainingOverallMinor,
-    isOverBudget: isOverallOverBudget || groupSummaries.some((g) => g.isOverBudget),
+    currency: wsCurrency,
+    overallBudgetMinor,
+    budgetCurrency: overallBudgetCurrency,
+    totalsByCurrency: workspaceTotalsByCurrency,
+    selectedTotalInBudgetCurrencyMinor,
+    totalSelectedMinor,
+    remainingMinor,
+    status,
+    isOverBudget,
+    foreignCurrencyTotals: wsForeignCurrencyTotals,
+    unpricedCount: workspaceUnpricedCount,
+    unsupportedCurrencyCount: workspaceUnsupportedCurrencyCount,
     groups: groupSummaries,
+  };
+}
+
+/**
+ * Compares an individual shopping item against its configured individual budget.
+ * Returns not_comparable if currencies differ or price is unavailable.
+ */
+export function compareItemBudget(
+  item: ShoppingItem,
+  defaultCurrency: CurrencyCode = "USD"
+): {
+  status: BudgetComparisonStatus;
+  budgetMinor: number | null;
+  budgetCurrency: CurrencyCode | null;
+  priceMinor: number | null;
+  itemCurrency: string | null;
+  remainingMinor: number | null;
+  isOverBudget: boolean;
+  message?: string;
+} {
+  const budgetMinor = item.individualBudget?.amountMinor ?? null;
+  const budgetCurrency = item.individualBudget?.currency ?? (budgetMinor !== null ? defaultCurrency : null);
+
+  const activeOffer = item.selectedOffer || item.selectedProduct?.selectedOffer || null;
+  const priceMinor = activeOffer?.priceMinor ?? item.selectedProduct?.priceMinor ?? null;
+  const itemCurrency = activeOffer?.currency ?? item.selectedProduct?.currency ?? null;
+
+  if (budgetMinor === null || budgetCurrency === null) {
+    return {
+      status: "no_budget",
+      budgetMinor: null,
+      budgetCurrency: null,
+      priceMinor,
+      itemCurrency,
+      remainingMinor: null,
+      isOverBudget: false,
+    };
+  }
+
+  if (item.status !== "selected" || priceMinor === null) {
+    return {
+      status: "within_budget",
+      budgetMinor,
+      budgetCurrency,
+      priceMinor: null,
+      itemCurrency,
+      remainingMinor: budgetMinor,
+      isOverBudget: false,
+    };
+  }
+
+  // If item currency differs from budget currency, cannot compare without exchange rates
+  if (itemCurrency !== budgetCurrency) {
+    return {
+      status: "not_comparable",
+      budgetMinor,
+      budgetCurrency,
+      priceMinor,
+      itemCurrency,
+      remainingMinor: null,
+      isOverBudget: false,
+      message: `Item currency (${itemCurrency || "UNKNOWN"}) differs from individual budget currency (${budgetCurrency}). Monetary comparison requires an explicit conversion.`,
+    };
+  }
+
+  const remaining = budgetMinor - priceMinor;
+  const isOver = priceMinor > budgetMinor;
+
+  return {
+    status: isOver ? "over_budget" : "within_budget",
+    budgetMinor,
+    budgetCurrency,
+    priceMinor,
+    itemCurrency,
+    remainingMinor: remaining,
+    isOverBudget: isOver,
   };
 }
 
@@ -750,6 +1001,9 @@ export function updateItemComparison(
 
 /**
  * Updates selected offer for a product under a specific item.
+ * Validates offer belongs to product, synchronizes exact offer ID, domain, URL,
+ * priceMinor, currency, availability, and selectedOffer on candidate and item.
+ * If invalid (e.g. offer doesn't belong to product), rejects and returns unchanged workspace.
  */
 export function selectOfferForItem(
   workspace: ShoppingWorkspace,
@@ -757,7 +1011,51 @@ export function selectOfferForItem(
   productId: string,
   offer: ProductOfferItem
 ): ShoppingWorkspace {
+  if (!offer || typeof offer !== "object") {
+    return workspace;
+  }
+
+  // Find item and candidate in workspace
+  let itemFound: ShoppingItem | null = null;
+  for (const group of workspace.groups) {
+    const found = group.items.find((i) => i.id === itemId);
+    if (found) {
+      itemFound = found;
+      break;
+    }
+  }
+
+  if (!itemFound) {
+    return workspace;
+  }
+
+  const targetCandidate =
+    itemFound.candidates.find((p) => (p.sourceProductId || p.title) === productId) ||
+    (itemFound.selectedProduct &&
+    ((itemFound.selectedProduct.sourceProductId && itemFound.selectedProduct.sourceProductId === productId) ||
+      itemFound.selectedProduct.title === productId ||
+      itemFound.selectedProductId === productId)
+      ? itemFound.selectedProduct
+      : null);
+
+  // If candidate or selected product has offers list, validate that the offer belongs to product offers
+  if (targetCandidate && Array.isArray(targetCandidate.offers) && targetCandidate.offers.length > 0) {
+    const belongs = targetCandidate.offers.some(
+      (o) =>
+        (offer.offerId && o.offerId === offer.offerId) ||
+        (offer.id && o.id === offer.id) ||
+        (offer.url && o.url === offer.url) ||
+        (o.domain === offer.domain && o.priceMinor === offer.priceMinor)
+    );
+    if (!belongs) {
+      // Reject invalid offer not belonging to product
+      return workspace;
+    }
+  }
+
   const now = Date.now();
+  let updatedAny = false;
+
   const updatedGroups = workspace.groups.map((group) => {
     const hasItem = group.items.some((i) => i.id === itemId);
     if (!hasItem) return group;
@@ -769,12 +1067,15 @@ export function selectOfferForItem(
       const updatedCandidates = item.candidates.map((p) => {
         const pid = p.sourceProductId || p.title;
         if (pid === productId) {
+          updatedAny = true;
           return {
             ...p,
             selectedOffer: offer,
             priceMinor: offer.priceMinor,
+            currency: offer.currency,
             retailerUrl: offer.url,
             retailerName: offer.domain || p.retailerName,
+            availability: offer.availability || p.availability,
           };
         }
         return p;
@@ -792,10 +1093,16 @@ export function selectOfferForItem(
             ...item.selectedProduct,
             selectedOffer: offer,
             priceMinor: offer.priceMinor,
+            currency: offer.currency,
             retailerUrl: offer.url,
             retailerName: offer.domain || item.selectedProduct.retailerName,
+            availability: offer.availability || item.selectedProduct.availability,
           }
         : item.selectedProduct;
+
+      if (isSelectedProduct) {
+        updatedAny = true;
+      }
 
       return {
         ...item,
@@ -812,6 +1119,10 @@ export function selectOfferForItem(
     };
   });
 
+  if (!updatedAny) {
+    return workspace;
+  }
+
   return {
     ...workspace,
     revision: workspace.revision + 1,
@@ -821,7 +1132,8 @@ export function selectOfferForItem(
 }
 
 /**
- * Updates selected variant and price/url for a product under a specific item.
+ * Updates selected variant and price/url/currency for a product under a specific item.
+ * Ensures confirmed price, currency, and retailer offer remain in lockstep.
  */
 export function updateVariantForItem(
   workspace: ShoppingWorkspace,
@@ -829,6 +1141,8 @@ export function updateVariantForItem(
   selection: ProductVariantSelection
 ): ShoppingWorkspace {
   const now = Date.now();
+  let updatedAny = false;
+
   const updatedGroups = workspace.groups.map((group) => {
     const hasItem = group.items.some((i) => i.id === itemId);
     if (!hasItem) return group;
@@ -839,13 +1153,26 @@ export function updateVariantForItem(
       const updatedCandidates = item.candidates.map((p) => {
         const pid = p.sourceProductId || p.title;
         if (pid === selection.productId) {
+          updatedAny = true;
+          const updatedOffer: ProductOfferItem | null = selection.confirmedOffer || (p.selectedOffer
+            ? {
+                ...p.selectedOffer,
+                priceMinor: selection.confirmedPriceMinor ?? p.selectedOffer.priceMinor,
+                currency: selection.confirmedCurrency || p.selectedOffer.currency,
+                url: selection.confirmedRetailerUrl || p.selectedOffer.url,
+                domain: selection.retailerName || p.selectedOffer.domain,
+              }
+            : null);
+
           return {
             ...p,
             title: selection.title || p.title,
             priceMinor: selection.confirmedPriceMinor ?? p.priceMinor,
+            currency: selection.confirmedCurrency || p.currency,
             retailerUrl: selection.confirmedRetailerUrl || p.retailerUrl,
             imageUrl: selection.imageUrl || p.imageUrl,
             retailerName: selection.retailerName || p.retailerName,
+            selectedOffer: updatedOffer,
           };
         }
         return p;
@@ -857,16 +1184,39 @@ export function updateVariantForItem(
           item.selectedProduct.title === selection.title ||
           item.selectedProductId === selection.productId);
 
+      const matchingCandidate = updatedCandidates.find(
+        (c) => (c.sourceProductId || c.title) === selection.productId
+      );
+
+      const baseOffer = item.selectedOffer || item.selectedProduct?.selectedOffer || null;
+      const updatedDirectOffer: ProductOfferItem | null = selection.confirmedOffer || (baseOffer
+        ? {
+            ...baseOffer,
+            priceMinor: selection.confirmedPriceMinor ?? baseOffer.priceMinor,
+            currency: selection.confirmedCurrency || baseOffer.currency,
+            url: selection.confirmedRetailerUrl || baseOffer.url,
+            domain: selection.retailerName || baseOffer.domain,
+          }
+        : null);
+
+      const effectiveVariantOffer = matchingCandidate?.selectedOffer || updatedDirectOffer || item.selectedProduct?.selectedOffer;
+
       const updatedSelectedProduct = isSelectedMatch && item.selectedProduct
         ? {
             ...item.selectedProduct,
             title: selection.title || item.selectedProduct.title,
             priceMinor: selection.confirmedPriceMinor ?? item.selectedProduct.priceMinor,
+            currency: selection.confirmedCurrency || item.selectedProduct.currency,
             retailerUrl: selection.confirmedRetailerUrl || item.selectedProduct.retailerUrl,
             imageUrl: selection.imageUrl || item.selectedProduct.imageUrl,
             retailerName: selection.retailerName || item.selectedProduct.retailerName,
+            selectedOffer: effectiveVariantOffer,
           }
         : item.selectedProduct;
+
+      if (isSelectedMatch) {
+        updatedAny = true;
+      }
 
       return {
         ...item,
@@ -874,6 +1224,9 @@ export function updateVariantForItem(
         selectedVariant: isSelectedMatch
           ? (selection.selectedOptions as Record<string, string>) || item.selectedVariant
           : item.selectedVariant,
+        selectedOffer: isSelectedMatch
+          ? (effectiveVariantOffer || item.selectedOffer)
+          : item.selectedOffer,
         selectedProduct: updatedSelectedProduct,
       };
     });
@@ -884,6 +1237,10 @@ export function updateVariantForItem(
       updatedAt: now,
     };
   });
+
+  if (!updatedAny) {
+    return workspace;
+  }
 
   return {
     ...workspace,

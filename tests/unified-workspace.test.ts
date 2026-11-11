@@ -176,7 +176,7 @@ describe("SpendPilot AI: Unified Multi-Product Shopping Workspace (Section 19 Te
     // Check budget update after PC selection
     let budgetSummary = calculateWorkspaceBudgetSummary(ws, "USD");
     assert.strictEqual(budgetSummary.totalSelectedMinor, 160000); // $1,600
-    assert.strictEqual(budgetSummary.remainingMinor, 140000);     // $1,400 remaining
+    assert.strictEqual(budgetSummary.groups[0]?.remainingBudgetMinor, 140000); // $1,400 remaining in group budget
     assert.strictEqual(budgetSummary.isOverBudget, false);
 
     // Select Monitor ($400)
@@ -198,7 +198,7 @@ describe("SpendPilot AI: Unified Multi-Product Shopping Workspace (Section 19 Te
 
     budgetSummary = calculateWorkspaceBudgetSummary(ws, "USD");
     assert.strictEqual(budgetSummary.totalSelectedMinor, 200000); // $2,000
-    assert.strictEqual(budgetSummary.remainingMinor, 100000);     // $1,000 remaining
+    assert.strictEqual(budgetSummary.groups[0]?.remainingBudgetMinor, 100000); // $1,000 remaining in group budget
     assert.strictEqual(budgetSummary.isOverBudget, false);
 
     // Next unresolved item is keyboard
@@ -470,7 +470,7 @@ describe("SpendPilot AI: Unified Multi-Product Shopping Workspace (Section 19 Te
 
     let summary = calculateWorkspaceBudgetSummary(ws, "USD");
     assert.strictEqual(summary.totalSelectedMinor, 50000);
-    assert.strictEqual(summary.remainingMinor, 30000); // $300 remaining
+    assert.strictEqual(summary.groups[0]?.remainingBudgetMinor, 30000); // $300 remaining in group budget
     assert.strictEqual(summary.isOverBudget, false);
 
     // Select monitor that costs $350 -> Total becomes $850 (Exceeds $800 total!)
@@ -491,8 +491,9 @@ describe("SpendPilot AI: Unified Multi-Product Shopping Workspace (Section 19 Te
 
     summary = calculateWorkspaceBudgetSummary(ws, "USD");
     assert.strictEqual(summary.totalSelectedMinor, 85000); // $850.00
-    assert.strictEqual(summary.remainingMinor, -5000);     // -$50.00 over budget
-    assert.strictEqual(summary.isOverBudget, true);        // Over budget correctly flagged!
+    assert.strictEqual(summary.groups[0]?.remainingBudgetMinor, -5000); // -$50.00 over budget in group
+    assert.strictEqual(summary.groups[0]?.isOverBudget, true);
+    assert.strictEqual(summary.isOverBudget, true); // Over budget correctly flagged!
   });
 
   // ───────────────────────────────────────────────────────────────────────────

@@ -14,6 +14,6 @@ export * from "./money.ts";
  * Backwards-compatible formatCurrency: takes integer minor units (cents) and formats to string.
  * Example: 15000 cents -> "$150.00"
  */
-export function formatCurrency(centsOrMinor: number, currency: Currency = "USD"): string {
+export function formatCurrency(centsOrMinor: number, currency: string = "USD"): string {
   return formatMinorUnits(centsOrMinor, currency);
 }

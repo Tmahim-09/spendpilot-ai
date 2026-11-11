@@ -48,11 +48,14 @@ export type ConfigurationVerificationStatus =
  */
 export interface ProductOfferItem {
   id?: string;
+  offerId?: string;
   domain: string;
   url: string;
   priceMinor: number;
   compareAtPriceMinor?: number | null;
-  currency: CurrencyCode;
+  currency: CurrencyCode | string;
+  isSupportedCurrency?: boolean;
+  monetaryStatus?: "valid" | "unsupported_currency" | "missing_currency" | "invalid_price";
   availability: "in_stock" | "out_of_stock" | "unknown";
   condition?: string | null;
   verificationStatus?: ConfigurationVerificationStatus;
@@ -73,7 +76,9 @@ export interface NormalizedProduct {
   cleanedImageUrl?: string | null;
   priceMinor: number | null;
   compareAtPriceMinor?: number | null;
-  currency: CurrencyCode | null;
+  currency: CurrencyCode | string | null;
+  isSupportedCurrency?: boolean;
+  monetaryStatus?: "valid" | "unsupported_currency" | "missing_currency" | "invalid_price";
   retailerName: string | null;
   retailerUrl: string;
   availability: "in_stock" | "out_of_stock" | "unknown";
@@ -679,6 +684,7 @@ export interface ProductVariantState {
     | "Discontinued"
     | "Unknown";
   verifiedPriceMinor?: number | null;
+  verifiedCurrency?: CurrencyCode | string | null;
   retailerUrl?: string;
   retailerName?: string | null;
   offers?: ProductOfferItem[];
@@ -691,9 +697,11 @@ export interface ProductVariantSelection {
   isConfirmed: boolean;
   confirmedPriceMinor: number | null;
   confirmedRetailerUrl: string;
+  confirmedCurrency?: CurrencyCode | string | null;
   title?: string;
   retailerName?: string;
   imageUrl?: string | null;
+  confirmedOffer?: ProductOfferItem | null;
 }
 
 export interface GuidedShoppingSessionState {

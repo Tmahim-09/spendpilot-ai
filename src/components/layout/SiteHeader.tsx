@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { Menu, X, Sun, Moon, ShoppingCart } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatMinorUnits, formatCurrencyTotals } from "@/lib/money";
 import type { CurrencyCode } from "@/types";
 
 interface SiteHeaderProps {
@@ -13,6 +13,7 @@ interface SiteHeaderProps {
   selectedItemCount?: number;
   totalSelectedMinor?: number;
   currency?: CurrencyCode;
+  totalsByCurrency?: Partial<Record<CurrencyCode, number>>;
 }
 
 function subscribeTheme(callback: () => void) {
@@ -35,11 +36,25 @@ export function SiteHeader({
   selectedItemCount = 0,
   totalSelectedMinor = 0,
   currency = "USD",
+  totalsByCurrency,
 }: SiteHeaderProps = {}) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const theme = useSyncExternalStore(subscribeTheme, getThemeSnapshot, getThemeServerSnapshot);
   const router = useRouter();
   const pathname = usePathname();
+
+  const activeCurrencyEntries = totalsByCurrency
+    ? Object.entries(totalsByCurrency).filter((e): e is [string, number] => typeof e[1] === "number" && e[1] > 0)
+    : [];
+
+  const singleCurrencyFormatted =
+    activeCurrencyEntries.length === 1
+      ? formatMinorUnits(activeCurrencyEntries[0][1], activeCurrencyEntries[0][0] as CurrencyCode)
+      : activeCurrencyEntries.length > 1
+      ? null
+      : totalSelectedMinor > 0
+      ? formatMinorUnits(totalSelectedMinor, currency)
+      : null;
 
   const toggleTheme = () => {
     const current = getThemeSnapshot();
@@ -235,11 +250,15 @@ export function SiteHeader({
                 <span>
                   View Cart {selectedItemCount > 0 ? `(${selectedItemCount} items)` : "(Empty)"}
                 </span>
-                {totalSelectedMinor > 0 && (
+                {singleCurrencyFormatted ? (
                   <span className="font-mono text-xs opacity-90">
-                    · {formatCurrency(totalSelectedMinor, currency)}
+                    · {singleCurrencyFormatted}
                   </span>
-                )}
+                ) : activeCurrencyEntries.length > 1 ? (
+                  <span className="font-mono text-[11px] opacity-90">
+                    · {formatCurrencyTotals(totalsByCurrency!)}
+                  </span>
+                ) : null}
               </Link>
             </div>
           </div>

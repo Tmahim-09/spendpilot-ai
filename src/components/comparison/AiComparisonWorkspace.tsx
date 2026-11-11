@@ -24,11 +24,13 @@ import type {
   CurrencyCode,
   AssessmentRating,
 } from "@/types";
-import { formatCurrency, formatSafeBudget } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
+import { formatBudgetMinor, formatBudgetMajor } from "@/lib/money";
 
 interface AiComparisonWorkspaceProps {
   query: string;
   budget: number | null;
+  budgetMinor?: number | null;
   currency: CurrencyCode;
   comparison: AiComparisonResult;
   evidenceFacts?: Record<string, EvidenceFact>;
@@ -43,6 +45,7 @@ interface AiComparisonWorkspaceProps {
 export function AiComparisonWorkspace({
   query,
   budget,
+  budgetMinor,
   currency,
   comparison,
   evidenceFacts = {},
@@ -52,6 +55,12 @@ export function AiComparisonWorkspace({
   onConfigureProduct,
   configuredProductIds = new Set(),
 }: AiComparisonWorkspaceProps) {
+  const formattedBudget =
+    budgetMinor != null
+      ? formatBudgetMinor(budgetMinor, currency)
+      : budget != null
+      ? formatBudgetMajor(budget, currency)
+      : null;
   const [customPriority, setCustomPriority] = useState("");
   const [activePriority, setActivePriority] = useState<string | null>(null);
 
@@ -157,9 +166,9 @@ export function AiComparisonWorkspace({
                 <Sparkles className="h-3.5 w-3.5 text-[#FF6A00]" />
                 AI Comparison Workspace
               </span>
-              {budget && (
+              {formattedBudget && (
                 <span className="text-xs text-[#35C979] bg-[#35C979]/10 border border-[#35C979]/30 px-2.5 py-0.5 rounded-full font-mono font-bold">
-                  Budget: {formatSafeBudget(budget, currency)}
+                  Budget: {formattedBudget}
                 </span>
               )}
             </div>

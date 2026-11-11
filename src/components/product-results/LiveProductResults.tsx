@@ -24,11 +24,12 @@ import {
   Layers,
   ArrowRight,
 } from "lucide-react";
-import { formatSafeBudget } from "@/lib/utils";
+import { formatBudgetMinor, formatBudgetMajor } from "@/lib/money";
 
 interface LiveProductResultsProps {
   query: string | null;
   budget: number | null;
+  budgetMinor?: number | null;
   currency: CurrencyCode;
   products: NormalizedProduct[];
   comparison?: AiComparisonResult | null;
@@ -65,6 +66,7 @@ interface LiveProductResultsProps {
 export function LiveProductResults({
   query,
   budget,
+  budgetMinor,
   currency,
   products,
   comparison = null,
@@ -94,6 +96,12 @@ export function LiveProductResults({
   configuredProductIds = new Set(),
   selectedProductIds = new Set(),
 }: LiveProductResultsProps) {
+  const formattedBudget =
+    budgetMinor != null
+      ? formatBudgetMinor(budgetMinor, currency)
+      : budget != null
+      ? formatBudgetMajor(budget, currency)
+      : null;
   // State 1: Clearly Unrelated Prompt (Zero API calls made, instant witty response)
   if (playfulNotice) {
     return (
@@ -290,7 +298,7 @@ export function LiveProductResults({
             </h3>
             <p className="text-xs sm:text-sm text-zinc-600 dark:text-[#A3A3A3] max-w-md mx-auto mb-6">
               We couldn&apos;t find verified products matching &ldquo;{query}&rdquo;
-              {budget ? ` under ${formatSafeBudget(budget, currency)}` : ""}. Try using broader search terms or increasing your budget limit.
+              {formattedBudget ? ` under ${formattedBudget}` : ""}. Try using broader search terms or increasing your budget limit.
             </p>
             {onRetry && (
               <button
@@ -367,9 +375,9 @@ export function LiveProductResults({
                 </span>
               )}
 
-              {isRangeExpanded && (
+              {isRangeExpanded && formattedBudget && (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-2.5 py-0.5 text-xs font-semibold text-[#FF8126]">
-                  <span>Expanded Price Range (All items &le; {formatSafeBudget(budget, currency)})</span>
+                  <span>Expanded Price Range (All items &le; {formattedBudget})</span>
                 </span>
               )}
             </div>
@@ -380,11 +388,11 @@ export function LiveProductResults({
 
             <p className="text-xs text-zinc-600 dark:text-[#A3A3A3]">
               Found {products.length} verified products
-              {budget ? (
+              {formattedBudget ? (
                 <>
                   {" "}with starting prices under{" "}
                   <strong className="text-[#35C979] tabular-nums">
-                    {formatSafeBudget(budget, currency)}
+                    {formattedBudget}
                   </strong>
                 </>
               ) : ""}
@@ -450,6 +458,7 @@ export function LiveProductResults({
           <AiComparisonWorkspace
             query={query}
             budget={budget}
+            budgetMinor={budgetMinor}
             currency={currency}
             comparison={comparison}
             evidenceFacts={evidenceFacts}
