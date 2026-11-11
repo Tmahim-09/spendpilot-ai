@@ -5,8 +5,16 @@ import type {
   ShoppingItemPriority,
   WorkspaceBudgetSummary,
   GroupBudgetSummary,
+  ItemSearchStatus,
 } from "./types.ts";
-import type { NormalizedProduct, ProductOfferItem, CurrencyCode } from "../../types/index.ts";
+import type {
+  NormalizedProduct,
+  ProductOfferItem,
+  CurrencyCode,
+  AiComparisonResult,
+  EvidenceFact,
+  ProductVariantSelection,
+} from "../../types/index.ts";
 import { revalidateGroupCompatibility } from "./compatibility-engine.ts";
 
 /**
@@ -84,6 +92,7 @@ export function addIndependentItem(
     productRequest: string;
     category?: string;
     displayName?: string;
+    requirementId?: string;
     hardConstraints?: Record<string, string | number | boolean>;
     preferences?: Record<string, string | number | boolean>;
     individualBudget?: { amountMinor: number; currency: CurrencyCode; strict: boolean };
@@ -98,6 +107,7 @@ export function addIndependentItem(
     productRequest: params.productRequest,
     category: params.category || "general",
     displayName: params.displayName || params.productRequest,
+    requirementId: params.requirementId || itemId,
     hardConstraints: params.hardConstraints || {},
     preferences: params.preferences || {},
     individualBudget: params.individualBudget,
@@ -168,6 +178,7 @@ export function createCoordinatedSetupGroup(
       productRequest: string;
       category: string;
       displayName?: string;
+      requirementId?: string;
       hardConstraints?: Record<string, string | number | boolean>;
       preferences?: Record<string, string | number | boolean>;
       priority?: ShoppingItemPriority;
@@ -184,6 +195,7 @@ export function createCoordinatedSetupGroup(
     productRequest: itemParams.productRequest,
     category: itemParams.category,
     displayName: itemParams.displayName || itemParams.productRequest,
+    requirementId: itemParams.requirementId,
     hardConstraints: itemParams.hardConstraints || {},
     preferences: itemParams.preferences || {},
     individualBudget: itemParams.individualBudget,
@@ -450,4 +462,248 @@ export function getNextUnresolvedItem(
   }
 
   return null;
+}
+
+/**
+ * Updates search results, candidates, comparison, and evidence facts on a specific item.
+ * Preserves activeItemId and does not mutate other items.
+ */
+export function updateItemSearchResults(
+  workspace: ShoppingWorkspace,
+  itemId: string,
+  updates: {
+    searchId?: string;
+    searchFingerprint?: string;
+    searchStatus?: ItemSearchStatus;
+    candidates?: NormalizedProduct[];
+    comparison?: AiComparisonResult | null;
+    evidenceFacts?: Record<string, EvidenceFact>;
+    searchError?: string | null;
+  }
+): ShoppingWorkspace {
+  const now = Date.now();
+  const updatedGroups = workspace.groups.map((group) => {
+    const hasItem = group.items.some((i) => i.id === itemId);
+    if (!hasItem) return group;
+
+    const updatedItems = group.items.map((item) => {
+      if (item.id !== itemId) return item;
+
+      return {
+        ...item,
+        searchId: updates.searchId !== undefined ? updates.searchId : item.searchId,
+        searchFingerprint: updates.searchFingerprint ?? item.searchFingerprint,
+        searchStatus: updates.searchStatus !== undefined ? updates.searchStatus : item.searchStatus,
+        candidates: updates.candidates !== undefined ? updates.candidates : item.candidates,
+        comparison: updates.comparison !== undefined ? updates.comparison : item.comparison,
+        evidenceFacts: updates.evidenceFacts !== undefined ? updates.evidenceFacts : item.evidenceFacts,
+        searchError: updates.searchError !== undefined ? updates.searchError : null,
+        status:
+          item.status === "selected"
+            ? ("selected" as const)
+            : (updates.candidates && updates.candidates.length > 0)
+            ? ("results_ready" as const)
+            : item.status,
+      };
+    });
+
+    return {
+      ...group,
+      items: updatedItems,
+      updatedAt: now,
+    };
+  });
+
+  return {
+    ...workspace,
+    revision: workspace.revision + 1,
+    groups: updatedGroups,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Updates AI comparison and evidence facts on a specific item.
+ */
+export function updateItemComparison(
+  workspace: ShoppingWorkspace,
+  itemId: string,
+  comparison: AiComparisonResult | null,
+  evidenceFacts?: Record<string, EvidenceFact>,
+  candidates?: NormalizedProduct[]
+): ShoppingWorkspace {
+  const now = Date.now();
+  const updatedGroups = workspace.groups.map((group) => {
+    const hasItem = group.items.some((i) => i.id === itemId);
+    if (!hasItem) return group;
+
+    const updatedItems = group.items.map((item) => {
+      if (item.id !== itemId) return item;
+
+      return {
+        ...item,
+        comparison,
+        evidenceFacts: evidenceFacts ?? item.evidenceFacts,
+        candidates: candidates && candidates.length > 0 ? candidates : item.candidates,
+      };
+    });
+
+    return {
+      ...group,
+      items: updatedItems,
+      updatedAt: now,
+    };
+  });
+
+  return {
+    ...workspace,
+    revision: workspace.revision + 1,
+    groups: updatedGroups,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Updates selected offer for a product under a specific item.
+ */
+export function selectOfferForItem(
+  workspace: ShoppingWorkspace,
+  itemId: string,
+  productId: string,
+  offer: ProductOfferItem
+): ShoppingWorkspace {
+  const now = Date.now();
+  const updatedGroups = workspace.groups.map((group) => {
+    const hasItem = group.items.some((i) => i.id === itemId);
+    if (!hasItem) return group;
+
+    const updatedItems = group.items.map((item) => {
+      if (item.id !== itemId) return item;
+
+      // Update offer in candidates list
+      const updatedCandidates = item.candidates.map((p) => {
+        const pid = p.sourceProductId || p.title;
+        if (pid === productId) {
+          return {
+            ...p,
+            selectedOffer: offer,
+            priceMinor: offer.priceMinor,
+            retailerUrl: offer.url,
+            retailerName: offer.domain || p.retailerName,
+          };
+        }
+        return p;
+      });
+
+      // Update selectedProduct if matching
+      const isSelectedProduct =
+        item.selectedProduct &&
+        ((item.selectedProduct.sourceProductId && item.selectedProduct.sourceProductId === productId) ||
+          item.selectedProduct.title === productId ||
+          item.selectedProductId === productId);
+
+      const updatedSelectedProduct = isSelectedProduct && item.selectedProduct
+        ? {
+            ...item.selectedProduct,
+            selectedOffer: offer,
+            priceMinor: offer.priceMinor,
+            retailerUrl: offer.url,
+            retailerName: offer.domain || item.selectedProduct.retailerName,
+          }
+        : item.selectedProduct;
+
+      return {
+        ...item,
+        candidates: updatedCandidates,
+        selectedOffer: isSelectedProduct ? offer : item.selectedOffer,
+        selectedProduct: updatedSelectedProduct,
+      };
+    });
+
+    return {
+      ...group,
+      items: updatedItems,
+      updatedAt: now,
+    };
+  });
+
+  return {
+    ...workspace,
+    revision: workspace.revision + 1,
+    groups: updatedGroups,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Updates selected variant and price/url for a product under a specific item.
+ */
+export function updateVariantForItem(
+  workspace: ShoppingWorkspace,
+  itemId: string,
+  selection: ProductVariantSelection
+): ShoppingWorkspace {
+  const now = Date.now();
+  const updatedGroups = workspace.groups.map((group) => {
+    const hasItem = group.items.some((i) => i.id === itemId);
+    if (!hasItem) return group;
+
+    const updatedItems = group.items.map((item) => {
+      if (item.id !== itemId) return item;
+
+      const updatedCandidates = item.candidates.map((p) => {
+        const pid = p.sourceProductId || p.title;
+        if (pid === selection.productId) {
+          return {
+            ...p,
+            title: selection.title || p.title,
+            priceMinor: selection.confirmedPriceMinor ?? p.priceMinor,
+            retailerUrl: selection.confirmedRetailerUrl || p.retailerUrl,
+            imageUrl: selection.imageUrl || p.imageUrl,
+            retailerName: selection.retailerName || p.retailerName,
+          };
+        }
+        return p;
+      });
+
+      const isSelectedMatch =
+        item.selectedProduct &&
+        (item.selectedProduct.sourceProductId === selection.productId ||
+          item.selectedProduct.title === selection.title ||
+          item.selectedProductId === selection.productId);
+
+      const updatedSelectedProduct = isSelectedMatch && item.selectedProduct
+        ? {
+            ...item.selectedProduct,
+            title: selection.title || item.selectedProduct.title,
+            priceMinor: selection.confirmedPriceMinor ?? item.selectedProduct.priceMinor,
+            retailerUrl: selection.confirmedRetailerUrl || item.selectedProduct.retailerUrl,
+            imageUrl: selection.imageUrl || item.selectedProduct.imageUrl,
+            retailerName: selection.retailerName || item.selectedProduct.retailerName,
+          }
+        : item.selectedProduct;
+
+      return {
+        ...item,
+        candidates: updatedCandidates,
+        selectedVariant: isSelectedMatch
+          ? (selection.selectedOptions as Record<string, string>) || item.selectedVariant
+          : item.selectedVariant,
+        selectedProduct: updatedSelectedProduct,
+      };
+    });
+
+    return {
+      ...group,
+      items: updatedItems,
+      updatedAt: now,
+    };
+  });
+
+  return {
+    ...workspace,
+    revision: workspace.revision + 1,
+    groups: updatedGroups,
+    updatedAt: now,
+  };
 }

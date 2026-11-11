@@ -71,6 +71,7 @@ export interface ShoppingItem {
   productRequest: string;
   category: string;
   displayName?: string;
+  requirementId?: string; // Explicit 1-to-1 link to ShoppingBrief ProductRequirement.id
   hardConstraints: Record<string, string | number | boolean>;
   preferences: Record<string, string | number | boolean>;
   individualBudget?: ShoppingItemBudget;

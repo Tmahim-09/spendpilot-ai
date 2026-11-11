@@ -4,7 +4,7 @@ import type {
   ShoppingItem,
   ShoppingItemPriority,
 } from "./types.ts";
-import type { ShoppingBrief } from "../orchestrator/types.ts";
+import type { ShoppingBrief, ProductRequirement } from "../orchestrator/types.ts";
 import type { CurrencyCode } from "../../types/index.ts";
 import {
   createInitialWorkspace,
@@ -241,6 +241,7 @@ export function syncWorkspaceFromBrief(
             productRequest: req.displayName || req.category,
             category: req.category,
             displayName: req.displayName,
+            requirementId: req.id,
             hardConstraints: req.constraints.reduce((acc, c) => {
               acc[c.key] = c.value;
               return acc;
@@ -281,6 +282,7 @@ export function syncWorkspaceFromBrief(
           productRequest: req.displayName || req.category,
           category: req.category,
           displayName: req.displayName,
+          requirementId: req.id,
           hardConstraints: req.constraints.reduce((acc, c) => {
             acc[c.key] = c.value;
             return acc;
@@ -331,6 +333,7 @@ export function syncWorkspaceFromBrief(
             productRequest: matchingReq.displayName || matchingReq.category,
             category: matchingReq.category,
             displayName: matchingReq.displayName,
+            requirementId: matchingReq.id,
             hardConstraints: updatedConstraints,
             searchQuery: matchingReq.searchQuery || item.searchQuery,
           };
@@ -345,6 +348,7 @@ export function syncWorkspaceFromBrief(
           productRequest: req.displayName || req.category,
           category: req.category,
           displayName: req.displayName,
+          requirementId: req.id,
           hardConstraints: req.constraints.reduce((acc, c) => {
             acc[c.key] = c.value;
             return acc;
@@ -393,4 +397,49 @@ export function syncWorkspaceFromBrief(
   }
 
   return ws;
+}
+
+/**
+ * Resolves the corresponding ProductRequirement for a ShoppingItem using explicit IDs,
+ * never by array position or first search query.
+ */
+export function resolveRequirementForItem(
+  brief: ShoppingBrief | undefined | null,
+  item: ShoppingItem | undefined | null
+): ProductRequirement | null {
+  if (!brief || !brief.productRequirements || brief.productRequirements.length === 0 || !item) {
+    return null;
+  }
+
+  // 1. Explicit requirementId on the item
+  if (item.requirementId) {
+    const found = brief.productRequirements.find((r) => r.id === item.requirementId);
+    if (found) return found;
+  }
+
+  // 2. Exact item.id matching req.id
+  const foundById = brief.productRequirements.find((r) => r.id === item.id);
+  if (foundById) return foundById;
+
+  // 3. Reconcile using explicit name/request matching
+  const itemRequest = (item.productRequest || item.displayName || "").trim().toLowerCase();
+  if (itemRequest) {
+    const foundByReq = brief.productRequirements.find((r) => {
+      const reqName = (r.displayName || r.searchQuery || "").trim().toLowerCase();
+      return (
+        reqName === itemRequest ||
+        (reqName.length >= 3 && itemRequest.includes(reqName)) ||
+        (itemRequest.length >= 3 && reqName.includes(itemRequest))
+      );
+    });
+    if (foundByReq) return foundByReq;
+  }
+
+  // 4. Safe single requirement fallback (only if brief has exactly 1 requirement)
+  if (brief.productRequirements.length === 1) {
+    return brief.productRequirements[0];
+  }
+
+  // Multi-requirement brief where no explicit match exists: do NOT silently guess first requirement!
+  return null;
 }

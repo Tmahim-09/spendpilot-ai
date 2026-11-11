@@ -13,7 +13,6 @@ import {
   getRandomWelcomeMessage,
 } from "@/lib/ai/conversation-engine";
 import { minorToMajorUnits } from "@/lib/money";
-import { selectRetailerOffer } from "@/lib/shopping/offer-verification";
 import { formatCurrency } from "@/lib/utils";
 import {
   createInitialWorkspace,
@@ -22,8 +21,13 @@ import {
   addIndependentItem,
   calculateWorkspaceBudgetSummary,
   getActiveWorkspaceItem,
+  findItemInWorkspace,
+  updateItemSearchResults,
+  updateItemComparison,
+  selectOfferForItem,
+  updateVariantForItem,
 } from "@/lib/workspace/workspace-manager";
-import type { ShoppingItem } from "@/lib/workspace/types";
+import { resolveRequirementForItem } from "@/lib/workspace/sync-engine";
 import { saveWorkspaceToStorage } from "@/lib/workspace/workspace-storage";
 import {
   getProgressMessage,
@@ -75,25 +79,37 @@ export default function Home() {
     return () => window.removeEventListener("hashchange", handleHash);
   }, []);
 
-  // Variant Configuration State
-  const [configuringProduct, setConfiguringProduct] = useState<NormalizedProduct | null>(null);
+  // Variant Configuration State (scoped to owning item)
+  const [configuringProductInfo, setConfiguringProductInfo] = useState<{
+    product: NormalizedProduct;
+    itemId: string;
+  } | null>(null);
   const [configuredProductIds, setConfiguredProductIds] = useState<Set<string>>(new Set());
   const [configuredVariants, setConfiguredVariants] = useState<Record<string, ProductVariantSelection>>({});
 
-  // Product Results & Showcase State
-  const [products, setProducts] = useState<NormalizedProduct[]>([]);
-  const [comparison, setComparison] = useState<AiComparisonResult | null>(null);
-  const [evidenceFacts, setEvidenceFacts] = useState<Record<string, EvidenceFact>>({});
-  const [hasSearched, setHasSearched] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  // Helper to open/close variant configurator scoped to active item
+  const setConfiguringProduct = useCallback(
+    (product: NormalizedProduct | null) => {
+      if (!product) {
+        setConfiguringProductInfo(null);
+        return;
+      }
+      const ws = chatSession.workspace;
+      const activeItem = getActiveWorkspaceItem(ws);
+      if (activeItem) {
+        setConfiguringProductInfo({ product, itemId: activeItem.id });
+      }
+    },
+    [chatSession.workspace]
+  );
 
   // Background AI ranking & refinement progress
   const [isSearchingProducts, setIsSearchingProducts] = useState(false);
   const [isRankingAi, setIsRankingAi] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
 
-  // Monotonic ID to prevent race conditions from previous late responses
-  const activeSearchId = useRef(0);
+  // Per-item monotonic search counter to prevent race conditions across items and late responses
+  const activeItemSearches = useRef<Map<string, number>>(new Map());
 
   // Track hydration state to prevent initial render from overwriting stored workspace
   const isHydratedRef = useRef(false);
@@ -215,12 +231,8 @@ export default function Home() {
       ...fresh,
       workspace: freshWorkspace,
     });
-    setProducts([]);
-    setComparison(null);
-    setEvidenceFacts({});
-    setHasSearched(false);
-    setSearchError(null);
-    setConfiguringProduct(null);
+    activeItemSearches.current.clear();
+    setConfiguringProductInfo(null);
     setConfiguredProductIds(new Set());
     setConfiguredVariants({});
     setSelectedProductIds(new Set());
@@ -234,68 +246,136 @@ export default function Home() {
   }, [currency]);
 
   const handleCompareProducts = useCallback(
-    async (candidateProductIds: string[]) => {
-      if (products.length === 0) return;
+    async (candidateProductIds: string[], targetItemId?: string) => {
+      const ws = chatSession.workspace;
+      const itemId = targetItemId || ws?.activeItemId;
+      if (!ws || !itemId) return;
+      const itemRecord = findItemInWorkspace(ws, itemId);
+      if (!itemRecord || !itemRecord.item.candidates.length) return;
+
+      const item = itemRecord.item;
+      const candidateProducts = item.candidates.filter((p) =>
+        candidateProductIds.includes(p.sourceProductId || p.title)
+      );
+      const toCompare = candidateProducts.length >= 2 ? candidateProducts : item.candidates.slice(0, 4);
+      const majorBudget = minorToMajorUnits(
+        item.individualBudget?.amountMinor ?? itemRecord.group.budget?.amountMinor ?? chatSession.budget
+      );
+      const searchCurrency =
+        item.individualBudget?.currency ?? itemRecord.group.budget?.currency ?? chatSession.currency ?? currency;
+
       setIsRankingAi(true);
       try {
-        const candidateProducts = products.filter((p) =>
-          candidateProductIds.includes(p.sourceProductId || p.title)
-        );
-        const toCompare = candidateProducts.length >= 2 ? candidateProducts : products.slice(0, 4);
-        const majorBudget = minorToMajorUnits(chatSession.budget);
-
         const compRes = await fetch("/api/shopping/recommend", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            query: chatSession.originalRequest,
+            query: item.searchQuery || item.productRequest || chatSession.originalRequest,
             budget: majorBudget,
-            currency: chatSession.currency || currency,
+            currency: searchCurrency,
             products: toCompare,
-            canonicalAttributes: chatSession.canonicalAttributes,
+            canonicalAttributes: item.hardConstraints || chatSession.canonicalAttributes,
           }),
         });
 
         const compData = (await compRes.json()) as ShoppingRecommendResponsePayload;
         if (compRes.ok && compData.success && compData.comparison) {
-          setComparison(compData.comparison);
-          setEvidenceFacts(compData.evidenceFacts || {});
-          if (compData.allProducts && compData.allProducts.length > 0) {
-            setProducts(compData.allProducts);
-          }
+          setChatSession((prev) => {
+            if (!prev.workspace) return prev;
+            const nextWs = updateItemComparison(
+              prev.workspace,
+              itemId,
+              compData.comparison ?? null,
+              compData.evidenceFacts || {},
+              compData.allProducts && compData.allProducts.length > 0 ? compData.allProducts : undefined
+            );
+            saveWorkspaceToStorage(nextWs);
+            return { ...prev, workspace: nextWs };
+          });
         }
       } catch {
-        // Keep existing results
+        // Keep existing comparison
       } finally {
         setIsRankingAi(false);
       }
     },
-    [products, chatSession.budget, chatSession.originalRequest, chatSession.currency, chatSession.canonicalAttributes, currency]
+    [chatSession.workspace, chatSession.budget, chatSession.originalRequest, chatSession.currency, chatSession.canonicalAttributes, currency]
   );
 
   /**
    * Executes verified Channel3 product discovery and background AI comparison
+   * strictly scoped to originating item identity.
    */
   const executeDirectSearch = useCallback(
     async (
-      searchQuery: string,
-      searchBudget: number | null,
-      searchCurrency: CurrencyCode = "USD",
-      searchCanonicalAttrs?: Record<string, CanonicalShoppingAttribute>
+      optionsOrQuery:
+        | {
+            itemId?: string;
+            searchQuery: string;
+            budgetMinor?: number | null;
+            currency?: CurrencyCode;
+            canonicalAttributes?: Record<string, CanonicalShoppingAttribute>;
+            workspaceRevision?: number;
+          }
+        | string,
+      legacyBudget?: number | null,
+      legacyCurrency: CurrencyCode = "USD",
+      legacyCanonicalAttrs?: Record<string, CanonicalShoppingAttribute>
     ) => {
-      const currentId = ++activeSearchId.current;
-      const majorBudget = minorToMajorUnits(searchBudget);
+      const isObjectParam = typeof optionsOrQuery === "object" && optionsOrQuery !== null;
+      const searchQuery = isObjectParam ? optionsOrQuery.searchQuery : optionsOrQuery;
+      const initialItemId = isObjectParam ? optionsOrQuery.itemId : undefined;
+      const initialBudget = isObjectParam ? optionsOrQuery.budgetMinor : legacyBudget;
+      const initialCurrency = isObjectParam ? optionsOrQuery.currency || "USD" : legacyCurrency;
+      const searchCanonicalAttrs = isObjectParam ? optionsOrQuery.canonicalAttributes : legacyCanonicalAttrs;
 
-      setHasSearched(true);
-      setSearchError(null);
+      let ws = chatSession.workspace || createInitialWorkspace({ currency });
+      let targetItemId = initialItemId || ws.activeItemId;
+
+      // 1. Resolve exact originating item. If workspace is empty or item doesn't exist, create it
+      let itemRecord = targetItemId ? findItemInWorkspace(ws, targetItemId) : null;
+      if (!itemRecord) {
+        ws = addIndependentItem(ws, {
+          productRequest: searchQuery,
+          category: "general",
+          displayName: searchQuery,
+        });
+        targetItemId = ws.activeItemId!;
+        itemRecord = findItemInWorkspace(ws, targetItemId);
+      }
+      if (!targetItemId || !itemRecord) return;
+
+      const originatingItemId = targetItemId;
+
+      // 2. Generate unique per-item search sequence and searchId
+      const searchSeq = (activeItemSearches.current.get(originatingItemId) || 0) + 1;
+      activeItemSearches.current.set(originatingItemId, searchSeq);
+      const searchId = `search_${originatingItemId}_${searchSeq}_${Date.now()}`;
+
+      // 3. Resolve item-specific budget and currency (never mix with other items)
+      const effectiveBudgetMinor =
+        itemRecord.item.individualBudget?.amountMinor ??
+        itemRecord.group.budget?.amountMinor ??
+        initialBudget ??
+        chatSession.budget ??
+        null;
+      const searchCurrency =
+        itemRecord.item.individualBudget?.currency ??
+        itemRecord.group.budget?.currency ??
+        initialCurrency ??
+        chatSession.currency ??
+        currency;
+      const majorBudget = minorToMajorUnits(effectiveBudgetMinor);
+      const searchFingerprint = `${searchQuery}_${majorBudget || 0}_${searchCurrency}`;
+
       setIsSearchingProducts(true);
 
-      const reqCategory = chatSession.shoppingBrief?.productRequirements?.[0]?.category || "";
+      const reqCategory = itemRecord.item.category || chatSession.shoppingBrief?.productRequirements?.[0]?.category || "";
       const isWinter =
         searchQuery.toLowerCase().includes("winter") ||
         (chatSession.shoppingBrief?.userGoal?.toLowerCase().includes("winter") ?? false);
 
-      // Stage B: Searching (animated dots)
+      // Stage B: Searching
       const searchingMsg = getProgressMessage("searching", searchQuery, reqCategory, { isWinter });
       setSearchProgress({
         stage: "searching",
@@ -303,8 +383,19 @@ export default function Home() {
       });
       setChatStatusText(searchingMsg);
       setIsRankingAi(false);
-      setComparison(null);
-      setEvidenceFacts({});
+
+      // Mark only originating item as searching in workspace
+      setChatSession((prev) => {
+        const curWs = prev.workspace || ws;
+        const nextWs = updateItemSearchResults(curWs, originatingItemId, {
+          searchId,
+          searchFingerprint,
+          searchStatus: "searching",
+          searchError: null,
+        });
+        saveWorkspaceToStorage(nextWs);
+        return { ...prev, workspace: nextWs };
+      });
 
       try {
         const searchRes = await fetch("/api/products/search", {
@@ -322,47 +413,67 @@ export default function Home() {
         });
 
         const searchData = (await searchRes.json()) as SearchProductsResponsePayload;
-        if (currentId !== activeSearchId.current) return;
+
+        // Verify that this search has not been superseded by a newer search on this same item
+        if (activeItemSearches.current.get(originatingItemId) !== searchSeq) return;
 
         if (!searchRes.ok || !searchData.success) {
-          setProducts([]);
           setIsSearchingProducts(false);
           setSearchProgress(null);
-          setSearchError(searchData.error || "Unable to retrieve products. Please try again.");
-          setChatSession((prev) => ({
-            ...prev,
-            messages: [
-              ...prev.messages,
-              {
-                id: `msg_err_${Date.now()}`,
-                role: "assistant",
-                content: "I ran into a temporary issue retrieving live products. Your requirements are preserved. Please click below or reply to try again.",
-                createdAt: Date.now(),
-              },
-            ],
-          }));
+          setChatSession((prev) => {
+            if (!prev.workspace) return prev;
+            const nextWs = updateItemSearchResults(prev.workspace, originatingItemId, {
+              searchId,
+              searchStatus: "error",
+              searchError: searchData.error || "Unable to retrieve products. Please try again.",
+            });
+            saveWorkspaceToStorage(nextWs);
+            return {
+              ...prev,
+              workspace: nextWs,
+              messages: [
+                ...prev.messages,
+                {
+                  id: `msg_err_${Date.now()}`,
+                  role: "assistant",
+                  content: "I ran into a temporary issue retrieving live products. Your requirements are preserved. Please click below or reply to try again.",
+                  createdAt: Date.now(),
+                },
+              ],
+            };
+          });
           return;
         }
 
         const retrievedProducts = searchData.products || [];
-        setProducts(retrievedProducts);
         setIsSearchingProducts(false);
 
         if (retrievedProducts.length === 0) {
           setSearchProgress(null);
-          setChatSession((prev) => ({
-            ...prev,
-            stage: "product_selection",
-            messages: [
-              ...prev.messages,
-              {
-                id: `msg_empty_${Date.now()}`,
-                role: "assistant",
-                content: "I couldn't find any products matching those exact specifications. Would you like to adjust your price range, brand, or key features?",
-                createdAt: Date.now(),
-              },
-            ],
-          }));
+          setChatSession((prev) => {
+            if (!prev.workspace) return prev;
+            const nextWs = updateItemSearchResults(prev.workspace, originatingItemId, {
+              searchId,
+              searchStatus: "completed",
+              candidates: [],
+              searchError: null,
+            });
+            saveWorkspaceToStorage(nextWs);
+            return {
+              ...prev,
+              workspace: nextWs,
+              stage: "product_selection",
+              messages: [
+                ...prev.messages,
+                {
+                  id: `msg_empty_${Date.now()}`,
+                  role: "assistant",
+                  content: "I couldn't find any products matching those exact specifications. Would you like to adjust your price range, brand, or key features?",
+                  createdAt: Date.now(),
+                },
+              ],
+            };
+          });
           return;
         }
 
@@ -382,6 +493,17 @@ export default function Home() {
         setChatStatusText(comparingMsg);
         setIsRankingAi(true);
 
+        // Mark item as comparing in workspace
+        setChatSession((prev) => {
+          if (!prev.workspace) return prev;
+          const nextWs = updateItemSearchResults(prev.workspace, originatingItemId, {
+            searchId,
+            searchStatus: "comparing",
+            candidates: retrievedProducts,
+          });
+          return { ...prev, workspace: nextWs };
+        });
+
         let finalRecComparison: AiComparisonResult | null = null;
         let finalRecEvidence: Record<string, EvidenceFact> = {};
         let finalAllProducts: NormalizedProduct[] = retrievedProducts;
@@ -400,7 +522,7 @@ export default function Home() {
           });
 
           const recData = (await recRes.json()) as ShoppingRecommendResponsePayload;
-          if (currentId !== activeSearchId.current) return;
+          if (activeItemSearches.current.get(originatingItemId) !== searchSeq) return;
 
           if (recRes.ok && recData.success && recData.comparison) {
             finalRecComparison = recData.comparison;
@@ -408,15 +530,12 @@ export default function Home() {
             if (recData.allProducts && recData.allProducts.length > 0) {
               finalAllProducts = recData.allProducts;
             }
-            setComparison(finalRecComparison);
-            setEvidenceFacts(finalRecEvidence);
-            setProducts(finalAllProducts);
           }
         } catch {
           // AI comparison failure: product catalog remains visible without pretending comparison succeeded
-          setComparison(null);
+          finalRecComparison = null;
         } finally {
-          if (currentId === activeSearchId.current) {
+          if (activeItemSearches.current.get(originatingItemId) === searchSeq) {
             setIsRankingAi(false);
           }
         }
@@ -426,41 +545,24 @@ export default function Home() {
         const finalMsg = getProgressMessage("completed", searchQuery, reqCategory, { isWinter });
 
         setChatSession((prev) => {
-          let ws = prev.workspace;
-          if (ws) {
-            let targetItemId = ws.activeItemId;
-            if (!targetItemId || ws.groups.length === 0) {
-              ws = addIndependentItem(ws, {
-                productRequest: searchQuery,
-                category: reqCategory || "general",
-                displayName: searchQuery,
-              });
-              targetItemId = ws.activeItemId;
-            }
+          const curWs = prev.workspace;
+          if (!curWs) return prev;
 
-            if (targetItemId) {
-              const updatedGroups = ws.groups.map((g) => ({
-                ...g,
-                items: g.items.map((i) => {
-                  if (i.id === targetItemId) {
-                    return {
-                      ...i,
-                      searchId: `search_${currentId}`,
-                      searchFingerprint: `${searchQuery}_${majorBudget || 0}_${searchCurrency}`,
-                      searchStatus: "completed" as const,
-                      candidates: finalAllProducts,
-                      comparison: finalRecComparison,
-                      evidenceFacts: finalRecEvidence,
-                      status: (i.status === "selected" ? "selected" : "results_ready") as ShoppingItem["status"],
-                    };
-                  }
-                  return i;
-                }),
-              }));
-              ws = { ...ws, groups: updatedGroups, updatedAt: Date.now() };
-              saveWorkspaceToStorage(ws);
-            }
-          }
+          // Verify originating item still exists
+          const itemExists = findItemInWorkspace(curWs, originatingItemId);
+          if (!itemExists) return prev;
+
+          // Update ONLY the originating item without modifying activeItemId
+          const nextWs = updateItemSearchResults(curWs, originatingItemId, {
+            searchId,
+            searchFingerprint,
+            searchStatus: "completed",
+            candidates: finalAllProducts,
+            comparison: finalRecComparison,
+            evidenceFacts: finalRecEvidence,
+            searchError: null,
+          });
+          saveWorkspaceToStorage(nextWs);
 
           const hasRecentIntro = prev.messages.slice(-3).some(
             (m) =>
@@ -469,34 +571,42 @@ export default function Home() {
                 m.content.includes("compared the available options") ||
                 m.content.includes("best matches"))
           );
+
           return {
             ...prev,
-            workspace: ws,
+            workspace: nextWs,
             stage: "product_selection",
-            retrievedProductIds: finalAllProducts.map((p) => p.sourceProductId || p.title),
             messages: hasRecentIntro
               ? prev.messages
               : [
-                ...prev.messages,
-                {
-                  id: `msg_completed_${Date.now()}`,
-                  role: "assistant",
-                  content: finalMsg,
-                  createdAt: Date.now(),
-                },
-              ],
+                  ...prev.messages,
+                  {
+                    id: `msg_completed_${Date.now()}`,
+                    role: "assistant",
+                    content: finalMsg,
+                    createdAt: Date.now(),
+                  },
+                ],
           };
         });
       } catch {
-        if (currentId !== activeSearchId.current) return;
-        setProducts([]);
+        if (activeItemSearches.current.get(originatingItemId) !== searchSeq) return;
         setIsSearchingProducts(false);
         setIsRankingAi(false);
         setSearchProgress(null);
-        setSearchError("Failed to connect to product search service. Please try again.");
+        setChatSession((prev) => {
+          if (!prev.workspace) return prev;
+          const nextWs = updateItemSearchResults(prev.workspace, originatingItemId, {
+            searchId,
+            searchStatus: "error",
+            searchError: "Failed to connect to product search service. Please try again.",
+          });
+          saveWorkspaceToStorage(nextWs);
+          return { ...prev, workspace: nextWs };
+        });
       }
     },
-    [chatSession.canonicalAttributes, chatSession.shoppingBrief]
+    [chatSession.workspace, chatSession.budget, chatSession.currency, chatSession.canonicalAttributes, chatSession.shoppingBrief, currency]
   );
 
   const handleSendChatMessage = useCallback(
@@ -624,9 +734,7 @@ export default function Home() {
       }
 
       const activeItem = getActiveWorkspaceItem(sessionToUse.workspace);
-      const relevantCandidates = activeItem?.candidates?.length
-        ? activeItem.candidates
-        : (sessionToUse.workspace?.groups?.length ? [] : products);
+      const relevantCandidates = activeItem?.candidates ?? [];
 
       const currentSummary = relevantCandidates.slice(0, 6).map((p) => ({
         id: p.sourceProductId || p.title,
@@ -731,13 +839,9 @@ export default function Home() {
                   setSearchProgress(null);
                 } else if (event.type === "action") {
                   if (event.action === "start_new_task" || event.action === "new_shopping_task") {
-                    setProducts([]);
-                    setComparison(null);
-                    setEvidenceFacts({});
-                    setHasSearched(false);
-                    setSearchError(null);
                     setConfiguredProductIds(new Set());
                     setConfiguredVariants({});
+                    setConfiguringProductInfo(null);
                   }
                   if (event.shouldExecuteSearch) {
                     shouldSearchAfterStream = true;
@@ -801,16 +905,25 @@ export default function Home() {
           );
 
           if (finalSession && shouldSearchAfterStream && !hasPendingClarification) {
-            const activeReq =
-              finalSession.shoppingBrief?.productRequirements?.find((r) => r.searchQuery) ||
-              finalSession.shoppingBrief?.productRequirements?.[0];
-            const queryTerm = activeReq?.searchQuery || activeReq?.displayName || finalSession.originalRequest || messageText;
-            await executeDirectSearch(
-              queryTerm,
-              finalSession.budget,
-              finalSession.currency || currency,
-              finalSession.canonicalAttributes
-            );
+            const ws = finalSession.workspace;
+            const activeItem = getActiveWorkspaceItem(ws);
+            const activeReq = resolveRequirementForItem(finalSession.shoppingBrief, activeItem);
+            const queryTerm =
+              activeReq?.searchQuery ||
+              activeReq?.displayName ||
+              activeItem?.productRequest ||
+              finalSession.originalRequest ||
+              messageText;
+            const itemBudget = activeItem?.individualBudget?.amountMinor ?? finalSession.budget;
+            const itemCurrency = activeItem?.individualBudget?.currency ?? finalSession.currency ?? currency;
+
+            await executeDirectSearch({
+              itemId: activeItem?.id,
+              searchQuery: queryTerm,
+              budgetMinor: itemBudget,
+              currency: itemCurrency,
+              canonicalAttributes: finalSession.canonicalAttributes,
+            });
           } else {
             setSearchProgress(null);
           }
@@ -835,13 +948,9 @@ export default function Home() {
         }
 
         if (data.action === "new_shopping_task" || data.action === "start_new_task") {
-          setProducts([]);
-          setComparison(null);
-          setEvidenceFacts({});
-          setHasSearched(false);
-          setSearchError(null);
           setConfiguredProductIds(new Set());
           setConfiguredVariants({});
+          setConfiguringProductInfo(null);
         }
 
         const assistantMsgContent = (data.message || data.assistantMessage || "").trim();
@@ -857,27 +966,38 @@ export default function Home() {
         );
 
         if (data.shouldExecuteSearch && !hasPendingClarification && !textEndsWithQuestion) {
-          const activeReq =
-            data.session?.shoppingBrief?.productRequirements?.find((r: { searchQuery?: string }) => r.searchQuery) ||
-            data.session?.shoppingBrief?.productRequirements?.[0];
-          const queryTerm = activeReq?.searchQuery || activeReq?.displayName || data.session?.originalRequest || messageText;
-          await executeDirectSearch(
-            queryTerm,
-            data.session?.budget,
-            data.session?.currency || currency,
-            data.session?.canonicalAttributes
-          );
+          const ws = data.session?.workspace;
+          const activeItem = getActiveWorkspaceItem(ws);
+          const activeReq = resolveRequirementForItem(data.session?.shoppingBrief, activeItem);
+          const queryTerm =
+            activeReq?.searchQuery ||
+            activeReq?.displayName ||
+            activeItem?.productRequest ||
+            data.session?.originalRequest ||
+            messageText;
+          const itemBudget = activeItem?.individualBudget?.amountMinor ?? data.session?.budget;
+          const itemCurrency = activeItem?.individualBudget?.currency ?? data.session?.currency ?? currency;
+
+          await executeDirectSearch({
+            itemId: activeItem?.id,
+            searchQuery: queryTerm,
+            budgetMinor: itemBudget,
+            currency: itemCurrency,
+            canonicalAttributes: data.session?.canonicalAttributes,
+          });
         } else {
           setSearchProgress(null);
           if (data.shouldExecuteComparison && data.comparisonRequestedProductIds?.length) {
             setChatStatusText("Comparing the best matches...");
             await handleCompareProducts(data.comparisonRequestedProductIds);
           } else if (data.variantConfiguration?.productId) {
-            const prodToConfig = products.find(
+            const ws = data.session?.workspace;
+            const activeItem = getActiveWorkspaceItem(ws);
+            const prodToConfig = activeItem?.candidates?.find(
               (p) => (p.sourceProductId || p.title) === data.variantConfiguration.productId
             );
-            if (prodToConfig) {
-              setConfiguringProduct(prodToConfig);
+            if (prodToConfig && activeItem) {
+              setConfiguringProductInfo({ product: prodToConfig, itemId: activeItem.id });
             }
           }
         }
@@ -901,7 +1021,7 @@ export default function Home() {
         setChatStatusText(null);
       }
     },
-    [chatSession, products, currency, executeDirectSearch, handleCompareProducts]
+    [chatSession, currency, executeDirectSearch, handleCompareProducts]
   );
 
   /**
@@ -915,168 +1035,126 @@ export default function Home() {
     ) {
       return;
     }
-    const activeReq =
-      chatSession.shoppingBrief?.productRequirements?.find((r) => r.searchQuery) ||
-      chatSession.shoppingBrief?.productRequirements?.[0];
+    const ws = chatSession.workspace;
+    const activeItem = getActiveWorkspaceItem(ws);
+    const activeReq = resolveRequirementForItem(chatSession.shoppingBrief, activeItem);
     const queryTerm =
-      activeReq?.searchQuery || activeReq?.displayName || chatSession.originalRequest || "products";
-    executeDirectSearch(
-      queryTerm,
-      chatSession.budget,
-      chatSession.currency || currency,
-      chatSession.canonicalAttributes
-    );
+      activeReq?.searchQuery ||
+      activeReq?.displayName ||
+      activeItem?.productRequest ||
+      chatSession.originalRequest ||
+      "products";
+    const itemBudget = activeItem?.individualBudget?.amountMinor ?? chatSession.budget;
+    const itemCurrency = activeItem?.individualBudget?.currency ?? chatSession.currency ?? currency;
+
+    executeDirectSearch({
+      itemId: activeItem?.id,
+      searchQuery: queryTerm,
+      budgetMinor: itemBudget,
+      currency: itemCurrency,
+      canonicalAttributes: chatSession.canonicalAttributes,
+    });
   };
 
   /**
-   * Product Variant Configuration Confirmation
+   * Product Variant Configuration Confirmation (scoped to owning item)
    */
-  const handleConfirmVariantSelection = (selection: ProductVariantSelection) => {
+  const handleConfirmVariantSelection = (
+    selection: ProductVariantSelection,
+    targetItemId?: string
+  ) => {
     setConfiguredProductIds((prev) => new Set([...prev, selection.productId]));
     setConfiguredVariants((prev) => ({
       ...prev,
       [selection.productId]: selection,
     }));
 
-    // Update product pricing and metadata in current product results
-    setProducts((prev) =>
-      prev.map((p) => {
-        const pid = p.sourceProductId || p.title;
-        if (pid === selection.productId) {
-          return {
-            ...p,
-            title: selection.title || p.title,
-            priceMinor: selection.confirmedPriceMinor ?? p.priceMinor,
-            retailerUrl: selection.confirmedRetailerUrl || p.retailerUrl,
-            imageUrl: selection.imageUrl || p.imageUrl,
-            retailerName: selection.retailerName || p.retailerName,
-          };
-        }
-        return p;
-      })
-    );
+    const resolvedItemId =
+      targetItemId || configuringProductInfo?.itemId || chatSession.workspace?.activeItemId;
 
-    // Sync updated selection, options, and color image to shopping workspace / cart if already added
-    setChatSession((prev) => {
-      let ws = prev.workspace;
-      let hasUpdatedWs = false;
-      if (ws && ws.groups) {
-        const activeItemId = ws.activeItemId;
-        const newGroups = ws.groups.map((group) => ({
-          ...group,
-          items: group.items.map((item) => {
-            const isMatch =
-              (item.selectedProduct &&
-                (item.selectedProduct.sourceProductId === selection.productId ||
-                  item.selectedProduct.title === selection.title)) ||
-              (activeItemId && item.id === activeItemId);
-            if (isMatch && item.selectedProduct) {
-              hasUpdatedWs = true;
-              return {
-                ...item,
-                selectedVariant: (selection.selectedOptions as Record<string, string>) || item.selectedVariant,
-                selectedProduct: {
-                  ...item.selectedProduct,
-                  title: selection.title || item.selectedProduct.title,
-                  priceMinor: selection.confirmedPriceMinor ?? item.selectedProduct.priceMinor,
-                  retailerUrl: selection.confirmedRetailerUrl || item.selectedProduct.retailerUrl,
-                  imageUrl: selection.imageUrl || item.selectedProduct.imageUrl,
-                  retailerName: selection.retailerName || item.selectedProduct.retailerName,
-                },
-              };
-            }
-            return item;
-          }),
-        }));
-        if (hasUpdatedWs) {
-          ws = { ...ws, groups: newGroups, updatedAt: Date.now() };
-          saveWorkspaceToStorage(ws);
-        }
-      }
-      return {
-        ...prev,
-        workspace: ws,
-      };
-    });
-
-    setConfiguringProduct(null);
-  };
-
-  const handleSelectOffer = (product: NormalizedProduct, offer: ProductOfferItem) => {
-    const updated = selectRetailerOffer(product, offer.url, chatSession.canonicalAttributes);
-    const pid = product.sourceProductId || product.title;
-
-    setProducts((prev) =>
-      prev.map((p) => ((p.sourceProductId || p.title) === pid ? updated : p))
-    );
-
-    // Persist selected offer onto matching item in workspace and localStorage
-    setChatSession((prev) => {
-      const ws = prev.workspace;
-      if (!ws || !ws.groups) return prev;
-      let hasUpdated = false;
-      const activeItemId = ws.activeItemId;
-
-      const newGroups = ws.groups.map((group) => ({
-        ...group,
-        items: group.items.map((item) => {
-          const isSelectedMatch =
-            item.selectedProduct &&
-            ((item.selectedProduct.sourceProductId && item.selectedProduct.sourceProductId === pid) ||
-              item.selectedProduct.title === product.title);
-          const isActiveItemMatch = activeItemId ? item.id === activeItemId : false;
-
-          if (isSelectedMatch || (isActiveItemMatch && item.status === "selected")) {
-            hasUpdated = true;
-            return {
-              ...item,
-              selectedOffer: offer,
-              selectedProduct: item.selectedProduct
-                ? {
-                    ...item.selectedProduct,
-                    priceMinor: offer.priceMinor,
-                    retailerUrl: offer.url,
-                    retailerName: offer.domain || item.selectedProduct.retailerName,
-                    selectedOffer: offer,
-                  }
-                : null,
-            };
-          }
-          return item;
-        }),
-      }));
-
-      if (hasUpdated) {
-        const nextWs = { ...ws, groups: newGroups, updatedAt: Date.now() };
+    if (resolvedItemId) {
+      setChatSession((prev) => {
+        const ws = prev.workspace;
+        if (!ws) return prev;
+        const nextWs = updateVariantForItem(ws, resolvedItemId, selection);
         saveWorkspaceToStorage(nextWs);
-        return { ...prev, workspace: nextWs };
-      }
-      return prev;
-    });
+        return {
+          ...prev,
+          workspace: nextWs,
+        };
+      });
+    }
+
+    setConfiguringProductInfo(null);
   };
 
-  const handleRefinePriority = async (priorityText: string) => {
-    if (products.length === 0) return;
+  const handleSelectOffer = (
+    product: NormalizedProduct,
+    offer: ProductOfferItem,
+    targetItemId?: string
+  ) => {
+    const pid = product.sourceProductId || product.title;
+    const resolvedItemId = targetItemId || chatSession.workspace?.activeItemId;
+
+    if (resolvedItemId) {
+      setChatSession((prev) => {
+        const ws = prev.workspace;
+        if (!ws) return prev;
+        const nextWs = selectOfferForItem(ws, resolvedItemId, pid, offer);
+        saveWorkspaceToStorage(nextWs);
+        return {
+          ...prev,
+          workspace: nextWs,
+        };
+      });
+    }
+  };
+
+  const handleRefinePriority = async (priorityText: string, targetItemId?: string) => {
+    const ws = chatSession.workspace;
+    const resolvedItemId = targetItemId || ws?.activeItemId;
+    if (!ws || !resolvedItemId) return;
+
+    const itemRecord = findItemInWorkspace(ws, resolvedItemId);
+    if (!itemRecord || !itemRecord.item.candidates.length) return;
+
     setIsRefining(true);
 
     try {
-      const majorBudget = minorToMajorUnits(chatSession.budget);
+      const item = itemRecord.item;
+      const majorBudget = minorToMajorUnits(
+        item.individualBudget?.amountMinor ?? itemRecord.group.budget?.amountMinor ?? chatSession.budget
+      );
+      const searchCurrency =
+        item.individualBudget?.currency ?? itemRecord.group.budget?.currency ?? chatSession.currency ?? currency;
+
       const recRes = await fetch("/api/shopping/recommend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          query: chatSession.originalRequest,
-          products,
+          query: item.searchQuery || item.productRequest || chatSession.originalRequest,
+          products: item.candidates,
           budget: majorBudget,
-          currency: chatSession.currency || currency,
+          currency: searchCurrency,
           priorityOverride: priorityText,
         }),
       });
 
       const recData = (await recRes.json()) as ShoppingRecommendResponsePayload;
       if (recRes.ok && recData.success && recData.comparison) {
-        setComparison(recData.comparison);
-        setEvidenceFacts(recData.evidenceFacts || {});
+        setChatSession((prev) => {
+          const currentWs = prev.workspace;
+          if (!currentWs) return prev;
+          const nextWs = updateItemComparison(
+            currentWs,
+            resolvedItemId,
+            recData.comparison ?? null,
+            recData.evidenceFacts || {},
+            item.candidates
+          );
+          saveWorkspaceToStorage(nextWs);
+          return { ...prev, workspace: nextWs };
+        });
       }
     } catch {
       // Keep existing comparison
@@ -1090,37 +1168,37 @@ export default function Home() {
    * and triggers conversational follow-up (Section 4 & 15).
    */
   const handleSelectProduct = useCallback(
-    (product: NormalizedProduct) => {
+    (product: NormalizedProduct, targetItemId?: string) => {
       const productId = product.sourceProductId || product.title;
       setSelectedProductIds((prev) => new Set([...prev, productId]));
 
       let ws = chatSession.workspace || createInitialWorkspace({ currency });
 
-      // Determine target item: active item, or unresolved item, or create one
-      let targetItemId = ws.activeItemId;
-      if (!targetItemId) {
+      // Determine target item: explicit targetItemId, active item, or unresolved item, or create one
+      let resolvedItemId = targetItemId || ws.activeItemId;
+      if (!resolvedItemId) {
         const next = getNextUnresolvedItem(ws);
-        if (next) targetItemId = next.item.id;
+        if (next) resolvedItemId = next.item.id;
       }
 
       // If workspace has no items yet, add independent item
-      if (!targetItemId || ws.groups.length === 0) {
+      if (!resolvedItemId || ws.groups.length === 0) {
         ws = addIndependentItem(ws, {
           productRequest: product.title,
           category: product.source || "general",
           displayName: product.title,
         });
-        targetItemId = ws.activeItemId;
+        resolvedItemId = ws.activeItemId;
       }
 
       const activeOffer = product.selectedOffer || product.offers?.[0] || null;
-      if (targetItemId) {
-        ws = selectProductForItem(ws, targetItemId, product, activeOffer);
+      if (resolvedItemId) {
+        ws = selectProductForItem(ws, resolvedItemId, product, activeOffer);
         saveWorkspaceToStorage(ws);
       }
 
       // Determine parent group type (coordinated setup vs independent)
-      const targetGroup = ws.groups.find((g) => g.items.some((i) => i.id === targetItemId));
+      const targetGroup = ws.groups.find((g) => g.items.some((i) => i.id === resolvedItemId));
       const isSetup = targetGroup?.type === "coordinated_setup";
 
       if (isSetup && targetGroup) {
@@ -1144,12 +1222,13 @@ export default function Home() {
             messages: [...prev.messages, assistantMsg],
           }));
 
-          // Trigger search for the next unresolved component
-          executeDirectSearch(
-            unresolved.searchQuery || unresolved.productRequest,
-            unresolved.individualBudget?.amountMinor || targetGroup.budget?.amountMinor || null,
-            targetGroup.budget?.currency || currency
-          );
+          // Trigger search for the next unresolved component with its exact itemId
+          executeDirectSearch({
+            itemId: unresolved.id,
+            searchQuery: unresolved.searchQuery || unresolved.productRequest,
+            budgetMinor: unresolved.individualBudget?.amountMinor || targetGroup.budget?.amountMinor || null,
+            currency: targetGroup.budget?.currency || currency,
+          });
         } else {
           // Completed setup
           const summary = calculateWorkspaceBudgetSummary(ws, currency);
@@ -1198,19 +1277,21 @@ export default function Home() {
   );
 
   const activeWorkspaceItem = getActiveWorkspaceItem(currentWorkspace);
-  const activeItemCandidates = activeWorkspaceItem?.candidates;
-  const activeItemComparison = activeWorkspaceItem?.comparison;
-  const activeItemEvidence = activeWorkspaceItem?.evidenceFacts;
-
-  // Use active item scoped data when available, otherwise fall back to top-level state
-  const displayedProducts = (activeItemCandidates && activeItemCandidates.length > 0)
-    ? activeItemCandidates
-    : (activeWorkspaceItem ? [] : products);
-  const displayedComparison = activeItemComparison ?? comparison;
-  const displayedEvidenceFacts = (activeItemEvidence && Object.keys(activeItemEvidence).length > 0)
-    ? activeItemEvidence
-    : evidenceFacts;
-  const displayedHasSearched = hasSearched || displayedProducts.length > 0;
+  const displayedProducts = activeWorkspaceItem?.candidates ?? [];
+  const displayedComparison = activeWorkspaceItem?.comparison ?? null;
+  const displayedEvidenceFacts = activeWorkspaceItem?.evidenceFacts ?? {};
+  const displayedSearchError = activeWorkspaceItem?.searchError ?? null;
+  const isItemSearching = isSearchingProducts || activeWorkspaceItem?.searchStatus === "searching";
+  const isItemComparing = isRankingAi || activeWorkspaceItem?.searchStatus === "comparing";
+  const displayedHasSearched = Boolean(
+    activeWorkspaceItem?.searchFingerprint ||
+    activeWorkspaceItem?.candidates?.length ||
+    activeWorkspaceItem?.searchStatus === "completed" ||
+    activeWorkspaceItem?.searchStatus === "searching" ||
+    activeWorkspaceItem?.searchStatus === "comparing" ||
+    activeWorkspaceItem?.searchStatus === "error" ||
+    activeWorkspaceItem?.searchError
+  );
 
   return (
     <div className="flex min-h-screen flex-col bg-transparent text-zinc-900 dark:text-[#E4E4E7]">
@@ -1249,34 +1330,34 @@ export default function Home() {
         </section>
 
         {/* Dedicated Product Showcasing Section (Separate section below chat) */}
-        {displayedHasSearched && (displayedProducts.length > 0 || isSearchingProducts || searchError) && (
+        {displayedHasSearched && (displayedProducts.length > 0 || isItemSearching || displayedSearchError) && (
           <LiveProductResults
             query={activeWorkspaceItem?.productRequest || chatSession.originalRequest || "products"}
-            budget={minorToMajorUnits(chatSession.budget)}
-            currency={chatSession.currency || currency}
+            budget={minorToMajorUnits(activeWorkspaceItem?.individualBudget?.amountMinor ?? chatSession.budget)}
+            currency={activeWorkspaceItem?.individualBudget?.currency ?? chatSession.currency ?? currency}
             products={displayedProducts}
             comparison={displayedComparison}
             evidenceFacts={displayedEvidenceFacts}
-            isSearchingProducts={isSearchingProducts}
-            isRankingAi={isRankingAi}
+            isSearchingProducts={isItemSearching}
+            isRankingAi={isItemComparing}
             isRefining={isRefining}
-            aiStatus={displayedComparison ? "complete" : isRankingAi ? "partial" : "unavailable"}
-            error={searchError}
+            aiStatus={displayedComparison ? "complete" : isItemComparing ? "partial" : "unavailable"}
+            error={displayedSearchError}
             onRetry={handleConfirmAndSearch}
             onSearchAgain={handleConfirmAndSearch}
             onConfigureProduct={(p) => setConfiguringProduct(p)}
-            onSelectOffer={handleSelectOffer}
-            onSelectProduct={handleSelectProduct}
+            onSelectOffer={(p, o) => handleSelectOffer(p, o, activeWorkspaceItem?.id)}
+            onSelectProduct={(p) => handleSelectProduct(p, activeWorkspaceItem?.id)}
             configuredProductIds={configuredProductIds}
             selectedProductIds={selectedProductIds}
-            onRefinePriority={handleRefinePriority}
+            onRefinePriority={(pr) => handleRefinePriority(pr, activeWorkspaceItem?.id)}
           />
         )}
 
         {/* Product Variant Configurator Modal */}
-        {configuringProduct && (
+        {configuringProductInfo && (
           <ProductVariantConfigurator
-            product={configuringProduct}
+            product={configuringProductInfo.product}
             initialSelections={{
               ...(chatSession.answers["shoe_size"]?.value || chatSession.answers["size"]?.value
                 ? { Size: String(chatSession.answers["shoe_size"]?.value || chatSession.answers["size"]?.value) }
@@ -1284,13 +1365,13 @@ export default function Home() {
               ...(chatSession.answers["color"]?.value && chatSession.answers["color"].value !== "No preference"
                 ? { Color: String(chatSession.answers["color"].value) }
                 : {}),
-              ...(configuredVariants[configuringProduct.sourceProductId || configuringProduct.title]?.selectedOptions || {}),
+              ...(configuredVariants[configuringProductInfo.product.sourceProductId || configuringProductInfo.product.title]?.selectedOptions || {}),
             }}
             currency={chatSession.currency || currency}
             budgetMinor={chatSession.budget}
-            isOpen={Boolean(configuringProduct)}
-            onClose={() => setConfiguringProduct(null)}
-            onConfirmSelection={handleConfirmVariantSelection}
+            isOpen={Boolean(configuringProductInfo)}
+            onClose={() => setConfiguringProductInfo(null)}
+            onConfirmSelection={(sel) => handleConfirmVariantSelection(sel, configuringProductInfo.itemId)}
           />
         )}
 
