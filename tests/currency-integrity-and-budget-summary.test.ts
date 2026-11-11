@@ -663,3 +663,486 @@ test("Test J: Individual item budget comparison (compareItemBudget handles curre
   assert.strictEqual(cmp.isOverBudget, false);
   assert.ok(cmp.message?.includes("differs from individual budget currency"));
 });
+
+test("Test K: Never report unpriced products as within budget (Rule 1 & Rule 2)", () => {
+  let ws = createInitialWorkspace({ currency: "USD" });
+  ws = {
+    ...ws,
+    overallBudget: { amountMinor: 120000, currency: "USD", strict: true },
+  };
+
+  // Item 1: MacBook Pro for $950 USD (priced)
+  ws = addIndependentItem(ws, { productRequest: "MacBook Pro" });
+  const macbookId = ws.groups[0].items[0].id;
+  const macbookProduct: NormalizedProduct = {
+    source: "channel3",
+    sourceProductId: "mbp_950",
+    title: "MacBook Pro 14",
+    imageUrl: null,
+    priceMinor: 95000,
+    currency: "USD",
+    retailerName: "Best Buy",
+    retailerUrl: "https://bestbuy.com/mbp",
+    availability: "in_stock",
+    specifications: {},
+    sourceFacts: [],
+    offers: [
+      {
+        id: "off_mbp_950",
+        domain: "Best Buy",
+        url: "https://bestbuy.com/mbp",
+        priceMinor: 95000,
+        currency: "USD",
+        availability: "in_stock",
+      },
+    ],
+  };
+  ws = selectProductForItem(ws, macbookId, macbookProduct, macbookProduct.offers![0]);
+
+  // Item 2: Running Shoes with missing/unpriced offer
+  ws = addIndependentItem(ws, { productRequest: "Marathon Shoes" });
+  const shoesId = ws.groups[0].items[1].id;
+  const unpricedShoesProduct: NormalizedProduct = {
+    source: "channel3",
+    sourceProductId: "shoes_unpriced",
+    title: "Marathon Running Shoes",
+    imageUrl: null,
+    priceMinor: null,
+    currency: "USD",
+    retailerName: "Running Warehouse",
+    retailerUrl: "https://runningwarehouse.com/shoes",
+    availability: "out_of_stock",
+    specifications: {},
+    sourceFacts: [],
+    offers: [
+      {
+        id: "off_shoes_unpriced",
+        domain: "Running Warehouse",
+        url: "https://runningwarehouse.com/shoes",
+        priceMinor: 0,
+        currency: "USD",
+        monetaryStatus: "invalid_price",
+        availability: "out_of_stock",
+      },
+    ],
+  };
+  ws = selectProductForItem(ws, shoesId, unpricedShoesProduct, unpricedShoesProduct.offers![0]);
+
+  // Calculate budget summary: $950 fits $1200, but unpriced shoes exist!
+  const summary = calculateWorkspaceBudgetSummary(ws, "USD");
+  assert.strictEqual(summary.unpricedCount, 1, "Unpriced item must be counted in unpricedCount");
+  assert.strictEqual(summary.totalsByCurrency["USD"], 95000, "USD total must only include priced items");
+  assert.strictEqual(summary.totalSelectedMinor, 95000);
+  assert.strictEqual(
+    summary.status,
+    "partially_comparable",
+    "Unpriced item must prevent 'within_budget' claim and yield 'partially_comparable'"
+  );
+  assert.strictEqual(summary.isOverBudget, false);
+
+  // If known items exceed budget ($1,300 > $1,200), 'over_budget' is preserved regardless of unpriced items
+  const expensiveProduct: NormalizedProduct = {
+    ...macbookProduct,
+    priceMinor: 130000,
+    offers: [{ ...macbookProduct.offers![0], priceMinor: 130000 }],
+  };
+  const wsOver = selectProductForItem(ws, macbookId, expensiveProduct, expensiveProduct.offers![0]);
+  const summaryOver = calculateWorkspaceBudgetSummary(wsOver, "USD");
+  assert.strictEqual(summaryOver.status, "over_budget", "Over-budget must be preserved");
+  assert.strictEqual(summaryOver.isOverBudget, true);
+
+  // If only the unpriced item is selected, total is 0 -> 'not_comparable'
+  let wsOnlyUnpriced = createInitialWorkspace({ currency: "USD" });
+  wsOnlyUnpriced = {
+    ...wsOnlyUnpriced,
+    overallBudget: { amountMinor: 120000, currency: "USD", strict: true },
+  };
+  wsOnlyUnpriced = addIndependentItem(wsOnlyUnpriced, { productRequest: "Marathon Shoes" });
+  const onlyShoesId = wsOnlyUnpriced.groups[0].items[0].id;
+  wsOnlyUnpriced = selectProductForItem(wsOnlyUnpriced, onlyShoesId, unpricedShoesProduct, unpricedShoesProduct.offers![0]);
+  const summaryOnlyUnpriced = calculateWorkspaceBudgetSummary(wsOnlyUnpriced, "USD");
+  assert.strictEqual(summaryOnlyUnpriced.unpricedCount, 1);
+  assert.strictEqual(summaryOnlyUnpriced.totalSelectedMinor, 0);
+  assert.strictEqual(summaryOnlyUnpriced.status, "not_comparable", "Zero priced items with unpriced selection yields not_comparable");
+});
+
+test("Test L: Individual item budget comparison rejects missing, zero, negative and non-safe integer prices (Rule 2 & Rule 3)", () => {
+  let ws = createInitialWorkspace({ currency: "USD" });
+  ws = addIndependentItem(ws, { productRequest: "Developer Laptop" });
+  const item = ws.groups[0].items[0];
+  item.individualBudget = { amountMinor: 150000, currency: "USD", strict: true };
+
+  // 1. Unselected item -> within_budget with null price (no product selected yet)
+  const unselectedCmp = compareItemBudget(item, "USD");
+  assert.strictEqual(unselectedCmp.status, "within_budget");
+  assert.strictEqual(unselectedCmp.priceMinor, null);
+
+  // 2. Selected item with missing/null price -> not_comparable
+  const nullPriceProduct: NormalizedProduct = {
+    source: "channel3",
+    sourceProductId: "null_price",
+    title: "Laptop Null Price",
+    imageUrl: null,
+    priceMinor: null,
+    currency: "USD",
+    retailerName: "Retailer",
+    retailerUrl: "https://example.com",
+    availability: "in_stock",
+    specifications: {},
+    sourceFacts: [],
+  };
+  ws = selectProductForItem(ws, item.id, nullPriceProduct);
+  let cmp = compareItemBudget(ws.groups[0].items[0], "USD");
+  assert.strictEqual(cmp.status, "not_comparable");
+  assert.strictEqual(cmp.remainingMinor, null);
+  assert.ok(cmp.message?.includes("missing or unavailable"));
+
+  // 3. Selected item with price = 0 -> not_comparable
+  const zeroPriceProduct: NormalizedProduct = {
+    ...nullPriceProduct,
+    priceMinor: 0,
+  };
+  ws = selectProductForItem(ws, item.id, zeroPriceProduct);
+  cmp = compareItemBudget(ws.groups[0].items[0], "USD");
+  assert.strictEqual(cmp.status, "not_comparable");
+  assert.strictEqual(cmp.remainingMinor, null);
+  assert.ok(cmp.message?.includes("must be a positive amount"));
+
+  // 4. Selected item with negative price -> not_comparable
+  const negativePriceProduct: NormalizedProduct = {
+    ...nullPriceProduct,
+    priceMinor: -5000,
+  };
+  ws = selectProductForItem(ws, item.id, negativePriceProduct);
+  cmp = compareItemBudget(ws.groups[0].items[0], "USD");
+  assert.strictEqual(cmp.status, "not_comparable");
+  assert.strictEqual(cmp.remainingMinor, null);
+
+  // 5. Selected item with non-safe integer price -> not_comparable
+  const floatPriceProduct: NormalizedProduct = {
+    ...nullPriceProduct,
+    priceMinor: 1299.99 as unknown as number,
+  };
+  ws = selectProductForItem(ws, item.id, floatPriceProduct);
+  cmp = compareItemBudget(ws.groups[0].items[0], "USD");
+  assert.strictEqual(cmp.status, "not_comparable");
+  assert.strictEqual(cmp.remainingMinor, null);
+  assert.ok(cmp.message?.includes("not a safe finite integer"));
+
+  // 6. Selected item with unsupported currency (e.g. JPY) -> not_comparable
+  const jpyProduct: NormalizedProduct = {
+    ...nullPriceProduct,
+    priceMinor: 150000,
+    currency: "JPY" as CurrencyCode,
+  };
+  ws = selectProductForItem(ws, item.id, jpyProduct);
+  cmp = compareItemBudget(ws.groups[0].items[0], "USD");
+  assert.strictEqual(cmp.status, "not_comparable");
+  assert.strictEqual(cmp.remainingMinor, null);
+  assert.ok(cmp.message?.includes("unsupported"));
+});
+
+test("Test M: Conflicting variant offer vs top-level fields prioritizes verified offer (Rule 6)", () => {
+  let ws = createInitialWorkspace({ currency: "USD" });
+  ws = addIndependentItem(ws, { productRequest: "Gaming Laptop" });
+  const itemId = ws.groups[0].items[0].id;
+
+  const baseProduct: NormalizedProduct = {
+    source: "channel3",
+    sourceProductId: "gaming_laptop_base",
+    title: "Gaming Laptop Base Model",
+    imageUrl: "https://example.com/base.jpg",
+    priceMinor: 120000,
+    currency: "USD",
+    retailerName: "Best Buy",
+    retailerUrl: "https://bestbuy.com/laptop",
+    availability: "in_stock",
+    specifications: {},
+    sourceFacts: [],
+    offers: [
+      {
+        id: "off_base",
+        domain: "Best Buy",
+        url: "https://bestbuy.com/laptop",
+        priceMinor: 120000,
+        currency: "USD",
+        availability: "in_stock",
+      },
+    ],
+  };
+  ws = selectProductForItem(ws, itemId, baseProduct, baseProduct.offers![0]);
+
+  // Provide a variant selection where confirmedOffer has verified data,
+  // but top-level fields have conflicting/stale data.
+  const verifiedOffer: ProductOfferItem = {
+    id: "off_upgraded_32gb",
+    domain: "B&H Photo",
+    url: "https://bhphoto.com/laptop-32gb",
+    priceMinor: 145000, // $1,450.00
+    currency: "USD",
+    availability: "in_stock",
+  };
+
+  const selectionWithConflict: ProductVariantSelection = {
+    productId: "gaming_laptop_base",
+    variantId: "var_32gb_1tb",
+    selectedOptions: { RAM: "32GB", Storage: "1TB" },
+    title: "Gaming Laptop 32GB RAM / 1TB SSD",
+    confirmedPriceMinor: 189900, // Conflicting top-level $1,899.00
+    confirmedCurrency: "EUR", // Conflicting top-level currency
+    retailerName: "Wrong Retailer",
+    confirmedRetailerUrl: "https://wrong.com",
+    confirmedOffer: verifiedOffer,
+    isConfirmed: true,
+  };
+
+  ws = updateVariantForItem(ws, itemId, selectionWithConflict);
+  const updatedItem = ws.groups[0].items[0];
+
+  assert.strictEqual(
+    updatedItem.selectedProduct?.priceMinor,
+    145000,
+    "Authoritative verified offer price must take precedence over conflicting top-level field"
+  );
+  assert.strictEqual(
+    updatedItem.selectedProduct?.currency,
+    "USD",
+    "Authoritative verified offer currency must take precedence over conflicting top-level field"
+  );
+  assert.strictEqual(
+    updatedItem.selectedProduct?.retailerUrl,
+    "https://bhphoto.com/laptop-32gb",
+    "Authoritative verified offer retailerUrl must take precedence over conflicting top-level field"
+  );
+  assert.strictEqual(
+    updatedItem.selectedProduct?.retailerName,
+    "B&H Photo",
+    "Authoritative verified offer domain must take precedence over conflicting top-level field"
+  );
+  assert.strictEqual(
+    updatedItem.selectedOffer?.priceMinor,
+    145000
+  );
+
+  // Unconfirmed variant (isConfirmed: false) must preserve existing verified configuration
+  const unconfirmedSelection: ProductVariantSelection = {
+    productId: "gaming_laptop_base",
+    variantId: "var_unconfirmed",
+    selectedOptions: { RAM: "16GB", Storage: "512GB" },
+    title: "Unconfirmed Phantom Configuration",
+    confirmedPriceMinor: 99900,
+    confirmedRetailerUrl: "https://dell.com/phantom",
+    confirmedCurrency: "USD",
+    isConfirmed: false,
+  };
+  ws = updateVariantForItem(ws, itemId, unconfirmedSelection);
+  assert.strictEqual(
+    ws.groups[0].items[0].selectedProduct?.priceMinor,
+    145000,
+    "Unconfirmed variant must not overwrite existing verified configuration"
+  );
+  assert.strictEqual(
+    ws.groups[0].items[0].selectedProduct?.title,
+    "Gaming Laptop 32GB RAM / 1TB SSD"
+  );
+});
+
+test("Test N: Arbitrary offer cannot be attached to a product without verifiable offer membership (Rule 7)", () => {
+  let ws = createInitialWorkspace({ currency: "USD" });
+  ws = addIndependentItem(ws, { productRequest: "Mechanical Keyboard" });
+  const itemId = ws.groups[0].items[0].id;
+
+  const validOfferA: ProductOfferItem = {
+    id: "off_key_a",
+    domain: "Keychron",
+    url: "https://keychron.com/q1",
+    priceMinor: 17000,
+    currency: "USD",
+    availability: "in_stock",
+  };
+
+  const validOfferB: ProductOfferItem = {
+    id: "off_key_b",
+    domain: "Amazon",
+    url: "https://amazon.com/keychron-q1",
+    priceMinor: 17500,
+    currency: "USD",
+    availability: "in_stock",
+  };
+
+  const keyboardProduct: NormalizedProduct = {
+    source: "channel3",
+    sourceProductId: "keychron_q1",
+    title: "Keychron Q1 Mechanical Keyboard",
+    imageUrl: null,
+    priceMinor: 17000,
+    currency: "USD",
+    retailerName: "Keychron",
+    retailerUrl: "https://keychron.com/q1",
+    availability: "in_stock",
+    specifications: {},
+    sourceFacts: [],
+    offers: [validOfferA, validOfferB],
+  };
+
+  ws = selectProductForItem(ws, itemId, keyboardProduct, validOfferA);
+  const revBefore = ws.revision;
+
+  // Attempt to select an arbitrary fabricated offer not in the product's offers list
+  const fakeOffer: ProductOfferItem = {
+    id: "off_fraudulent",
+    domain: "ScamSite",
+    url: "https://scamsite.com/fake-deal",
+    priceMinor: 1000, // $10.00
+    currency: "USD",
+    availability: "in_stock",
+  };
+
+  const wsRejected = selectOfferForItem(ws, itemId, keyboardProduct.sourceProductId || "keychron_q1", fakeOffer);
+  assert.strictEqual(
+    wsRejected.revision,
+    revBefore,
+    "Selecting an arbitrary unverified offer must reject and return unchanged workspace"
+  );
+  assert.strictEqual(
+    wsRejected.groups[0].items[0].selectedOffer?.id,
+    "off_key_a",
+    "Selected offer must remain the verified offer"
+  );
+
+  // Selecting validOfferB must succeed
+  const wsAccepted = selectOfferForItem(ws, itemId, keyboardProduct.sourceProductId || "keychron_q1", validOfferB);
+  assert.strictEqual(wsAccepted.revision, revBefore + 1);
+  assert.strictEqual(wsAccepted.groups[0].items[0].selectedOffer?.id, "off_key_b");
+  assert.strictEqual(wsAccepted.groups[0].items[0].selectedOffer?.priceMinor, 17500);
+});
+
+test("Test O: Cart displays 'Price unavailable', never '$0.00', and excludes unpriced items from totals (Rule 4 & Rule 5)", () => {
+  let ws = createInitialWorkspace({ currency: "USD" });
+  ws = {
+    ...ws,
+    overallBudget: { amountMinor: 150000, currency: "USD", strict: true },
+  };
+
+  // Item 1: Valid USD item ($950)
+  ws = addIndependentItem(ws, { productRequest: "Laptop" });
+  const laptopId = ws.groups[0].items[0].id;
+  const laptop: NormalizedProduct = {
+    source: "channel3",
+    sourceProductId: "p_usd_laptop",
+    title: "USD Laptop",
+    imageUrl: null,
+    priceMinor: 95000,
+    currency: "USD",
+    retailerName: "Best Buy",
+    retailerUrl: "https://bestbuy.com/laptop",
+    availability: "in_stock",
+    specifications: {},
+    sourceFacts: [],
+    offers: [
+      {
+        id: "off_lap_1",
+        domain: "Best Buy",
+        url: "https://bestbuy.com/laptop",
+        priceMinor: 95000,
+        currency: "USD",
+        availability: "in_stock",
+      },
+    ],
+  };
+  ws = selectProductForItem(ws, laptopId, laptop, laptop.offers![0]);
+
+  // Item 2: Valid EUR item (€180)
+  ws = addIndependentItem(ws, { productRequest: "Monitor" });
+  const monitorId = ws.groups[0].items[1].id;
+  const monitor: NormalizedProduct = {
+    source: "channel3",
+    sourceProductId: "p_eur_monitor",
+    title: "EUR Monitor",
+    imageUrl: null,
+    priceMinor: 18000,
+    currency: "EUR",
+    retailerName: "FNAC",
+    retailerUrl: "https://fnac.com/monitor",
+    availability: "in_stock",
+    specifications: {},
+    sourceFacts: [],
+    offers: [
+      {
+        id: "off_mon_1",
+        domain: "FNAC",
+        url: "https://fnac.com/monitor",
+        priceMinor: 18000,
+        currency: "EUR",
+        availability: "in_stock",
+      },
+    ],
+  };
+  ws = selectProductForItem(ws, monitorId, monitor, monitor.offers![0]);
+
+  // Item 3: Unpriced item (priceMinor: null)
+  ws = addIndependentItem(ws, { productRequest: "Shoes" });
+  const shoesId = ws.groups[0].items[2].id;
+  const shoes: NormalizedProduct = {
+    source: "channel3",
+    sourceProductId: "p_unpriced_shoes",
+    title: "Unpriced Running Shoes",
+    imageUrl: null,
+    priceMinor: null,
+    currency: "USD",
+    retailerName: "RunnerStore",
+    retailerUrl: "https://runnerstore.com/shoes",
+    availability: "out_of_stock",
+    specifications: {},
+    sourceFacts: [],
+    offers: [
+      {
+        id: "off_shoes_null",
+        domain: "RunnerStore",
+        url: "https://runnerstore.com/shoes",
+        priceMinor: 0,
+        currency: "USD",
+        monetaryStatus: "invalid_price",
+        availability: "out_of_stock",
+      },
+    ],
+  };
+  ws = selectProductForItem(ws, shoesId, shoes, shoes.offers![0]);
+
+  const summary = calculateWorkspaceBudgetSummary(ws, "USD");
+  assert.strictEqual(summary.unpricedCount, 1);
+  assert.strictEqual(summary.totalsByCurrency["USD"], 95000);
+  assert.strictEqual(summary.totalsByCurrency["EUR"], 18000);
+  // Numeric totals exclude the unpriced item
+  assert.strictEqual(summary.totalSelectedMinor, 95000);
+
+  // Simulate cart selectedItemsWithOffers logic
+  const cartItems = ws.groups.flatMap((g) =>
+    g.items
+      .filter((i) => i.status === "selected" && i.selectedProduct)
+      .map((i) => {
+        const offer = i.selectedOffer || i.selectedProduct?.selectedOffer || i.selectedProduct?.offers?.[0];
+        const rawPrice = offer?.priceMinor ?? i.selectedProduct?.priceMinor ?? null;
+        const isValidPrice =
+          typeof rawPrice === "number" &&
+          Number.isFinite(rawPrice) &&
+          Number.isSafeInteger(rawPrice) &&
+          rawPrice > 0;
+        return {
+          title: i.selectedProduct?.title,
+          priceMinor: isValidPrice ? rawPrice : null,
+          isValidPrice,
+          displayPrice: isValidPrice ? formatMinorUnits(rawPrice!, "USD") : "Price unavailable",
+          retailerUrl: offer?.url || i.selectedProduct?.retailerUrl,
+        };
+      })
+  );
+
+  assert.strictEqual(cartItems[0].isValidPrice, true);
+  assert.strictEqual(cartItems[0].displayPrice, "$950.00");
+  assert.strictEqual(cartItems[1].isValidPrice, true);
+  assert.strictEqual(cartItems[2].isValidPrice, false);
+  assert.strictEqual(cartItems[2].displayPrice, "Price unavailable");
+  assert.notStrictEqual(cartItems[2].displayPrice, "$0.00");
+  assert.strictEqual(cartItems[2].retailerUrl, "https://runnerstore.com/shoes");
+});

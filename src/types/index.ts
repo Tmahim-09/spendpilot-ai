@@ -702,6 +702,7 @@ export interface ProductVariantSelection {
   retailerName?: string;
   imageUrl?: string | null;
   confirmedOffer?: ProductOfferItem | null;
+  variantId?: string;
 }
 
 export interface GuidedShoppingSessionState {

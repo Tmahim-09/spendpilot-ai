@@ -29,8 +29,7 @@ import {
   saveWorkspaceToStorage,
   parseStoredWorkspace,
 } from "@/lib/workspace/workspace-storage";
-import { formatCurrency } from "@/lib/utils";
-import { formatMinorUnits } from "@/lib/money";
+import { formatMinorUnits, isSupportedCurrency } from "@/lib/money";
 import type { CurrencyCode } from "@/types";
 import type { WorkspaceBudgetSummary } from "@/lib/workspace/types";
 
@@ -85,15 +84,26 @@ export default function CartPage() {
       .filter((i) => i.status === "selected" && i.selectedProduct)
       .map((i) => {
         const offer = i.selectedOffer || i.selectedProduct?.selectedOffer || i.selectedProduct?.offers?.[0];
+        const rawPrice = offer?.priceMinor ?? i.selectedProduct?.priceMinor ?? null;
+        const rawCurrency = offer?.currency || i.selectedProduct?.currency || null;
+        const isValidPrice =
+          typeof rawPrice === "number" &&
+          Number.isFinite(rawPrice) &&
+          Number.isSafeInteger(rawPrice) &&
+          rawPrice > 0;
+        const isSupported = isSupportedCurrency(rawCurrency);
+
         return {
           id: i.id,
           groupId: g.id,
           groupTitle: g.title,
           title: i.displayName || i.selectedProduct?.title || i.productRequest,
           product: i.selectedProduct,
-          priceMinor: offer?.priceMinor ?? i.selectedProduct?.priceMinor ?? 0,
-          currency: offer?.currency || currency,
-          offerUrl: offer?.url || i.selectedProduct?.offers?.[0]?.url || "#",
+          priceMinor: isValidPrice ? rawPrice : null,
+          currency: isSupported ? rawCurrency : null,
+          isValidPrice,
+          isSupportedCurrency: isSupported,
+          offerUrl: offer?.url || i.selectedProduct?.offers?.[0]?.url || i.selectedProduct?.retailerUrl || "#",
           domain: offer?.domain || i.selectedProduct?.retailerName || "Retailer",
           compatibility: i.compatibility,
           selectedVariant: i.selectedVariant,
@@ -221,9 +231,15 @@ export default function CartPage() {
                               {item.title}
                             </h3>
                           </div>
-                          <span className="font-mono text-base font-black text-zinc-900 dark:text-white">
-                            {formatCurrency(item.priceMinor, item.currency)}
-                          </span>
+                          {item.isValidPrice && item.isSupportedCurrency && item.priceMinor != null && item.currency ? (
+                            <span className="font-mono text-base font-black text-zinc-900 dark:text-white">
+                              {formatMinorUnits(item.priceMinor, item.currency)}
+                            </span>
+                          ) : (
+                            <span className="rounded-md bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-xs font-bold text-amber-600 dark:text-amber-400">
+                              Price unavailable
+                            </span>
+                          )}
                         </div>
 
                         {/* Selected Variant Information */}
@@ -318,11 +334,18 @@ export default function CartPage() {
                 </h2>
 
                 <div className="space-y-2 text-xs">
-                  {!hasMultipleCurrencies ? (
+                  {currencyEntries.length === 0 ? (
+                    <div className="flex items-center justify-between text-zinc-600 dark:text-zinc-400">
+                      <span>Selected Items ({selectedItemCount}):</span>
+                      <span className="rounded-md bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-xs font-bold text-amber-600 dark:text-amber-400">
+                        Price unavailable
+                      </span>
+                    </div>
+                  ) : !hasMultipleCurrencies ? (
                     <div className="flex items-center justify-between text-zinc-600 dark:text-zinc-400">
                       <span>Selected Items ({selectedItemCount}):</span>
                       <span className="font-mono font-bold text-zinc-900 dark:text-white">
-                        {formatMinorUnits(currencyEntries[0]?.[1] ?? 0, (currencyEntries[0]?.[0] as CurrencyCode) || summary.currency)}
+                        {formatMinorUnits(currencyEntries[0][1], currencyEntries[0][0] as CurrencyCode)}
                       </span>
                     </div>
                   ) : (
@@ -369,9 +392,13 @@ export default function CartPage() {
 
                   <div className="flex items-center justify-between pt-3 border-t border-zinc-200 dark:border-[#262626] text-sm">
                     <span className="font-bold text-zinc-900 dark:text-white">Total Amount:</span>
-                    {!hasMultipleCurrencies ? (
+                    {currencyEntries.length === 0 ? (
+                      <span className="rounded-md bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 text-xs font-bold text-amber-600 dark:text-amber-400">
+                        Price unavailable
+                      </span>
+                    ) : !hasMultipleCurrencies ? (
                       <span className="font-mono font-black text-xl text-[#FF6A00]">
-                        {formatMinorUnits(currencyEntries[0]?.[1] ?? 0, (currencyEntries[0]?.[0] as CurrencyCode) || summary.currency)}
+                        {formatMinorUnits(currencyEntries[0][1], currencyEntries[0][0] as CurrencyCode)}
                       </span>
                     ) : (
                       <div className="flex flex-col items-end gap-1">
@@ -385,7 +412,25 @@ export default function CartPage() {
                   </div>
                 </div>
 
-                {summary.status === "partially_comparable" && (
+                {summary.unpricedCount > 0 && (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>
+                      {summary.unpricedCount} selected item{summary.unpricedCount > 1 ? "s have" : " has"} unavailable or unverified pricing and {summary.unpricedCount > 1 ? "are" : "is"} excluded from budget totals.
+                    </span>
+                  </div>
+                )}
+
+                {summary.unsupportedCurrencyCount > 0 && (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>
+                      {summary.unsupportedCurrencyCount} selected item{summary.unsupportedCurrencyCount > 1 ? "s use" : " uses"} an unsupported currency and cannot participate in budget verification.
+                    </span>
+                  </div>
+                )}
+
+                {summary.status === "partially_comparable" && Object.keys(summary.foreignCurrencyTotals || {}).length > 0 && (
                   <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
                     <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                     <span>
@@ -398,7 +443,9 @@ export default function CartPage() {
                   <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
                     <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                     <span>
-                      Selected items are in currencies that differ from your stated target budget ({summary.budgetCurrency}). Monetary comparison requires an explicit conversion.
+                      {Object.keys(summary.foreignCurrencyTotals || {}).length > 0
+                        ? `Selected items are in currencies that differ from your stated target budget (${summary.budgetCurrency}). Monetary comparison requires an explicit conversion.`
+                        : `Selected items have unverified or missing prices preventing a complete monetary comparison against your target budget (${summary.budgetCurrency}).`}
                     </span>
                   </div>
                 )}
