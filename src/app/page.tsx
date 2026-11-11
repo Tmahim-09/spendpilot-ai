@@ -62,7 +62,7 @@ export default function Home() {
   });
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [chatStatusText, setChatStatusText] = useState<string | null>(null);
-  const [searchProgress, setSearchProgress] = useState<SearchProgressState | null>(null);
+  const [, setSearchProgress] = useState<SearchProgressState | null>(null);
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
 
   // Handle hash scrolling when returning from /cart or navigating via links
@@ -106,8 +106,8 @@ export default function Home() {
   );
 
   // Background AI ranking & refinement progress
-  const [isSearchingProducts, setIsSearchingProducts] = useState(false);
-  const [isRankingAi, setIsRankingAi] = useState(false);
+  const [, setIsSearchingProducts] = useState(false);
+  const [, setIsRankingAi] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
 
   // Item-scoped search and progress tracking (prevents one item from clearing another's progress)
@@ -308,6 +308,9 @@ export default function Home() {
               compData.allProducts && compData.allProducts.length > 0 ? compData.allProducts : undefined,
               item.searchId
             );
+            if (nextWs === prev.workspace || nextWs.revision <= prev.workspace.revision) {
+              return prev;
+            }
             saveWorkspaceToStorage(nextWs);
             return { ...prev, workspace: nextWs };
           });
@@ -482,6 +485,9 @@ export default function Home() {
               searchStatus: "error",
               searchError: searchData.error || "Unable to retrieve products. Please try again.",
             });
+            if (nextWs === prev.workspace || nextWs.revision <= prev.workspace.revision) {
+              return prev;
+            }
             saveWorkspaceToStorage(nextWs);
             return {
               ...prev,
@@ -528,6 +534,9 @@ export default function Home() {
               candidates: [],
               searchError: null,
             });
+            if (nextWs === prev.workspace || nextWs.revision <= prev.workspace.revision) {
+              return prev;
+            }
             saveWorkspaceToStorage(nextWs);
             return {
               ...prev,
@@ -571,6 +580,9 @@ export default function Home() {
             searchStatus: "comparing",
             candidates: retrievedProducts,
           });
+          if (nextWs === prev.workspace || nextWs.revision <= prev.workspace.revision) {
+            return prev;
+          }
           return { ...prev, workspace: nextWs };
         });
 
@@ -615,18 +627,8 @@ export default function Home() {
           }
         }
 
-        // Stage E: Completed -> Clear transient progress and append final message
-        setItemProgressMap((prev) => {
-          const next = new Map(prev);
-          next.delete(originatingItemId);
-          return next;
-        });
-        setItemStatusTextMap((prev) => {
-          const next = new Map(prev);
-          next.delete(originatingItemId);
-          return next;
-        });
         const finalMsg = getProgressMessage("completed", searchQuery, reqCategory, { isWinter });
+        let wasAccepted = false;
 
         setChatSession((prev) => {
           const curWs = prev.workspace;
@@ -646,6 +648,13 @@ export default function Home() {
             evidenceFacts: finalRecEvidence,
             searchError: null,
           });
+
+          // Verify that update was actually accepted by workspace manager
+          if (nextWs === curWs || nextWs.revision <= curWs.revision) {
+            return prev;
+          }
+
+          wasAccepted = true;
           saveWorkspaceToStorage(nextWs);
 
           const hasRecentIntro = prev.messages.slice(-3).some(
@@ -673,6 +682,20 @@ export default function Home() {
                 ],
           };
         });
+
+        // Stage E: Completed -> Clear transient progress ONLY when search update was accepted
+        if (wasAccepted) {
+          setItemProgressMap((prev) => {
+            const next = new Map(prev);
+            next.delete(originatingItemId);
+            return next;
+          });
+          setItemStatusTextMap((prev) => {
+            const next = new Map(prev);
+            next.delete(originatingItemId);
+            return next;
+          });
+        }
       } catch {
         if (activeItemSearches.current.get(originatingItemId) !== searchSeq) return;
         setSearchingItemIds((prev) => {
@@ -1303,6 +1326,9 @@ export default function Home() {
             item.candidates,
             item.searchId
           );
+          if (nextWs === currentWs || nextWs.revision <= currentWs.revision) {
+            return prev;
+          }
           saveWorkspaceToStorage(nextWs);
           return { ...prev, workspace: nextWs };
         });
@@ -1442,17 +1468,17 @@ export default function Home() {
   const displayedSearchError = activeWorkspaceItem?.searchError ?? null;
 
   const isItemSearching = activeWorkspaceItem
-    ? searchingItemIds.has(activeWorkspaceItem.id) || activeWorkspaceItem.searchStatus === "searching" || isSearchingProducts
-    : isSearchingProducts;
+    ? searchingItemIds.has(activeWorkspaceItem.id) || activeWorkspaceItem.searchStatus === "searching"
+    : false;
   const isItemComparing = activeWorkspaceItem
-    ? rankingItemIds.has(activeWorkspaceItem.id) || activeWorkspaceItem.searchStatus === "comparing" || isRankingAi
-    : isRankingAi;
+    ? rankingItemIds.has(activeWorkspaceItem.id) || activeWorkspaceItem.searchStatus === "comparing"
+    : false;
   const activeItemSearchProgress = activeWorkspaceItem
-    ? itemProgressMap.get(activeWorkspaceItem.id) ?? searchProgress
-    : searchProgress;
+    ? itemProgressMap.get(activeWorkspaceItem.id) ?? null
+    : null;
   const activeItemChatStatusText = activeWorkspaceItem
-    ? itemStatusTextMap.get(activeWorkspaceItem.id) ?? chatStatusText
-    : chatStatusText;
+    ? itemStatusTextMap.get(activeWorkspaceItem.id) ?? null
+    : null;
 
   const displayedHasSearched = Boolean(
     activeWorkspaceItem?.searchFingerprint ||
@@ -1481,7 +1507,7 @@ export default function Home() {
           <ContinuousChatWorkspace
             session={chatSession}
             isLoading={isChatLoading || isItemSearching}
-            activeStatusText={activeItemChatStatusText}
+            activeStatusText={isChatLoading ? chatStatusText : activeItemChatStatusText}
             searchProgress={activeItemSearchProgress}
             onSendMessage={handleSendChatMessage}
             onExecuteSearch={handleConfirmAndSearch}

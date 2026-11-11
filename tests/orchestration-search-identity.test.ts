@@ -388,8 +388,17 @@ describe("SpendPilot Phase 1 Completion: Orchestration Search Identity & Context
       displayName: "Gaming Chair",
     });
     const chairItemId = ws.activeItemId!;
-    ws = updateItemSearchResults(ws, chairItemId, { candidates: [sampleChair] });
-    ws = updateItemComparison(ws, chairItemId, comparison1, evidence1);
+    ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_g",
+      searchFingerprint: "fp_chair_g",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_g",
+      searchStatus: "completed",
+      candidates: [sampleChair],
+    });
+    ws = updateItemComparison(ws, chairItemId, comparison1, evidence1, undefined, "search_chair_g");
 
     ws = addIndependentItem(ws, {
       productRequest: "Gaming headphones",
@@ -397,8 +406,17 @@ describe("SpendPilot Phase 1 Completion: Orchestration Search Identity & Context
       displayName: "Gaming Headphones",
     });
     const hpItemId = ws.activeItemId!;
-    ws = updateItemSearchResults(ws, hpItemId, { candidates: [sampleHeadphones] });
-    ws = updateItemComparison(ws, hpItemId, comparison2, {});
+    ws = updateItemSearchResults(ws, hpItemId, {
+      searchId: "search_hp_g",
+      searchFingerprint: "fp_hp_g",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, hpItemId, {
+      searchId: "search_hp_g",
+      searchStatus: "completed",
+      candidates: [sampleHeadphones],
+    });
+    ws = updateItemComparison(ws, hpItemId, comparison2, {}, undefined, "search_hp_g");
 
     // Refine comparison on headphones
     const refinedHpComparison: AiComparisonResult = {
@@ -411,7 +429,7 @@ describe("SpendPilot Phase 1 Completion: Orchestration Search Identity & Context
       alternativePicks: [],
       missingInformation: [],
     };
-    ws = updateItemComparison(ws, hpItemId, refinedHpComparison, {});
+    ws = updateItemComparison(ws, hpItemId, refinedHpComparison, {}, undefined, "search_hp_g");
 
     const hpItem = findItemInWorkspace(ws, hpItemId)?.item;
     assert.strictEqual(hpItem?.comparison?.summary, "Refined headphone comparison");
@@ -431,7 +449,16 @@ describe("SpendPilot Phase 1 Completion: Orchestration Search Identity & Context
       displayName: "Gaming Chair",
     });
     const chairItemId = ws.activeItemId!;
-    ws = updateItemSearchResults(ws, chairItemId, { candidates: [sampleChair] });
+    ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_h",
+      searchFingerprint: "fp_chair_h",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_h",
+      searchStatus: "completed",
+      candidates: [sampleChair],
+    });
     ws = selectProductForItem(ws, chairItemId, sampleChair, sampleChair.offers![0]);
 
     ws = addIndependentItem(ws, {
@@ -440,7 +467,16 @@ describe("SpendPilot Phase 1 Completion: Orchestration Search Identity & Context
       displayName: "Gaming Headphones",
     });
     const hpItemId = ws.activeItemId!;
-    ws = updateItemSearchResults(ws, hpItemId, { candidates: [sampleHeadphones] });
+    ws = updateItemSearchResults(ws, hpItemId, {
+      searchId: "search_hp_h",
+      searchFingerprint: "fp_hp_h",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, hpItemId, {
+      searchId: "search_hp_h",
+      searchStatus: "completed",
+      candidates: [sampleHeadphones],
+    });
     ws = selectProductForItem(ws, hpItemId, sampleHeadphones, sampleHeadphones.offers![0]);
 
     // Change offer for headphones to retailer 2 ($169.99)

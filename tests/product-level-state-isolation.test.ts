@@ -219,6 +219,12 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
 
     // Save search results specifically to the chair item
     ws = updateItemSearchResults(ws, chairItem.id, {
+      searchId: "search_chair_test_a",
+      searchFingerprint: "fp_chair_test_a",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, chairItem.id, {
+      searchId: "search_chair_test_a",
       candidates: [sampleChair1, sampleChair2],
       searchFingerprint: "fp_chair_test_a",
       searchStatus: "completed",
@@ -253,6 +259,12 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
     const chairItemId = ws.activeItemId!;
 
     ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_b",
+      searchFingerprint: "fp_chair",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_b",
       candidates: [sampleChair1, sampleChair2],
       searchFingerprint: "fp_chair",
       searchStatus: "completed",
@@ -278,6 +290,12 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
 
     // Save headphone search results specifically to headphone item
     ws = updateItemSearchResults(ws, headphoneItemId, {
+      searchId: "search_hp_b",
+      searchFingerprint: "fp_headphones",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, headphoneItemId, {
+      searchId: "search_hp_b",
       candidates: [sampleHeadphones1, sampleHeadphones2],
       searchFingerprint: "fp_headphones",
       searchStatus: "completed",
@@ -321,6 +339,12 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
     });
     const headphoneItemId = ws.activeItemId!;
     assert.strictEqual(ws.activeItemId, headphoneItemId);
+
+    // Headphone starts search
+    ws = updateItemSearchResults(ws, headphoneItemId, {
+      searchStatus: "searching",
+      searchId: "search_hp_1",
+    });
 
     // Headphone search completes FIRST
     ws = updateItemSearchResults(ws, headphoneItemId, {
@@ -367,12 +391,17 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
     const chairItemId = ws.activeItemId!;
 
     ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_d",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_d",
       candidates: [sampleChair1, sampleChair2],
       searchStatus: "completed",
     });
 
     // Run comparison on chair
-    ws = updateItemComparison(ws, chairItemId, chairComparison, chairEvidence);
+    ws = updateItemComparison(ws, chairItemId, chairComparison, chairEvidence, undefined, "search_chair_d");
 
     // Verify chair has comparison
     const chairItem = findItemInWorkspace(ws, chairItemId)?.item;
@@ -387,6 +416,11 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
     });
     const headphoneItemId = ws.activeItemId!;
     ws = updateItemSearchResults(ws, headphoneItemId, {
+      searchId: "search_hp_d",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, headphoneItemId, {
+      searchId: "search_hp_d",
       candidates: [sampleHeadphones1, sampleHeadphones2],
       searchStatus: "completed",
     });
@@ -414,8 +448,16 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
       displayName: "Gaming Chair",
     });
     const chairItemId = ws.activeItemId!;
-    ws = updateItemSearchResults(ws, chairItemId, { candidates: [sampleChair1, sampleChair2] });
-    ws = updateItemComparison(ws, chairItemId, chairComparison, chairEvidence);
+    ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_e",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_e",
+      candidates: [sampleChair1, sampleChair2],
+      searchStatus: "completed",
+    });
+    ws = updateItemComparison(ws, chairItemId, chairComparison, chairEvidence, undefined, "search_chair_e");
 
     ws = addIndependentItem(ws, {
       productRequest: "Gaming headphones",
@@ -423,8 +465,16 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
       displayName: "Gaming Headphones",
     });
     const headphoneItemId = ws.activeItemId!;
-    ws = updateItemSearchResults(ws, headphoneItemId, { candidates: [sampleHeadphones1, sampleHeadphones2] });
-    ws = updateItemComparison(ws, headphoneItemId, headphoneComparison1, headphoneEvidence1);
+    ws = updateItemSearchResults(ws, headphoneItemId, {
+      searchId: "search_hp_e",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, headphoneItemId, {
+      searchId: "search_hp_e",
+      candidates: [sampleHeadphones1, sampleHeadphones2],
+      searchStatus: "completed",
+    });
+    ws = updateItemComparison(ws, headphoneItemId, headphoneComparison1, headphoneEvidence1, undefined, "search_hp_e");
 
     // Refine priority on headphones
     const headphoneComparisonRefined: AiComparisonResult = {
@@ -443,7 +493,7 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
       missingInformation: [],
     };
 
-    ws = updateItemComparison(ws, headphoneItemId, headphoneComparisonRefined, {});
+    ws = updateItemComparison(ws, headphoneItemId, headphoneComparisonRefined, {}, undefined, "search_hp_e");
 
     // Verify headphones has refined comparison
     const headphoneItem = findItemInWorkspace(ws, headphoneItemId)?.item;
@@ -467,7 +517,15 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
       displayName: "Gaming Chair",
     });
     const chairItemId = ws.activeItemId!;
-    ws = updateItemSearchResults(ws, chairItemId, { candidates: [sampleChair1, sampleChair2] });
+    ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_f",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_f",
+      candidates: [sampleChair1, sampleChair2],
+      searchStatus: "completed",
+    });
     // Select chair product
     ws = selectProductForItem(ws, chairItemId, sampleChair1, sampleChair1.offers?.[0]);
 
@@ -477,7 +535,15 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
       displayName: "Gaming Headphones",
     });
     const headphoneItemId = ws.activeItemId!;
-    ws = updateItemSearchResults(ws, headphoneItemId, { candidates: [sampleHeadphones1, sampleHeadphones2] });
+    ws = updateItemSearchResults(ws, headphoneItemId, {
+      searchId: "search_hp_f",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, headphoneItemId, {
+      searchId: "search_hp_f",
+      candidates: [sampleHeadphones1, sampleHeadphones2],
+      searchStatus: "completed",
+    });
     // Select headphone product with original offer
     ws = selectProductForItem(ws, headphoneItemId, sampleHeadphones1, sampleHeadphones1.offers?.[0]);
 
@@ -622,11 +688,17 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
     });
     const chairItemId = ws.activeItemId!;
     ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_h",
+      searchFingerprint: "fp_chair_persist",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, chairItemId, {
+      searchId: "search_chair_h",
       candidates: [sampleChair1, sampleChair2],
       searchFingerprint: "fp_chair_persist",
       searchStatus: "completed",
     });
-    ws = updateItemComparison(ws, chairItemId, chairComparison, chairEvidence);
+    ws = updateItemComparison(ws, chairItemId, chairComparison, chairEvidence, undefined, "search_chair_h");
     ws = selectProductForItem(ws, chairItemId, sampleChair1, sampleChair1.offers?.[0]);
 
     ws = addIndependentItem(ws, {
@@ -636,11 +708,17 @@ describe("SPENDPILOT RELEASE FIX PHASE 1: Complete Product-Level State Isolation
     });
     const headphoneItemId = ws.activeItemId!;
     ws = updateItemSearchResults(ws, headphoneItemId, {
+      searchId: "search_hp_h",
+      searchFingerprint: "fp_hp_persist",
+      searchStatus: "searching",
+    });
+    ws = updateItemSearchResults(ws, headphoneItemId, {
+      searchId: "search_hp_h",
       candidates: [sampleHeadphones1, sampleHeadphones2],
       searchFingerprint: "fp_hp_persist",
       searchStatus: "completed",
     });
-    ws = updateItemComparison(ws, headphoneItemId, headphoneComparison1, headphoneEvidence1);
+    ws = updateItemComparison(ws, headphoneItemId, headphoneComparison1, headphoneEvidence1, undefined, "search_hp_h");
     ws = selectProductForItem(ws, headphoneItemId, sampleHeadphones1, sampleHeadphones1.offers?.[1]);
 
     // Set active item to chair to verify activeItemId restoration

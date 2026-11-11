@@ -584,9 +584,17 @@ export function deriveItemCanonicalAttributes(
 }
 
 /**
- * Updates search results, candidates, comparison, and evidence facts on a specific item.
- * Preserves activeItemId and does not mutate other items.
- * Enforces search ID matching: rejects stale updates if updates.searchId doesn't match item.searchId.
+ * Updates search results and status strictly on a single item.
+ * 
+ * Rules:
+ * - A new search must explicitly register a non-empty search ID.
+ * - Every completion, error, comparison or evidence update must supply its expected search ID.
+ * - The expected ID must exactly match the item's currently registered search ID.
+ * - If the current search ID is missing, reject a completion update.
+ * - If the supplied ID is missing, reject it.
+ * - If the supplied ID differs, reject it.
+ * - A rejected update must return the unchanged workspace without incrementing its revision.
+ * - A new search may replace the previous search ID only through an explicit search-start operation.
  */
 export function updateItemSearchResults(
   workspace: ShoppingWorkspace,
@@ -605,6 +613,9 @@ export function updateItemSearchResults(
   let wasRejected = false;
   let didUpdate = false;
 
+  const suppliedSearchId = typeof updates.searchId === "string" ? updates.searchId.trim() : "";
+  const isStartingNewSearch = updates.searchStatus === "searching";
+
   const updatedGroups = workspace.groups.map((group) => {
     const hasItem = group.items.some((i) => i.id === itemId);
     if (!hasItem) return group;
@@ -612,22 +623,26 @@ export function updateItemSearchResults(
     const updatedItems = group.items.map((item) => {
       if (item.id !== itemId) return item;
 
-      const isStartingNewSearch = updates.searchStatus === "searching";
-
-      // If item already has a registered searchId and this is not a new search start,
-      // require updates.searchId to match item.searchId.
-      if (!isStartingNewSearch && item.searchId) {
-        if (!updates.searchId || updates.searchId !== item.searchId) {
-          // Stale update or mismatched search ID -> REJECT!
+      if (isStartingNewSearch) {
+        // A new search must explicitly register a non-empty search ID.
+        if (!suppliedSearchId) {
+          wasRejected = true;
+          return item;
+        }
+      } else {
+        // Non-search-start update (completion, error, comparing, evidence, etc.):
+        // Every completion, error, comparison or evidence update must supply its expected search ID.
+        // If current search ID is missing, reject.
+        // If supplied ID is missing, reject.
+        // If supplied ID differs, reject.
+        if (!suppliedSearchId || !item.searchId || suppliedSearchId !== item.searchId) {
           wasRejected = true;
           return item;
         }
       }
 
       didUpdate = true;
-      const nextSearchId = isStartingNewSearch
-        ? (updates.searchId ?? item.searchId)
-        : (updates.searchId ?? item.searchId);
+      const nextSearchId = isStartingNewSearch ? suppliedSearchId : item.searchId;
 
       return {
         ...item,
@@ -668,7 +683,14 @@ export function updateItemSearchResults(
 
 /**
  * Updates AI comparison and evidence facts on a specific item.
- * Rejects stale updates if searchId is provided and does not match item.searchId.
+ *
+ * Rules:
+ * - Every comparison or evidence update must supply its expected search ID.
+ * - The expected ID must exactly match the item's currently registered search ID.
+ * - If the current search ID is missing, reject.
+ * - If the supplied ID is missing, reject.
+ * - If the supplied ID differs, reject.
+ * - A rejected update must return the unchanged workspace without incrementing its revision.
  */
 export function updateItemComparison(
   workspace: ShoppingWorkspace,
@@ -682,6 +704,8 @@ export function updateItemComparison(
   let wasRejected = false;
   let didUpdate = false;
 
+  const suppliedSearchId = typeof searchId === "string" ? searchId.trim() : "";
+
   const updatedGroups = workspace.groups.map((group) => {
     const hasItem = group.items.some((i) => i.id === itemId);
     if (!hasItem) return group;
@@ -689,8 +713,9 @@ export function updateItemComparison(
     const updatedItems = group.items.map((item) => {
       if (item.id !== itemId) return item;
 
-      // Guard against stale comparison results if searchId is passed
-      if (item.searchId && searchId && searchId !== item.searchId) {
+      // Comparison updates must enforce the same ownership rules:
+      // Must supply expected search ID matching the item's registered search ID.
+      if (!suppliedSearchId || !item.searchId || suppliedSearchId !== item.searchId) {
         wasRejected = true;
         return item;
       }
