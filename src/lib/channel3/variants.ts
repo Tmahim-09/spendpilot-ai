@@ -81,7 +81,7 @@ export function evaluateVariantConfirmation(
       effectivePriceMinor: null,
       effectiveCurrency: null,
       matchingOffer: null,
-      unconfirmedReason: "Unsupported currency",
+      unconfirmedReason: "Unsupported requested currency",
     };
   }
 
@@ -89,20 +89,55 @@ export function evaluateVariantConfirmation(
     (k) => Boolean(requestedOptions[k] && requestedOptions[k].trim())
   );
 
-  // Unchanged base product check
+  // Unchanged base product check: requires valid price, matching currency, and matching offer
   if (!hasRequestedOptions) {
-    const isBaseValid =
+    const isBasePriceValid =
       typeof baseProduct.priceMinor === "number" &&
       Number.isSafeInteger(baseProduct.priceMinor) &&
       baseProduct.priceMinor > 0;
 
+    const baseCurrency =
+      baseProduct.currency && isSupportedCurrency(baseProduct.currency)
+        ? (baseProduct.currency as CurrencyCode)
+        : null;
+
+    if (!isBasePriceValid || !baseCurrency || baseCurrency !== currency) {
+      return {
+        isConfirmed: false,
+        effectivePriceMinor: null,
+        effectiveCurrency: null,
+        matchingOffer: null,
+        unconfirmedReason: !isBasePriceValid
+          ? "Invalid base product price"
+          : "Base product currency mismatch",
+      };
+    }
+
+    const baseMatchingOffer =
+      baseProduct.offers?.find(
+        (o) =>
+          typeof o.priceMinor === "number" &&
+          Number.isSafeInteger(o.priceMinor) &&
+          o.priceMinor === baseProduct.priceMinor &&
+          o.currency === currency &&
+          Boolean(o.url && o.url.trim())
+      ) || null;
+
+    if (!baseMatchingOffer) {
+      return {
+        isConfirmed: false,
+        effectivePriceMinor: null,
+        effectiveCurrency: null,
+        matchingOffer: null,
+        unconfirmedReason: "No matching retailer offer for base product with requested currency",
+      };
+    }
+
     return {
-      isConfirmed: isBaseValid,
-      effectivePriceMinor: isBaseValid ? baseProduct.priceMinor : null,
-      effectiveCurrency: isBaseValid
-        ? (isSupportedCurrency(baseProduct.currency) ? (baseProduct.currency as CurrencyCode) : currency)
-        : null,
-      matchingOffer: isBaseValid ? (baseProduct.offers?.[0] || null) : null,
+      isConfirmed: true,
+      effectivePriceMinor: baseProduct.priceMinor,
+      effectiveCurrency: currency,
+      matchingOffer: baseMatchingOffer,
     };
   }
 
@@ -179,13 +214,41 @@ export function evaluateVariantConfirmation(
     };
   }
 
-  // Matching variant-specific offer
+  // Mandatory currency verification: returned currency must match requested currency
+  if (
+    !variantState.verifiedCurrency ||
+    !isSupportedCurrency(variantState.verifiedCurrency) ||
+    variantState.verifiedCurrency !== currency
+  ) {
+    return {
+      isConfirmed: false,
+      effectivePriceMinor: null,
+      effectiveCurrency: null,
+      matchingOffer: null,
+      unconfirmedReason: `Retailer currency "${variantState.verifiedCurrency || "unknown"}" does not match requested currency "${currency}"`,
+    };
+  }
+
+  // Mandatory retailer offer verification: exact match on price, currency, and valid retailer URL
   const matchingOffer =
     variantState.offers?.find(
       (o) =>
+        typeof o.priceMinor === "number" &&
+        Number.isSafeInteger(o.priceMinor) &&
         o.priceMinor === variantState.verifiedPriceMinor &&
-        (o.currency ? o.currency === currency : true)
+        o.currency === currency &&
+        Boolean(o.url && o.url.trim())
     ) || null;
+
+  if (!matchingOffer) {
+    return {
+      isConfirmed: false,
+      effectivePriceMinor: null,
+      effectiveCurrency: null,
+      matchingOffer: null,
+      unconfirmedReason: "No matching retailer offer with verified price and requested currency",
+    };
+  }
 
   return {
     isConfirmed: true,
@@ -253,328 +316,6 @@ export function normalizeVariantAvailability(
 // In-memory cache for resolved color images across variant requests
 const COLOR_IMAGE_CACHE = new Map<string, string>();
 
-/**
- * Synthesizes common option dimensions without fabricating prices or availability.
- * Missing availability remains "Unknown" and missing variant price remains null.
- * Synthetic options are never labeled as verified retailer configurations.
- */
-export function synthesizeRetailerOptions(
-  title: string,
-  _basePriceMinor: number | null,
-  selectedOptions?: Record<string, string>
-): ProductVariantDimension[] {
-  const lower = (typeof title === "string" ? title : "").toLowerCase();
-
-  const getInitialSelected = (dimName: string, defaultVal: string): string => {
-    if (!selectedOptions) return defaultVal;
-    for (const [k, v] of Object.entries(selectedOptions)) {
-      if (isDimensionMatch(k, dimName) && v) return v;
-    }
-    return defaultVal;
-  };
-
-  if (
-    lower.includes("macbook") ||
-    lower.includes("laptop") ||
-    lower.includes("notebook") ||
-    lower.includes("thinkpad") ||
-    lower.includes("dell xps")
-  ) {
-    const isApple = lower.includes("macbook") || lower.includes("apple");
-    const colors: ProductVariantOptionValue[] = isApple
-      ? [
-          {
-            label: "Midnight",
-            exists: true,
-            available: "Unknown",
-            priceMinor: null,
-            thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-midnight-select-202402?wid=400&hei=400&fmt=jpeg",
-          },
-          {
-            label: "Space Gray",
-            exists: true,
-            available: "Unknown",
-            priceMinor: null,
-            thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-spacegray-select-202402?wid=400&hei=400&fmt=jpeg",
-          },
-          {
-            label: "Silver",
-            exists: true,
-            available: "Unknown",
-            priceMinor: null,
-            thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-silver-select-202402?wid=400&hei=400&fmt=jpeg",
-          },
-          {
-            label: "Starlight",
-            exists: true,
-            available: "Unknown",
-            priceMinor: null,
-            thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-starlight-select-202402?wid=400&hei=400&fmt=jpeg",
-          },
-        ]
-      : [
-          {
-            label: "Black",
-            exists: true,
-            available: "Unknown",
-            priceMinor: null,
-            thumbnailUrl: "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=400&q=80",
-          },
-          {
-            label: "Platinum Silver",
-            exists: true,
-            available: "Unknown",
-            priceMinor: null,
-            thumbnailUrl: "https://images.unsplash.com/photo-1588872657578-7efd1f1555ed?auto=format&fit=crop&w=400&q=80",
-          },
-          {
-            label: "Dark Gray",
-            exists: true,
-            available: "Unknown",
-            priceMinor: null,
-            thumbnailUrl: "https://images.unsplash.com/photo-1603302576837-37561b2e2302?auto=format&fit=crop&w=400&q=80",
-          },
-        ];
-
-    const ramValues: ProductVariantOptionValue[] = [
-      { label: "16GB Unified Memory", exists: true, available: "Unknown", priceMinor: null },
-      { label: "24GB Unified Memory", exists: true, available: "Unknown", priceMinor: null },
-      { label: "32GB Unified Memory", exists: true, available: "Unknown", priceMinor: null },
-    ];
-
-    const storageValues: ProductVariantOptionValue[] = [
-      { label: "512GB SSD Storage", exists: true, available: "Unknown", priceMinor: null },
-      { label: "1TB SSD Storage", exists: true, available: "Unknown", priceMinor: null },
-      { label: "2TB SSD Storage", exists: true, available: "Unknown", priceMinor: null },
-    ];
-
-    return [
-      { name: "Color", values: colors, selectedValue: getInitialSelected("Color", colors[0].label) },
-      { name: "RAM", values: ramValues, selectedValue: getInitialSelected("RAM", ramValues[0].label) },
-      { name: "Storage", values: storageValues, selectedValue: getInitialSelected("Storage", storageValues[0].label) },
-    ];
-  }
-
-  if (
-    lower.includes("shoe") ||
-    lower.includes("sneaker") ||
-    lower.includes("runner") ||
-    lower.includes("pegasus") ||
-    lower.includes("boot")
-  ) {
-    const sizes: ProductVariantOptionValue[] = [
-      "8", "8.5", "9", "9.5", "10", "10.5", "11", "11.5", "12"
-    ].map((s) => ({
-      label: `US ${s}`,
-      exists: true,
-      available: "Unknown",
-      priceMinor: null,
-    }));
-
-    const colors: ProductVariantOptionValue[] = [
-      {
-        label: "Black / White",
-        exists: true,
-        available: "Unknown",
-        priceMinor: null,
-        thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/0dc6dfd5-a83a-4da2-a9b7-b088bb97c27d/AIR+ZOOM+PEGASUS+40.png",
-      },
-      {
-        label: "Pure Platinum",
-        exists: true,
-        available: "Unknown",
-        priceMinor: null,
-        thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/284b3e34-585a-493e-bd29-e889ec1b7eef/AIR+ZOOM+PEGASUS+40.png",
-      },
-      {
-        label: "Obsidian Blue",
-        exists: true,
-        available: "Unknown",
-        priceMinor: null,
-        thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/209c1598-a28d-47c3-8f06-fa467aa7fc80/AIR+ZOOM+PEGASUS+40.png",
-      },
-      {
-        label: "Anthracite",
-        exists: true,
-        available: "Unknown",
-        priceMinor: null,
-        thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/5fa67597-23e5-4f36-9b59-99b80e8e6129/AIR+ZOOM+PEGASUS+40.png",
-      },
-    ];
-
-    return [
-      { name: "Size", values: sizes, selectedValue: getInitialSelected("Size", sizes[2].label) },
-      { name: "Color", values: colors, selectedValue: getInitialSelected("Color", colors[0].label) },
-    ];
-  }
-
-  if (
-    lower.includes("headphone") ||
-    lower.includes("earbuds") ||
-    lower.includes("wh-1000") ||
-    lower.includes("bose") ||
-    lower.includes("quietcomfort") ||
-    lower.includes("airpods")
-  ) {
-    const colors: ProductVariantOptionValue[] = [
-      {
-        label: "Black",
-        exists: true,
-        available: "Unknown",
-        priceMinor: null,
-        thumbnailUrl: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=400&q=80",
-      },
-      {
-        label: "Silver",
-        exists: true,
-        available: "Unknown",
-        priceMinor: null,
-        thumbnailUrl: "https://images.unsplash.com/photo-1583394838336-acd977736f90?auto=format&fit=crop&w=400&q=80",
-      },
-      {
-        label: "Midnight Blue",
-        exists: true,
-        available: "Unknown",
-        priceMinor: null,
-        thumbnailUrl: "https://images.unsplash.com/photo-1546435770-a3e426bf472b?auto=format&fit=crop&w=400&q=80",
-      },
-    ];
-
-    return [
-      { name: "Color", values: colors, selectedValue: getInitialSelected("Color", colors[0].label) },
-    ];
-  }
-
-  if (lower.includes("chair") || lower.includes("gaming chair") || lower.includes("office chair")) {
-    const colors: ProductVariantOptionValue[] = [
-      {
-        label: "Black",
-        exists: true,
-        available: "Unknown",
-        priceMinor: null,
-        thumbnailUrl: "https://images.unsplash.com/photo-1580481077195-c9dc5e7c8d92?auto=format&fit=crop&w=400&q=80",
-      },
-      {
-        label: "Leather Red",
-        exists: true,
-        available: "Unknown",
-        priceMinor: null,
-        thumbnailUrl: "https://images.unsplash.com/photo-1598550476439-6847785fcea6?auto=format&fit=crop&w=400&q=80",
-      },
-      {
-        label: "Grey Fabric",
-        exists: true,
-        available: "Unknown",
-        priceMinor: null,
-        thumbnailUrl: "https://images.unsplash.com/photo-1589384267710-7a25bc2ff307?auto=format&fit=crop&w=400&q=80",
-      },
-    ];
-
-    return [
-      { name: "Color", values: colors, selectedValue: getInitialSelected("Color", colors[0].label) },
-    ];
-  }
-
-  return [];
-}
-
-const FIXTURE_PRODUCTS: Record<string, (selected?: Record<string, string>) => Channel3Api.Product> = {
-  "apple-macbook-air-m3-13": (selected) => {
-    const selColor = selected?.Color || "Midnight";
-    const selRAM = selected?.RAM || "16GB Unified Memory";
-    const ramDelta = selRAM.includes("24") ? 200 : selRAM.includes("32") ? 400 : 0;
-    return {
-      id: "apple-macbook-air-m3-13",
-      title: "Apple MacBook Air 13-inch M3",
-      variants: {
-        options: [
-          {
-            name: "RAM",
-            values: [
-              { label: "16GB Unified Memory", exists: true, available: "InStock" },
-              { label: "24GB Unified Memory", exists: true, available: "InStock" },
-              { label: "32GB Unified Memory", exists: true, available: "InStock" },
-            ],
-          },
-          {
-            name: "Color",
-            values: [
-              {
-                label: "Midnight",
-                exists: true,
-                available: "InStock",
-                thumbnail_url: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-midnight-select-202402?wid=400&hei=400&fmt=jpeg",
-              },
-              {
-                label: "Space Gray",
-                exists: true,
-                available: "InStock",
-                thumbnail_url: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-spacegray-select-202402?wid=400&hei=400&fmt=jpeg",
-              },
-              {
-                label: "Silver",
-                exists: true,
-                available: "InStock",
-                thumbnail_url: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-silver-select-202402?wid=400&hei=400&fmt=jpeg",
-              },
-              {
-                label: "Starlight",
-                exists: true,
-                available: "InStock",
-                thumbnail_url: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-starlight-select-202402?wid=400&hei=400&fmt=jpeg",
-              },
-            ],
-          },
-        ],
-        selected: [
-          { name: "RAM", label: selRAM },
-          { name: "Color", label: selColor },
-        ],
-      },
-      offers: [
-        {
-          domain: "apple.com",
-          url: "https://apple.com/shop/buy-mac/macbook-air/13-inch-m3",
-          price: { price: 1099 + ramDelta, currency: "USD" },
-          availability: "InStock",
-        },
-      ],
-    };
-  },
-  "nike-pegasus-41-running-shoe": (selected) => {
-    const selSize = selected?.Size || "US 10";
-    return {
-      id: "nike-pegasus-41-running-shoe",
-      title: "Nike Pegasus 41 Running Shoe",
-      variants: {
-        options: [
-          {
-            name: "Size",
-            values: [
-              { label: "US 9", exists: true, available: "InStock" },
-              { label: "US 9.5", exists: true, available: "InStock" },
-              { label: "US 10", exists: true, available: "InStock" },
-              { label: "US 10.5", exists: true, available: "InStock" },
-              { label: "US 11", exists: true, available: "InStock" },
-            ],
-          },
-        ],
-        selected: [
-          { name: "Size", label: selSize },
-        ],
-      },
-      offers: [
-        {
-          domain: "nike.com",
-          url: "https://nike.com/pegasus-41",
-          price: { price: 140, currency: "USD" },
-          availability: "InStock",
-        },
-      ],
-    };
-  },
-};
-
 export interface RetrieveProductVariantsParams {
   productId: string;
   selectedOptions?: Record<string, string>;
@@ -598,16 +339,11 @@ export async function retrieveProductVariants(
     trackChannel3Lookup(productId || retailerUrl || "unknown");
     let product: Channel3Api.Product | null = null;
 
-    // Check test fixture products first for test harnesses / offline mocks
-    if (productId && FIXTURE_PRODUCTS[productId]) {
-      product = FIXTURE_PRODUCTS[productId](selectedOptions);
-    }
-
     let client: ReturnType<typeof getChannel3Client> | null = null;
     try {
       client = getChannel3Client();
     } catch {
-      // Missing API key in offline/test environment
+      // Missing API key in offline/unconfigured environment
     }
 
     // 1. If valid product ID, attempt retrieve
@@ -702,6 +438,12 @@ export async function retrieveProductVariants(
     const priceMinor =
       typeof rawPrice === "number" && !isNaN(rawPrice) && Number.isFinite(rawPrice) && rawPrice > 0
         ? Math.round(rawPrice * 100)
+        : null;
+
+    const rawCurrency = primaryOffer?.price?.currency;
+    const primaryCurrency: CurrencyCode | null =
+      typeof rawCurrency === "string" && isSupportedCurrency(rawCurrency.toUpperCase())
+        ? (rawCurrency.toUpperCase() as CurrencyCode)
         : null;
 
     // Transform options into structured dimensions (without synthetic fallback)
@@ -883,15 +625,21 @@ export async function retrieveProductVariants(
     const normalizedOffers: ProductOfferItem[] = [];
     if (product.offers && Array.isArray(product.offers)) {
       for (const off of product.offers) {
-        if (off && off.url) {
+        if (off && off.url && off.url.trim()) {
           const rawP = off.price?.price;
           const pMinor = typeof rawP === "number" && !isNaN(rawP) && rawP > 0 ? Math.round(rawP * 100) : null;
-          if (pMinor !== null) {
+          const offCurrencyRaw = off.price?.currency;
+          const offCurrency: CurrencyCode | null =
+            typeof offCurrencyRaw === "string" && isSupportedCurrency(offCurrencyRaw.toUpperCase())
+              ? (offCurrencyRaw.toUpperCase() as CurrencyCode)
+              : null;
+
+          if (pMinor !== null && offCurrency !== null) {
             normalizedOffers.push({
               domain: (off.domain && typeof off.domain === "string" ? off.domain.trim() : "") || "Verified Retailer",
               url: off.url,
               priceMinor: pMinor,
-              currency: (off.price?.currency?.toUpperCase() as CurrencyCode) || currency,
+              currency: offCurrency,
               availability: String(off.availability || "").toLowerCase().includes("instock") ? "in_stock" : "unknown",
             });
           }
@@ -914,6 +662,9 @@ export async function retrieveProductVariants(
         ? (dimensions.length > 0 ? priceMinor : null)
         : priceMinor;
 
+    const verifiedCurrency: CurrencyCode | null =
+      verifiedPriceMinor !== null ? primaryCurrency : null;
+
     return {
       productId: product.id || productId,
       title: product.title || "Selected Product",
@@ -927,6 +678,7 @@ export async function retrieveProductVariants(
       isFullyConfigured,
       availability: overallAvailability,
       verifiedPriceMinor,
+      verifiedCurrency,
       retailerUrl: finalRetailerUrl,
       retailerName,
       offers: normalizedOffers.length > 0 ? normalizedOffers : undefined,
@@ -945,6 +697,7 @@ export async function retrieveProductVariants(
       isFullyConfigured: false,
       availability: "Unknown",
       verifiedPriceMinor: null,
+      verifiedCurrency: null,
       retailerUrl: retailerUrl || "",
       retailerName: "Verified Retailer",
     };

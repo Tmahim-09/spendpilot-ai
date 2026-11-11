@@ -86,7 +86,6 @@ export default function Home() {
     itemId: string;
   } | null>(null);
   const [configuredProductIds, setConfiguredProductIds] = useState<Set<string>>(new Set());
-  const [configuredVariants, setConfiguredVariants] = useState<Record<string, ProductVariantSelection>>({});
 
   // Helper to open/close variant configurator scoped to active item
   const setConfiguringProduct = useCallback(
@@ -245,7 +244,6 @@ export default function Home() {
     setItemStatusTextMap(new Map());
     setConfiguringProductInfo(null);
     setConfiguredProductIds(new Set());
-    setConfiguredVariants({});
     setSelectedProductIds(new Set());
     try {
       if (typeof window !== "undefined") {
@@ -976,7 +974,6 @@ export default function Home() {
                 } else if (event.type === "action") {
                   if (event.action === "start_new_task" || event.action === "new_shopping_task") {
                     setConfiguredProductIds(new Set());
-                    setConfiguredVariants({});
                     setConfiguringProductInfo(null);
                   }
                   if (event.shouldExecuteSearch) {
@@ -1104,7 +1101,6 @@ export default function Home() {
 
         if (data.action === "new_shopping_task" || data.action === "start_new_task") {
           setConfiguredProductIds(new Set());
-          setConfiguredVariants({});
           setConfiguringProductInfo(null);
         }
 
@@ -1239,10 +1235,6 @@ export default function Home() {
     targetItemId?: string
   ) => {
     setConfiguredProductIds((prev) => new Set([...prev, selection.productId]));
-    setConfiguredVariants((prev) => ({
-      ...prev,
-      [selection.productId]: selection,
-    }));
 
     const resolvedItemId =
       targetItemId || configuringProductInfo?.itemId || chatSession.workspace?.activeItemId;
@@ -1563,25 +1555,40 @@ export default function Home() {
         )}
 
         {/* Product Variant Configurator Modal */}
-        {configuringProductInfo && (
-          <ProductVariantConfigurator
-            product={configuringProductInfo.product}
-            initialSelections={{
-              ...(chatSession.answers["shoe_size"]?.value || chatSession.answers["size"]?.value
-                ? { Size: String(chatSession.answers["shoe_size"]?.value || chatSession.answers["size"]?.value) }
-                : {}),
-              ...(chatSession.answers["color"]?.value && chatSession.answers["color"].value !== "No preference"
-                ? { Color: String(chatSession.answers["color"].value) }
-                : {}),
-              ...(configuredVariants[configuringProductInfo.product.sourceProductId || configuringProductInfo.product.title]?.selectedOptions || {}),
-            }}
-            currency={chatSession.currency || currency}
-            budgetMinor={chatSession.budget}
-            isOpen={Boolean(configuringProductInfo)}
-            onClose={() => setConfiguringProductInfo(null)}
-            onConfirmSelection={(sel) => handleConfirmVariantSelection(sel, configuringProductInfo.itemId)}
-          />
-        )}
+        {configuringProductInfo && (() => {
+          const configuringItem = chatSession.workspace?.groups
+            .flatMap((g) => g.items)
+            .find((i) => i.id === configuringProductInfo.itemId);
+
+          const configuringProdId =
+            configuringProductInfo.product.sourceProductId || configuringProductInfo.product.title;
+
+          const savedProductPrefs =
+            (configuringItem?.selectedProductId === configuringProdId ? configuringItem?.selectedVariant : undefined) ||
+            configuringItem?.unverifiedVariantPreferences?.[configuringProdId] ||
+            {};
+
+          return (
+            <ProductVariantConfigurator
+              itemId={configuringProductInfo.itemId}
+              product={configuringProductInfo.product}
+              initialSelections={{
+                ...(chatSession.answers["shoe_size"]?.value || chatSession.answers["size"]?.value
+                  ? { Size: String(chatSession.answers["shoe_size"]?.value || chatSession.answers["size"]?.value) }
+                  : {}),
+                ...(chatSession.answers["color"]?.value && chatSession.answers["color"].value !== "No preference"
+                  ? { Color: String(chatSession.answers["color"].value) }
+                  : {}),
+                ...savedProductPrefs,
+              }}
+              currency={chatSession.currency || currency}
+              budgetMinor={chatSession.budget}
+              isOpen={Boolean(configuringProductInfo)}
+              onClose={() => setConfiguringProductInfo(null)}
+              onConfirmSelection={(sel) => handleConfirmVariantSelection(sel, configuringProductInfo.itemId)}
+            />
+          );
+        })()}
 
         {/* How It Works & Trust Principles */}
         <HowItWorks />

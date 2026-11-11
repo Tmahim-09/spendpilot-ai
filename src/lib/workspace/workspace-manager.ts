@@ -1241,9 +1241,11 @@ export function updateVariantForItem(
   selection: ProductVariantSelection
 ): ShoppingWorkspace {
   if (selection.isConfirmed === false) {
-    // Save unverified variant preferences on the item without altering verified price, offer, or configuration
+    // Save unverified variant preferences associated with this specific product and item
+    // without altering verified price, offer, or configuration
     const now = Date.now();
     let updatedAny = false;
+    const targetProdKey = selection.productId;
 
     const updatedGroups = workspace.groups.map((group) => {
       const hasItem = group.items.some((i) => i.id === itemId);
@@ -1252,9 +1254,18 @@ export function updateVariantForItem(
       const updatedItems = group.items.map((item) => {
         if (item.id !== itemId) return item;
         updatedAny = true;
+
+        const currentPrefs = item.unverifiedVariantPreferences || {};
+        const updatedPrefs = targetProdKey
+          ? {
+              ...currentPrefs,
+              [targetProdKey]: (selection.selectedOptions as Record<string, string>) || {},
+            }
+          : currentPrefs;
+
         return {
           ...item,
-          unverifiedVariantPreferences: (selection.selectedOptions as Record<string, string>) || {},
+          unverifiedVariantPreferences: updatedPrefs,
         };
       });
 
@@ -1325,33 +1336,54 @@ export function updateVariantForItem(
     }
   }
 
-  const authoritativePriceMinor =
-    verifiedOffer?.priceMinor != null
-      ? verifiedOffer.priceMinor
-      : selection.confirmedPriceMinor;
+  if (!verifiedOffer && selection.confirmedRetailerUrl && typeof selection.confirmedPriceMinor === "number") {
+    // Check if targetCandidate has a matching offer
+    const matchingOffer = targetCandidate.offers?.find((o) => o.url === selection.confirmedRetailerUrl);
+    if (matchingOffer) {
+      verifiedOffer = matchingOffer;
+    } else {
+      // Build a verified variant offer directly from confirmed selection fields (NOT modifying base product offer)
+      const candCurrency = (selection.confirmedCurrency || targetCandidate.currency) as CurrencyCode;
+      if (
+        selection.confirmedRetailerUrl.trim() &&
+        Number.isSafeInteger(selection.confirmedPriceMinor) &&
+        selection.confirmedPriceMinor > 0 &&
+        candCurrency &&
+        isSupportedCurrency(candCurrency)
+      ) {
+        verifiedOffer = {
+          id: selection.variantId || `off_var_${Date.now()}`,
+          domain: selection.retailerName || targetCandidate.retailerName || "Unknown",
+          url: selection.confirmedRetailerUrl,
+          priceMinor: selection.confirmedPriceMinor,
+          currency: candCurrency,
+          availability: "in_stock",
+        };
+      }
+    }
+  }
 
-  const authoritativeCurrency =
-    verifiedOffer?.currency || selection.confirmedCurrency || targetCandidate.currency;
+  if (!verifiedOffer) {
+    return workspace;
+  }
 
-  const authoritativeRetailerUrl =
-    verifiedOffer?.url || selection.confirmedRetailerUrl || targetCandidate.retailerUrl;
-
-  const authoritativeRetailerName =
-    verifiedOffer?.domain || selection.retailerName || targetCandidate.retailerName;
-
-  // Reject non-safe-integer or non-positive price
+  // Reject missing URLs, invalid prices, and missing/unsupported currency
   if (
-    typeof authoritativePriceMinor !== "number" ||
-    !Number.isSafeInteger(authoritativePriceMinor) ||
-    authoritativePriceMinor <= 0
+    !verifiedOffer.url ||
+    !verifiedOffer.url.trim() ||
+    typeof verifiedOffer.priceMinor !== "number" ||
+    !Number.isSafeInteger(verifiedOffer.priceMinor) ||
+    verifiedOffer.priceMinor <= 0 ||
+    !verifiedOffer.currency ||
+    !isSupportedCurrency(verifiedOffer.currency)
   ) {
     return workspace;
   }
 
-  // Reject unsupported currency
-  if (!authoritativeCurrency || !isSupportedCurrency(authoritativeCurrency)) {
-    return workspace;
-  }
+  const authoritativePriceMinor = verifiedOffer.priceMinor;
+  const authoritativeCurrency = verifiedOffer.currency as CurrencyCode;
+  const authoritativeRetailerUrl = verifiedOffer.url;
+  const authoritativeRetailerName = verifiedOffer.domain || selection.retailerName || targetCandidate.retailerName;
 
   const now = Date.now();
   let updatedAny = false;
@@ -1367,25 +1399,15 @@ export function updateVariantForItem(
         const pid = p.sourceProductId || p.title;
         if (pid === selection.productId) {
           updatedAny = true;
-          const updatedOffer: ProductOfferItem | null = verifiedOffer || (p.selectedOffer
-            ? {
-                ...p.selectedOffer,
-                priceMinor: authoritativePriceMinor,
-                currency: authoritativeCurrency,
-                url: authoritativeRetailerUrl || p.selectedOffer.url,
-                domain: authoritativeRetailerName || p.selectedOffer.domain,
-              }
-            : null);
-
           return {
             ...p,
             title: selection.title || p.title,
             priceMinor: authoritativePriceMinor,
             currency: authoritativeCurrency,
-            retailerUrl: authoritativeRetailerUrl || p.retailerUrl,
+            retailerUrl: authoritativeRetailerUrl,
             imageUrl: selection.imageUrl || p.imageUrl,
             retailerName: authoritativeRetailerName || p.retailerName,
-            selectedOffer: updatedOffer,
+            selectedOffer: verifiedOffer,
           };
         }
         return p;
@@ -1398,33 +1420,16 @@ export function updateVariantForItem(
           item.selectedProduct.title === selection.title ||
           item.selectedProductId === selection.productId);
 
-      const matchingCandidate = updatedCandidates.find(
-        (c) => (c.sourceProductId || c.title) === selection.productId
-      );
-
-      const baseOffer = item.selectedOffer || item.selectedProduct?.selectedOffer || null;
-      const updatedDirectOffer: ProductOfferItem | null = verifiedOffer || (baseOffer
-        ? {
-            ...baseOffer,
-            priceMinor: authoritativePriceMinor,
-            currency: authoritativeCurrency,
-            url: authoritativeRetailerUrl || baseOffer.url,
-            domain: authoritativeRetailerName || baseOffer.domain,
-          }
-        : null);
-
-      const effectiveVariantOffer = matchingCandidate?.selectedOffer || updatedDirectOffer || item.selectedProduct?.selectedOffer;
-
       const updatedSelectedProduct = isSelectedMatch && item.selectedProduct
         ? {
             ...item.selectedProduct,
             title: selection.title || item.selectedProduct.title,
             priceMinor: authoritativePriceMinor,
             currency: authoritativeCurrency,
-            retailerUrl: authoritativeRetailerUrl || item.selectedProduct.retailerUrl,
+            retailerUrl: authoritativeRetailerUrl,
             imageUrl: selection.imageUrl || item.selectedProduct.imageUrl,
             retailerName: authoritativeRetailerName || item.selectedProduct.retailerName,
-            selectedOffer: effectiveVariantOffer,
+            selectedOffer: verifiedOffer,
           }
         : item.selectedProduct;
 
@@ -1439,7 +1444,7 @@ export function updateVariantForItem(
           ? (selection.selectedOptions as Record<string, string>) || item.selectedVariant
           : item.selectedVariant,
         selectedOffer: isSelectedMatch
-          ? (effectiveVariantOffer || item.selectedOffer)
+          ? verifiedOffer
           : item.selectedOffer,
         selectedProduct: updatedSelectedProduct,
       };
@@ -1452,7 +1457,7 @@ export function updateVariantForItem(
     };
   });
 
-  if (!updatedAny) {
+  if (!updatedAny && !itemFound.selectedProduct) {
     return workspace;
   }
 

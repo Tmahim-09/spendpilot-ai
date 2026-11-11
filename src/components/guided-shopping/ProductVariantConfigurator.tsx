@@ -27,6 +27,7 @@ import { formatCurrency } from "@/lib/utils";
 import { evaluateVariantConfirmation } from "@/lib/channel3/variants";
 
 interface ProductVariantConfiguratorProps {
+  itemId?: string;
   product: NormalizedProduct;
   initialSelections?: Record<string, string>;
   currency?: CurrencyCode;
@@ -34,6 +35,31 @@ interface ProductVariantConfiguratorProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirmSelection: (selection: ProductVariantSelection) => void;
+}
+
+/**
+ * Creates a stable request fingerprint to enforce strict response identity.
+ */
+export function createVariantRequestFingerprint(params: {
+  itemId?: string;
+  productId: string;
+  retailerUrl?: string;
+  currency: string;
+  selectedOptions: Record<string, string>;
+}): string {
+  const sortedOptions = Object.keys(params.selectedOptions)
+    .filter((k) => Boolean(params.selectedOptions[k] && params.selectedOptions[k].trim()))
+    .sort()
+    .map((k) => `${k.toLowerCase().trim()}=${params.selectedOptions[k].toLowerCase().trim()}`)
+    .join("&");
+
+  return [
+    params.itemId || "",
+    params.productId,
+    params.retailerUrl || "",
+    params.currency.toUpperCase(),
+    sortedOptions,
+  ].join("::");
 }
 
 // Swatch colors for standard color variants
@@ -283,6 +309,7 @@ function OptionDropdown({
 }
 
 export function ProductVariantConfigurator({
+  itemId,
   product,
   initialSelections = {},
   currency = "USD",
@@ -297,25 +324,35 @@ export function ProductVariantConfigurator({
   const [isLoading, setIsLoading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const hasInitializedRef = useRef<string | null>(null);
   const activeRequestIdRef = useRef<number>(0);
+  const lastInitializedKeyRef = useRef<string | null>(null);
 
-  // Tracks verified response tied strictly to exact requested options, price, and offer
+  // Tracks verified response tied strictly to exact requested options, price, currency, and offer
   const [lastConfirmedResponse, setLastConfirmedResponse] = useState<{
     requestId: number;
+    fingerprint: string;
     options: Record<string, string>;
     priceMinor: number;
     currency: CurrencyCode;
-    offer: ProductOfferItem | null;
+    offer: ProductOfferItem;
   } | null>(null);
 
   const productId = product.sourceProductId || product.title;
+  const retailerUrl = product.retailerUrl || "";
 
   // Load product variants on open or when selections change
   const fetchVariants = useCallback(
     async (optionsToSelect: Record<string, string>, isInitial = false) => {
       if (!productId) return;
       const currentRequestId = ++activeRequestIdRef.current;
+      const expectedFingerprint = createVariantRequestFingerprint({
+        itemId,
+        productId,
+        retailerUrl,
+        currency,
+        selectedOptions: optionsToSelect,
+      });
+
       if (isInitial) {
         setIsLoading(true);
       } else {
@@ -361,9 +398,14 @@ export function ProductVariantConfigurator({
           product
         );
 
-        if (confirmationResult.isConfirmed && confirmationResult.effectivePriceMinor) {
+        if (
+          confirmationResult.isConfirmed &&
+          confirmationResult.effectivePriceMinor &&
+          confirmationResult.matchingOffer
+        ) {
           setLastConfirmedResponse({
             requestId: currentRequestId,
+            fingerprint: expectedFingerprint,
             options: { ...optionsToSelect },
             priceMinor: confirmationResult.effectivePriceMinor,
             currency,
@@ -389,24 +431,25 @@ export function ProductVariantConfigurator({
         }
       }
     },
-    [productId, currency, product]
+    [itemId, productId, retailerUrl, currency, product]
   );
 
   useEffect(() => {
     if (isOpen && productId) {
-      if (hasInitializedRef.current !== productId) {
-        hasInitializedRef.current = productId;
+      const initKey = `${itemId || ""}::${productId}::${retailerUrl}::${currency}`;
+      if (lastInitializedKeyRef.current !== initKey) {
+        lastInitializedKeyRef.current = initKey;
         setSelectedOptions(initialSelections);
         setVariantState(null);
         setLastConfirmedResponse(null);
         setCurrentImageUrl(product.imageUrl || null);
         void fetchVariants(initialSelections, true);
       }
-    } else if (!isOpen && hasInitializedRef.current !== null) {
-      hasInitializedRef.current = null;
+    } else if (!isOpen && lastInitializedKeyRef.current !== null) {
+      lastInitializedKeyRef.current = null;
       setLastConfirmedResponse(null);
     }
-  }, [isOpen, productId, initialSelections, product.imageUrl, fetchVariants]);
+  }, [isOpen, productId, itemId, retailerUrl, currency, initialSelections, product.imageUrl, fetchVariants]);
 
   const handleSelectOption = (
     dimensionName: string,
@@ -435,20 +478,38 @@ export function ProductVariantConfigurator({
 
   if (!isOpen) return null;
 
+  const currentFingerprint = createVariantRequestFingerprint({
+    itemId,
+    productId,
+    retailerUrl,
+    currency,
+    selectedOptions,
+  });
+
   const isPending = isLoading || isUpdating;
   const hasRequestedCustomOptions = Object.keys(selectedOptions).some(
     (k) => Boolean(selectedOptions[k] && selectedOptions[k].trim())
   );
 
-  // Exact comparison between requested selections and confirmed options in lastConfirmedResponse
+  // Strict response identity: confirmed configuration requires matching fingerprint, currency, price, and offer
   const areRequestedOptionsConfirmed = Boolean(
     !isPending &&
     lastConfirmedResponse &&
-    Object.keys(selectedOptions).filter((k) => Boolean(selectedOptions[k])).length ===
-      Object.keys(lastConfirmedResponse.options).filter((k) => Boolean(lastConfirmedResponse.options[k])).length &&
-    Object.entries(selectedOptions)
-      .filter(([, v]) => Boolean(v))
-      .every(([k, v]) => lastConfirmedResponse.options[k] === v)
+    lastConfirmedResponse.fingerprint === currentFingerprint &&
+    lastConfirmedResponse.currency === currency &&
+    lastConfirmedResponse.priceMinor > 0 &&
+    lastConfirmedResponse.offer &&
+    lastConfirmedResponse.offer.url &&
+    lastConfirmedResponse.offer.priceMinor === lastConfirmedResponse.priceMinor &&
+    lastConfirmedResponse.offer.currency === currency
+  );
+
+  const baseProductOffer = product.offers?.find(
+    (o) =>
+      typeof o.priceMinor === "number" &&
+      o.priceMinor === product.priceMinor &&
+      o.currency === currency &&
+      Boolean(o.url && o.url.trim())
   );
 
   const isUnchangedBaseProduct = Boolean(
@@ -456,6 +517,8 @@ export function ProductVariantConfigurator({
     !hasRequestedCustomOptions &&
     product.priceMinor !== null &&
     product.priceMinor > 0 &&
+    product.currency === currency &&
+    Boolean(baseProductOffer) &&
     product.configurationStatus === "verified"
   );
 
@@ -469,6 +532,12 @@ export function ProductVariantConfigurator({
     ? (areRequestedOptionsConfirmed
         ? lastConfirmedResponse!.priceMinor
         : (product.priceMinor ?? null))
+    : null;
+
+  const effectiveOffer: ProductOfferItem | null = isConfigurationConfirmed
+    ? (areRequestedOptionsConfirmed
+        ? lastConfirmedResponse!.offer
+        : (baseProductOffer || null))
     : null;
 
   // Base price reference for delta calculations
@@ -485,23 +554,20 @@ export function ProductVariantConfigurator({
   const handleConfirm = () => {
     if (isPending) return;
 
-    if (isConfigurationConfirmed && effectivePriceMinor) {
-      const confirmedUrl = variantState?.retailerUrl || product.retailerUrl;
-      const matchingOffer =
-        lastConfirmedResponse?.offer ||
-        (isUnchangedBaseProduct ? (product.offers?.[0] || null) : null);
+    if (isConfigurationConfirmed && effectivePriceMinor && effectiveOffer) {
+      const confirmedUrl = effectiveOffer.url || variantState?.retailerUrl || product.retailerUrl;
 
       onConfirmSelection({
         productId,
         title: variantState?.title || product.title,
-        retailerName: variantState?.retailerName || product.retailerName || "Verified Retailer",
+        retailerName: effectiveOffer.domain || variantState?.retailerName || product.retailerName || "Verified Retailer",
         imageUrl: currentImageUrl || variantState?.imageUrl || product.imageUrl,
         selectedOptions,
         isConfirmed: true,
         confirmedPriceMinor: effectivePriceMinor,
         confirmedCurrency: currency,
         confirmedRetailerUrl: confirmedUrl,
-        confirmedOffer: matchingOffer,
+        confirmedOffer: effectiveOffer,
       });
     } else {
       // Verification failed or custom unverified options: save as unverified preferences

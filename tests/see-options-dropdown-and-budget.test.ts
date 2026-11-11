@@ -1,10 +1,131 @@
-import { test, describe } from "node:test";
+import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { retrieveProductVariants } from "../src/lib/channel3/variants.ts";
+import { setChannel3ClientForTesting } from "../src/lib/channel3/client.ts";
+import type { Channel3 } from "@channel3/sdk";
+
+const mockChannel3TestClient = {
+  products: {
+    retrieve: async ({
+      product_id,
+      selected_options,
+    }: {
+      product_id: string;
+      selected_options?: Record<string, string>;
+    }) => {
+      if (product_id === "apple-macbook-air-m3-13") {
+        const selRAM = selected_options?.RAM || "16GB Unified Memory";
+        const selColor = selected_options?.Color || "Midnight";
+        const ramDelta = selRAM.includes("24") ? 200 : selRAM.includes("32") ? 400 : 0;
+        return {
+          id: "apple-macbook-air-m3-13",
+          title: "Apple MacBook Air 13-inch M3",
+          variants: {
+            options: [
+              {
+                name: "RAM",
+                values: [
+                  { label: "16GB Unified Memory", exists: true, available: "InStock" },
+                  { label: "24GB Unified Memory", exists: true, available: "InStock" },
+                  { label: "32GB Unified Memory", exists: true, available: "InStock" },
+                ],
+              },
+              {
+                name: "Color",
+                values: [
+                  {
+                    label: "Midnight",
+                    exists: true,
+                    available: "InStock",
+                    thumbnail_url:
+                      "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-midnight-select-202402?wid=400&hei=400&fmt=jpeg",
+                  },
+                  {
+                    label: "Space Gray",
+                    exists: true,
+                    available: "InStock",
+                    thumbnail_url:
+                      "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-spacegray-select-202402?wid=400&hei=400&fmt=jpeg",
+                  },
+                  {
+                    label: "Silver",
+                    exists: true,
+                    available: "InStock",
+                    thumbnail_url:
+                      "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-silver-select-202402?wid=400&hei=400&fmt=jpeg",
+                  },
+                  {
+                    label: "Starlight",
+                    exists: true,
+                    available: "InStock",
+                    thumbnail_url:
+                      "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-starlight-select-202402?wid=400&hei=400&fmt=jpeg",
+                  },
+                ],
+              },
+            ],
+            selected: [
+              { name: "RAM", label: selRAM },
+              { name: "Color", label: selColor },
+            ],
+          },
+          offers: [
+            {
+              domain: "apple.com",
+              url: "https://apple.com/shop/buy-mac/macbook-air/13-inch-m3",
+              price: { price: 1099 + ramDelta, currency: "USD" },
+              availability: "InStock",
+            },
+          ],
+        };
+      }
+      if (product_id === "nike-pegasus-41-running-shoe") {
+        const selSize = selected_options?.Size || "US 10";
+        return {
+          id: "nike-pegasus-41-running-shoe",
+          title: "Nike Pegasus 41 Running Shoe",
+          variants: {
+            options: [
+              {
+                name: "Size",
+                values: [
+                  { label: "US 9", exists: true, available: "InStock" },
+                  { label: "US 9.5", exists: true, available: "InStock" },
+                  { label: "US 10", exists: true, available: "InStock" },
+                  { label: "US 10.5", exists: true, available: "InStock" },
+                  { label: "US 11", exists: true, available: "InStock" },
+                ],
+              },
+            ],
+            selected: [{ name: "Size", label: selSize }],
+          },
+          offers: [
+            {
+              domain: "nike.com",
+              url: "https://nike.com/pegasus-41",
+              price: { price: 140, currency: "USD" },
+              availability: "InStock",
+            },
+          ],
+        };
+      }
+      return null;
+    },
+    lookup: async () => null,
+    search: async () => ({ response: { products: [] } }),
+  },
+} as unknown as Channel3;
 
 describe("SpendPilot AI: See Options Dropdown UI, Retailer Options & Budget Reminder", () => {
+  before(() => {
+    setChannel3ClientForTesting(mockChannel3TestClient);
+  });
+
+  after(() => {
+    setChannel3ClientForTesting(null);
+  });
   test("1. MacBook options fetch alternative retailer options (RAM 16/24/32GB, Storage, Colors) with accurate pricing", async () => {
     const variantState = await retrieveProductVariants(
       "apple-macbook-air-m3-13",
