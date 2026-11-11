@@ -1089,16 +1089,19 @@ export function selectOfferForItem(
   }
 
   const hasAuthoritativeOffers = Array.isArray(targetCandidate.offers) && targetCandidate.offers.length > 0;
+  let canonicalOffer: ProductOfferItem | null = null;
 
   if (hasAuthoritativeOffers) {
-    const belongs = targetCandidate.offers!.some(
-      (o) =>
-        (offer.offerId && o.offerId === offer.offerId) ||
-        (offer.id && o.id === offer.id) ||
-        (offer.url && o.url === offer.url) ||
-        (o.domain === offer.domain && o.priceMinor === offer.priceMinor)
-    );
-    if (!belongs) {
+    canonicalOffer =
+      targetCandidate.offers!.find(
+        (o) =>
+          (offer.offerId && o.offerId === offer.offerId) ||
+          (offer.id && o.id === offer.id) ||
+          (offer.url && o.url === offer.url) ||
+          (o.domain === offer.domain && o.priceMinor === offer.priceMinor)
+      ) || null;
+
+    if (!canonicalOffer) {
       // Reject invalid offer not belonging to product
       return workspace;
     }
@@ -1118,6 +1121,36 @@ export function selectOfferForItem(
     if (!matchesExisting) {
       return workspace;
     }
+    canonicalOffer = existingOffer;
+  }
+
+  // Reject altered prices or currencies: cannot override canonical stored price
+  if (
+    typeof offer.priceMinor === "number" &&
+    offer.priceMinor !== canonicalOffer.priceMinor
+  ) {
+    return workspace;
+  }
+  if (
+    offer.currency &&
+    canonicalOffer.currency &&
+    offer.currency !== canonicalOffer.currency
+  ) {
+    return workspace;
+  }
+
+  // Reject non-safe-integer or non-positive price on canonical offer
+  if (
+    typeof canonicalOffer.priceMinor !== "number" ||
+    !Number.isSafeInteger(canonicalOffer.priceMinor) ||
+    canonicalOffer.priceMinor <= 0
+  ) {
+    return workspace;
+  }
+
+  // Reject unsupported currency on canonical offer
+  if (!canonicalOffer.currency || !isSupportedCurrency(canonicalOffer.currency)) {
+    return workspace;
   }
 
   const now = Date.now();
@@ -1130,19 +1163,19 @@ export function selectOfferForItem(
     const updatedItems = group.items.map((item) => {
       if (item.id !== itemId) return item;
 
-      // Update offer in candidates list
+      // Update offer in candidates list with canonical offer
       const updatedCandidates = item.candidates.map((p) => {
         const pid = p.sourceProductId || p.title;
         if (pid === productId) {
           updatedAny = true;
           return {
             ...p,
-            selectedOffer: offer,
-            priceMinor: offer.priceMinor,
-            currency: offer.currency,
-            retailerUrl: offer.url,
-            retailerName: offer.domain || p.retailerName,
-            availability: offer.availability || p.availability,
+            selectedOffer: canonicalOffer,
+            priceMinor: canonicalOffer!.priceMinor,
+            currency: canonicalOffer!.currency,
+            retailerUrl: canonicalOffer!.url,
+            retailerName: canonicalOffer!.domain || p.retailerName,
+            availability: canonicalOffer!.availability || p.availability,
           };
         }
         return p;
@@ -1158,12 +1191,12 @@ export function selectOfferForItem(
       const updatedSelectedProduct = isSelectedProduct && item.selectedProduct
         ? {
             ...item.selectedProduct,
-            selectedOffer: offer,
-            priceMinor: offer.priceMinor,
-            currency: offer.currency,
-            retailerUrl: offer.url,
-            retailerName: offer.domain || item.selectedProduct.retailerName,
-            availability: offer.availability || item.selectedProduct.availability,
+            selectedOffer: canonicalOffer,
+            priceMinor: canonicalOffer!.priceMinor,
+            currency: canonicalOffer!.currency,
+            retailerUrl: canonicalOffer!.url,
+            retailerName: canonicalOffer!.domain || item.selectedProduct.retailerName,
+            availability: canonicalOffer!.availability || item.selectedProduct.availability,
           }
         : item.selectedProduct;
 
@@ -1174,7 +1207,7 @@ export function selectOfferForItem(
       return {
         ...item,
         candidates: updatedCandidates,
-        selectedOffer: isSelectedProduct ? offer : item.selectedOffer,
+        selectedOffer: isSelectedProduct ? canonicalOffer : item.selectedOffer,
         selectedProduct: updatedSelectedProduct,
       };
     });
@@ -1212,20 +1245,81 @@ export function updateVariantForItem(
     return workspace;
   }
 
+  // Find item and candidate in workspace to verify variant belongs to correct product
+  let itemFound: ShoppingItem | null = null;
+  for (const group of workspace.groups) {
+    const found = group.items.find((i) => i.id === itemId);
+    if (found) {
+      itemFound = found;
+      break;
+    }
+  }
+
+  if (!itemFound) {
+    return workspace;
+  }
+
+  const targetCandidate =
+    itemFound.candidates.find((p) => (p.sourceProductId || p.title) === selection.productId) ||
+    (itemFound.selectedProduct &&
+    ((itemFound.selectedProduct.sourceProductId && itemFound.selectedProduct.sourceProductId === selection.productId) ||
+      itemFound.selectedProduct.title === selection.productId ||
+      itemFound.selectedProductId === selection.productId)
+      ? itemFound.selectedProduct
+      : null);
+
+  if (!targetCandidate) {
+    return workspace;
+  }
+
   // When confirmedOffer is provided, its verified details are authoritative over conflicting top-level fields
+  let verifiedOffer = selection.confirmedOffer || null;
+  if (verifiedOffer && Array.isArray(targetCandidate.offers) && targetCandidate.offers.length > 0) {
+    const matchingCanonical = targetCandidate.offers.find(
+      (o) =>
+        (verifiedOffer!.offerId && o.offerId === verifiedOffer!.offerId) ||
+        (verifiedOffer!.id && o.id === verifiedOffer!.id) ||
+        (verifiedOffer!.url && o.url === verifiedOffer!.url)
+    );
+    if (matchingCanonical) {
+      // Reject altered price or currency attempting to override canonical stored price
+      if (
+        (typeof verifiedOffer.priceMinor === "number" && verifiedOffer.priceMinor !== matchingCanonical.priceMinor) ||
+        (verifiedOffer.currency && matchingCanonical.currency && verifiedOffer.currency !== matchingCanonical.currency)
+      ) {
+        return workspace;
+      }
+      verifiedOffer = matchingCanonical;
+    }
+  }
+
   const authoritativePriceMinor =
-    selection.confirmedOffer?.priceMinor != null
-      ? selection.confirmedOffer.priceMinor
+    verifiedOffer?.priceMinor != null
+      ? verifiedOffer.priceMinor
       : selection.confirmedPriceMinor;
 
   const authoritativeCurrency =
-    selection.confirmedOffer?.currency || selection.confirmedCurrency;
+    verifiedOffer?.currency || selection.confirmedCurrency || targetCandidate.currency;
 
   const authoritativeRetailerUrl =
-    selection.confirmedOffer?.url || selection.confirmedRetailerUrl;
+    verifiedOffer?.url || selection.confirmedRetailerUrl || targetCandidate.retailerUrl;
 
   const authoritativeRetailerName =
-    selection.confirmedOffer?.domain || selection.retailerName;
+    verifiedOffer?.domain || selection.retailerName || targetCandidate.retailerName;
+
+  // Reject non-safe-integer or non-positive price
+  if (
+    typeof authoritativePriceMinor !== "number" ||
+    !Number.isSafeInteger(authoritativePriceMinor) ||
+    authoritativePriceMinor <= 0
+  ) {
+    return workspace;
+  }
+
+  // Reject unsupported currency
+  if (!authoritativeCurrency || !isSupportedCurrency(authoritativeCurrency)) {
+    return workspace;
+  }
 
   const now = Date.now();
   let updatedAny = false;
@@ -1241,11 +1335,11 @@ export function updateVariantForItem(
         const pid = p.sourceProductId || p.title;
         if (pid === selection.productId) {
           updatedAny = true;
-          const updatedOffer: ProductOfferItem | null = selection.confirmedOffer || (p.selectedOffer
+          const updatedOffer: ProductOfferItem | null = verifiedOffer || (p.selectedOffer
             ? {
                 ...p.selectedOffer,
-                priceMinor: authoritativePriceMinor ?? p.selectedOffer.priceMinor,
-                currency: authoritativeCurrency || p.selectedOffer.currency,
+                priceMinor: authoritativePriceMinor,
+                currency: authoritativeCurrency,
                 url: authoritativeRetailerUrl || p.selectedOffer.url,
                 domain: authoritativeRetailerName || p.selectedOffer.domain,
               }
@@ -1254,8 +1348,8 @@ export function updateVariantForItem(
           return {
             ...p,
             title: selection.title || p.title,
-            priceMinor: authoritativePriceMinor ?? p.priceMinor,
-            currency: authoritativeCurrency || p.currency,
+            priceMinor: authoritativePriceMinor,
+            currency: authoritativeCurrency,
             retailerUrl: authoritativeRetailerUrl || p.retailerUrl,
             imageUrl: selection.imageUrl || p.imageUrl,
             retailerName: authoritativeRetailerName || p.retailerName,
@@ -1277,11 +1371,11 @@ export function updateVariantForItem(
       );
 
       const baseOffer = item.selectedOffer || item.selectedProduct?.selectedOffer || null;
-      const updatedDirectOffer: ProductOfferItem | null = selection.confirmedOffer || (baseOffer
+      const updatedDirectOffer: ProductOfferItem | null = verifiedOffer || (baseOffer
         ? {
             ...baseOffer,
-            priceMinor: authoritativePriceMinor ?? baseOffer.priceMinor,
-            currency: authoritativeCurrency || baseOffer.currency,
+            priceMinor: authoritativePriceMinor,
+            currency: authoritativeCurrency,
             url: authoritativeRetailerUrl || baseOffer.url,
             domain: authoritativeRetailerName || baseOffer.domain,
           }
@@ -1293,8 +1387,8 @@ export function updateVariantForItem(
         ? {
             ...item.selectedProduct,
             title: selection.title || item.selectedProduct.title,
-            priceMinor: authoritativePriceMinor ?? item.selectedProduct.priceMinor,
-            currency: authoritativeCurrency || item.selectedProduct.currency,
+            priceMinor: authoritativePriceMinor,
+            currency: authoritativeCurrency,
             retailerUrl: authoritativeRetailerUrl || item.selectedProduct.retailerUrl,
             imageUrl: selection.imageUrl || item.selectedProduct.imageUrl,
             retailerName: authoritativeRetailerName || item.selectedProduct.retailerName,

@@ -23,6 +23,47 @@ import type {
   CurrencyCode,
 } from "@/types";
 import { formatCurrency } from "@/lib/utils";
+import { isSupportedCurrency } from "@/lib/money";
+
+function isDimensionMatch(dimName: string, reqKey: string): boolean {
+  const d = dimName.toLowerCase().trim();
+  const r = reqKey.toLowerCase().trim();
+  if (d === r || d.includes(r) || r.includes(d)) return true;
+  if (
+    (r === "storage" || r === "ssd") &&
+    (d.includes("storage") || d.includes("hard drive") || d.includes("capacity") || d.includes("ssd") || d.includes("drive"))
+  )
+    return true;
+  if ((r === "ram" || r === "memory") && (d.includes("ram") || d.includes("memory"))) return true;
+  if ((r === "color" || r === "colour") && (d.includes("color") || d.includes("colour") || d.includes("finish")))
+    return true;
+  if (r === "size" && d.includes("size")) return true;
+  return false;
+}
+
+function normalizeOptionValue(val: string): string {
+  return val.toLowerCase().replace(/\s+/g, "").replace(/ssd|unifiedmemory|ram/gi, "");
+}
+
+function matchesRequestedOptions(
+  requested: Record<string, string>,
+  effective: Record<string, string> | undefined
+): boolean {
+  if (!effective) return false;
+  for (const [k, v] of Object.entries(requested)) {
+    if (!v) continue;
+    const matchKey = Object.keys(effective).find((ek) => isDimensionMatch(ek, k));
+    if (!matchKey) return false;
+    const effVal = effective[matchKey];
+    if (!effVal) return false;
+    const normReq = normalizeOptionValue(v);
+    const normEff = normalizeOptionValue(effVal);
+    if (normEff !== normReq && !normEff.includes(normReq) && !normReq.includes(normEff)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 interface ProductVariantConfiguratorProps {
   product: NormalizedProduct;
@@ -71,36 +112,13 @@ function getColorSwatch(colorLabel: string): string {
 }
 
 /**
- * Computes effective total price based on base price and selected options delta.
- */
-function computeEffectivePrice(
-  basePrice: number,
-  dimensions: ProductVariantDimension[],
-  selections: Record<string, string>
-): number {
-  let totalDelta = 0;
-  for (const dim of dimensions) {
-    const selectedLabel = selections[dim.name] || dim.selectedValue;
-    if (!selectedLabel) continue;
-    const optVal = dim.values.find(
-      (v) => v.label.toLowerCase() === selectedLabel.toLowerCase()
-    );
-    if (optVal && typeof optVal.priceMinor === "number") {
-      const delta = Math.max(0, optVal.priceMinor - basePrice);
-      totalDelta += delta;
-    }
-  }
-  return basePrice + totalDelta;
-}
-
-/**
  * Dropdown Selector Component for a Single Option Dimension
  */
 interface OptionDropdownProps {
   dimension: ProductVariantDimension;
   selectedValue: string;
-  basePrice: number;
-  currentTotalPrice: number;
+  basePrice?: number | null;
+  currentTotalPrice?: number | null;
   budgetMinor?: number | null;
   currency: CurrencyCode;
   onSelect: (label: string, optionVal?: ProductVariantOptionValue) => void;
@@ -208,10 +226,21 @@ function OptionDropdown({
               val.available === "OutOfStock" || val.available === "SoldOut";
 
             // Price delta calculation for this specific option
-            const optDelta = val.priceMinor ? Math.max(0, val.priceMinor - basePrice) : 0;
+            const optDelta =
+              typeof val.priceMinor === "number" && typeof basePrice === "number"
+                ? Math.max(0, val.priceMinor - basePrice)
+                : 0;
             // What the total would be if this option were selected
-            const simulatedTotal = currentTotalPrice - (activeValue?.priceMinor ? Math.max(0, activeValue.priceMinor - basePrice) : 0) + optDelta;
-            const exceedsBudget = budgetMinor ? simulatedTotal > budgetMinor : false;
+            const activeDelta =
+              typeof activeValue?.priceMinor === "number" && typeof basePrice === "number"
+                ? Math.max(0, activeValue.priceMinor - basePrice)
+                : 0;
+            const simulatedTotal =
+              typeof currentTotalPrice === "number"
+                ? currentTotalPrice - activeDelta + optDelta
+                : null;
+            const exceedsBudget =
+              budgetMinor && typeof simulatedTotal === "number" ? simulatedTotal > budgetMinor : false;
 
             return (
               <button
@@ -263,7 +292,7 @@ function OptionDropdown({
                     </span>
                   )}
 
-                  {budgetMinor && !isOutOfStock && (
+                  {budgetMinor && !isOutOfStock && simulatedTotal !== null && (
                     exceedsBudget ? (
                       <span className="rounded bg-[#F5B942]/15 border border-[#F5B942]/30 px-1.5 py-0.5 text-[10px] font-semibold text-[#F5B942]">
                         Exceeds budget
@@ -308,6 +337,7 @@ export function ProductVariantConfigurator({
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hasInitializedRef = useRef<string | null>(null);
+  const activeRequestIdRef = useRef<number>(0);
 
   const productId = product.sourceProductId || product.title;
 
@@ -315,6 +345,7 @@ export function ProductVariantConfigurator({
   const fetchVariants = useCallback(
     async (optionsToSelect: Record<string, string>, isInitial = false) => {
       if (!productId) return;
+      const currentRequestId = ++activeRequestIdRef.current;
       if (isInitial) {
         setIsLoading(true);
       } else {
@@ -335,6 +366,12 @@ export function ProductVariantConfigurator({
         });
 
         const data = await res.json();
+
+        // Stale response protection: do not accept out-of-order or superseded responses
+        if (currentRequestId !== activeRequestIdRef.current) {
+          return;
+        }
+
         if (!res.ok || !data.success) {
           throw new Error(data.error || "Failed to load product variants.");
         }
@@ -353,13 +390,18 @@ export function ProductVariantConfigurator({
           ...optionsToSelect,
         }));
       } catch (err: unknown) {
+        if (currentRequestId !== activeRequestIdRef.current) {
+          return;
+        }
         const msg = err instanceof Error ? err.message : "Unable to retrieve variant metadata";
         setError(msg);
       } finally {
-        if (isInitial) {
-          setIsLoading(false);
-        } else {
-          setIsUpdating(false);
+        if (currentRequestId === activeRequestIdRef.current) {
+          if (isInitial) {
+            setIsLoading(false);
+          } else {
+            setIsUpdating(false);
+          }
         }
       }
     },
@@ -418,37 +460,100 @@ export function ProductVariantConfigurator({
 
   if (!isOpen) return null;
 
-  // Calculate pricing
-  const basePrice =
-    variantState?.verifiedPriceMinor ||
-    (product.priceMinor !== null && product.configurationStatus === "verified"
-      ? product.priceMinor
-      : 109900);
+  // Determine configuration verification strictly
+  const isPriceValid =
+    typeof variantState?.verifiedPriceMinor === "number" &&
+    Number.isFinite(variantState.verifiedPriceMinor) &&
+    Number.isSafeInteger(variantState.verifiedPriceMinor) &&
+    variantState.verifiedPriceMinor > 0;
 
-  const effectivePriceMinor = computeEffectivePrice(
-    basePrice,
-    variantState?.options || [],
-    selectedOptions
+  const isCurrencyValid = isSupportedCurrency(currency);
+
+  const hasRequestedCustomOptions = Object.keys(selectedOptions).length > 0;
+
+  const isExactOptionsMatch =
+    Boolean(variantState) &&
+    !variantState!.isRelaxed &&
+    variantState!.status === "variants_found" &&
+    hasRequestedCustomOptions &&
+    matchesRequestedOptions(selectedOptions, variantState!.effectiveSelected);
+
+  const isUnchangedBaseProduct =
+    !hasRequestedCustomOptions &&
+    product.priceMinor !== null &&
+    product.priceMinor > 0 &&
+    product.configurationStatus === "verified";
+
+  const isConfigurationConfirmed = Boolean(
+    variantState &&
+    isCurrencyValid &&
+    ((isExactOptionsMatch && isPriceValid) || isUnchangedBaseProduct)
   );
 
+  // Never use a parent product price as the confirmed price of a different configuration.
+  // Missing variant price must remain null.
+  const effectivePriceMinor: number | null = isConfigurationConfirmed
+    ? (isExactOptionsMatch && isPriceValid
+        ? (variantState?.verifiedPriceMinor ?? null)
+        : (product.priceMinor ?? null))
+    : null;
+
+  // Base price reference for delta calculations
+  const basePrice =
+    variantState?.verifiedPriceMinor ??
+    (product.priceMinor !== null && product.configurationStatus === "verified"
+      ? product.priceMinor
+      : null);
+
   // Budget comparison
-  const isOverBudget = Boolean(budgetMinor && effectivePriceMinor > budgetMinor);
-  const budgetDeltaMinor = isOverBudget && budgetMinor ? effectivePriceMinor - budgetMinor : 0;
+  const isOverBudget = Boolean(budgetMinor && effectivePriceMinor && effectivePriceMinor > budgetMinor);
+  const budgetDeltaMinor = isOverBudget && budgetMinor && effectivePriceMinor ? effectivePriceMinor - budgetMinor : 0;
 
   const handleConfirm = () => {
-    const confirmedPrice = effectivePriceMinor || product.priceMinor || null;
-    const confirmedUrl = variantState?.retailerUrl || product.retailerUrl;
+    if (isConfigurationConfirmed && effectivePriceMinor) {
+      const confirmedUrl = variantState?.retailerUrl || product.retailerUrl;
+      const matchingOffer =
+        variantState?.offers?.find((o) => o.priceMinor === effectivePriceMinor) ||
+        product.offers?.find((o) => o.priceMinor === effectivePriceMinor) ||
+        (variantState?.retailerUrl
+          ? {
+              domain: variantState.retailerName || product.retailerName || "Verified Retailer",
+              url: variantState.retailerUrl,
+              priceMinor: effectivePriceMinor,
+              currency,
+              availability: variantState.availability === "InStock" ? "in_stock" : "unknown",
+            }
+          : null);
 
-    onConfirmSelection({
-      productId,
-      title: variantState?.title || product.title,
-      retailerName: variantState?.retailerName || product.retailerName || "Verified Retailer",
-      imageUrl: currentImageUrl || variantState?.imageUrl || product.imageUrl,
-      selectedOptions,
-      isConfirmed: true,
-      confirmedPriceMinor: confirmedPrice,
-      confirmedRetailerUrl: confirmedUrl,
-    });
+      onConfirmSelection({
+        productId,
+        title: variantState?.title || product.title,
+        retailerName: variantState?.retailerName || product.retailerName || "Verified Retailer",
+        imageUrl: currentImageUrl || variantState?.imageUrl || product.imageUrl,
+        selectedOptions,
+        isConfirmed: true,
+        confirmedPriceMinor: effectivePriceMinor,
+        confirmedCurrency: currency,
+        confirmedRetailerUrl: confirmedUrl,
+        confirmedOffer: matchingOffer,
+      });
+    } else {
+      // Verification failed: preserve user's selected configuration as unverified metadata
+      // without changing the existing verified price or retailer offer!
+      onConfirmSelection({
+        productId,
+        title: product.title,
+        retailerName: product.retailerName || "Verified Retailer",
+        imageUrl: currentImageUrl || product.imageUrl,
+        selectedOptions,
+        isConfirmed: false,
+        confirmedPriceMinor: null,
+        confirmedCurrency: null,
+        confirmedRetailerUrl: product.retailerUrl,
+        confirmedOffer: null,
+      });
+    }
+    onClose();
   };
 
   const allOffers = variantState?.offers || product.offers || [];
@@ -520,14 +625,22 @@ export function ProductVariantConfigurator({
               {variantState?.title || product.title}
             </h3>
             <div className="mt-1 flex flex-wrap items-baseline gap-2">
-              <span className="text-lg font-bold text-[#35C979] tabular-nums">
-                {formatCurrency(effectivePriceMinor, currency)}
-              </span>
-              <span className="text-[11px] text-zinc-500 dark:text-[#737373] font-mono">
-                {currency}
-              </span>
+              {effectivePriceMinor !== null ? (
+                <>
+                  <span className="text-lg font-bold text-[#35C979] tabular-nums">
+                    {formatCurrency(effectivePriceMinor, currency)}
+                  </span>
+                  <span className="text-[11px] text-zinc-500 dark:text-[#737373] font-mono">
+                    {currency}
+                  </span>
+                </>
+              ) : (
+                <span className="text-xs font-bold text-amber-500 rounded-md bg-amber-500/10 border border-amber-500/30 px-2 py-0.5">
+                  Price unverified by retailer
+                </span>
+              )}
 
-              {budgetMinor && (
+              {budgetMinor && effectivePriceMinor !== null && (
                 <span className="text-xs text-zinc-500 dark:text-[#888888]">
                   &bull; Budget: <span className="font-mono text-zinc-700 dark:text-[#D4D4D4]">{formatCurrency(budgetMinor, currency)}</span>
                 </span>
@@ -545,7 +658,7 @@ export function ProductVariantConfigurator({
                 Gentle Reminder: Confirmed Budget Exceeded
               </strong>
               <p className="leading-relaxed text-zinc-700 dark:text-[#D4D4D4]">
-                This selected configuration (<strong>{formatCurrency(effectivePriceMinor, currency)}</strong>) exceeds your confirmed budget limit of <strong>{formatCurrency(budgetMinor!, currency)}</strong> by <span className="font-bold text-[#F5B942]">+{formatCurrency(budgetDeltaMinor, currency)}</span>.
+                This selected configuration (<strong>{formatCurrency(effectivePriceMinor!, currency)}</strong>) exceeds your confirmed budget limit of <strong>{formatCurrency(budgetMinor!, currency)}</strong> by <span className="font-bold text-[#F5B942]">+{formatCurrency(budgetDeltaMinor, currency)}</span>.
               </p>
               <p className="text-[11px] text-zinc-500 dark:text-[#A3A3A3]">
                 You can still proceed if you are comfortable with this price, or switch back to an in-budget option below.
@@ -561,6 +674,22 @@ export function ProductVariantConfigurator({
             <div>
               <strong className="font-semibold block mb-0.5">Retailer Stock Notice</strong>
               <p className="leading-relaxed text-zinc-700 dark:text-[#D4D4D4]">{variantState.relaxationMessage}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Unverified Configuration Alert Banner */}
+        {!isLoading && !isConfigurationConfirmed && hasRequestedCustomOptions && (
+          <div className="mb-5 rounded-xl border border-amber-500/40 bg-amber-500/10 dark:bg-[#1e1910] p-4 text-xs text-[#F5B942] flex items-start gap-2.5 animate-fadeIn">
+            <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5 text-amber-500" />
+            <div className="space-y-1">
+              <strong className="font-semibold block text-amber-600 dark:text-amber-400">
+                Retailer Could Not Confirm Configuration
+              </strong>
+              <p className="leading-relaxed text-zinc-700 dark:text-[#D4D4D4]">
+                {variantState?.relaxationMessage ||
+                  "Live retailer pricing and availability could not be verified for your exact option selection. Proceeding will save your choices as unverified preferences without altering the verified price or retailer offer."}
+              </p>
             </div>
           </div>
         )}
@@ -734,24 +863,35 @@ export function ProductVariantConfigurator({
               Cancel
             </button>
 
-            {/* If over budget, show Proceed with Exceeded Budget */}
-            {isOverBudget ? (
-              <button
-                type="button"
-                onClick={handleConfirm}
-                className="btn-3d-primary w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-bold"
-              >
-                <span>Proceed with Exceeded Budget ({formatCurrency(effectivePriceMinor, currency)})</span>
-                <Check className="h-4 w-4" />
-              </button>
+            {/* If configuration is verified, allow confirmed selection. Otherwise allow saving as unverified metadata. */}
+            {isConfigurationConfirmed ? (
+              isOverBudget ? (
+                <button
+                  type="button"
+                  onClick={handleConfirm}
+                  className="btn-3d-primary w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-bold"
+                >
+                  <span>Proceed with Exceeded Budget ({formatCurrency(effectivePriceMinor!, currency)})</span>
+                  <Check className="h-4 w-4" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleConfirm}
+                  className="btn-3d-primary w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-bold"
+                >
+                  <Check className="h-4 w-4" />
+                  <span>Confirm Verified Selection ({formatCurrency(effectivePriceMinor!, currency)})</span>
+                </button>
+              )
             ) : (
               <button
                 type="button"
                 onClick={handleConfirm}
-                className="btn-3d-primary w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-bold"
+                className="btn-3d-secondary w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-bold border-amber-500/40 text-amber-600 dark:text-amber-400"
               >
-                <Check className="h-4 w-4" />
-                <span>Confirm Option Selection ({formatCurrency(effectivePriceMinor, currency)})</span>
+                <Info className="h-4 w-4" />
+                <span>Save Unverified Preferences</span>
               </button>
             )}
           </div>

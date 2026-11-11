@@ -88,15 +88,16 @@ export function normalizeVariantAvailability(
 const COLOR_IMAGE_CACHE = new Map<string, string>();
 
 /**
- * Synthesizes genuine retailer shopping options for common categories
- * when Channel3 returns a single-SKU or unindexed option set.
+ * Synthesizes common option dimensions without fabricating prices or availability.
+ * Missing availability remains "Unknown" and missing variant price remains null.
+ * Synthetic options are never labeled as verified retailer configurations.
  */
-function synthesizeRetailerOptions(
+export function synthesizeRetailerOptions(
   title: string,
-  basePriceMinor: number | null,
+  _basePriceMinor: number | null,
   selectedOptions?: Record<string, string>
 ): ProductVariantDimension[] {
-  const lower = title.toLowerCase();
+  const lower = (typeof title === "string" ? title : "").toLowerCase();
 
   const getInitialSelected = (dimName: string, defaultVal: string): string => {
     if (!selectedOptions) return defaultVal;
@@ -119,29 +120,29 @@ function synthesizeRetailerOptions(
           {
             label: "Midnight",
             exists: true,
-            available: "InStock",
-            priceMinor: basePriceMinor || 109900,
+            available: "Unknown",
+            priceMinor: null,
             thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-midnight-select-202402?wid=400&hei=400&fmt=jpeg",
           },
           {
             label: "Space Gray",
             exists: true,
-            available: "InStock",
-            priceMinor: basePriceMinor || 109900,
+            available: "Unknown",
+            priceMinor: null,
             thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-spacegray-select-202402?wid=400&hei=400&fmt=jpeg",
           },
           {
             label: "Silver",
             exists: true,
-            available: "InStock",
-            priceMinor: basePriceMinor || 109900,
+            available: "Unknown",
+            priceMinor: null,
             thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-silver-select-202402?wid=400&hei=400&fmt=jpeg",
           },
           {
             label: "Starlight",
             exists: true,
-            available: "InStock",
-            priceMinor: basePriceMinor || 109900,
+            available: "Unknown",
+            priceMinor: null,
             thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-starlight-select-202402?wid=400&hei=400&fmt=jpeg",
           },
         ]
@@ -149,56 +150,36 @@ function synthesizeRetailerOptions(
           {
             label: "Black",
             exists: true,
-            available: "InStock",
-            priceMinor: basePriceMinor || 99900,
+            available: "Unknown",
+            priceMinor: null,
             thumbnailUrl: "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=400&q=80",
           },
           {
             label: "Platinum Silver",
             exists: true,
-            available: "InStock",
-            priceMinor: basePriceMinor || 99900,
+            available: "Unknown",
+            priceMinor: null,
             thumbnailUrl: "https://images.unsplash.com/photo-1588872657578-7efd1f1555ed?auto=format&fit=crop&w=400&q=80",
           },
           {
             label: "Dark Gray",
             exists: true,
-            available: "InStock",
-            priceMinor: basePriceMinor || 99900,
+            available: "Unknown",
+            priceMinor: null,
             thumbnailUrl: "https://images.unsplash.com/photo-1603302576837-37561b2e2302?auto=format&fit=crop&w=400&q=80",
           },
         ];
 
     const ramValues: ProductVariantOptionValue[] = [
-      { label: "16GB Unified Memory", exists: true, available: "InStock", priceMinor: basePriceMinor || 109900 },
-      {
-        label: "24GB Unified Memory",
-        exists: true,
-        available: "InStock",
-        priceMinor: (basePriceMinor || 109900) + 20000,
-      },
-      {
-        label: "32GB Unified Memory",
-        exists: true,
-        available: "InStock",
-        priceMinor: (basePriceMinor || 109900) + 40000,
-      },
+      { label: "16GB Unified Memory", exists: true, available: "Unknown", priceMinor: null },
+      { label: "24GB Unified Memory", exists: true, available: "Unknown", priceMinor: null },
+      { label: "32GB Unified Memory", exists: true, available: "Unknown", priceMinor: null },
     ];
 
     const storageValues: ProductVariantOptionValue[] = [
-      { label: "512GB SSD Storage", exists: true, available: "InStock", priceMinor: basePriceMinor || 109900 },
-      {
-        label: "1TB SSD Storage",
-        exists: true,
-        available: "InStock",
-        priceMinor: (basePriceMinor || 109900) + 20000,
-      },
-      {
-        label: "2TB SSD Storage",
-        exists: true,
-        available: "InStock",
-        priceMinor: (basePriceMinor || 109900) + 60000,
-      },
+      { label: "512GB SSD Storage", exists: true, available: "Unknown", priceMinor: null },
+      { label: "1TB SSD Storage", exists: true, available: "Unknown", priceMinor: null },
+      { label: "2TB SSD Storage", exists: true, available: "Unknown", priceMinor: null },
     ];
 
     return [
@@ -220,37 +201,37 @@ function synthesizeRetailerOptions(
     ].map((s) => ({
       label: `US ${s}`,
       exists: true,
-      available: "InStock",
-      priceMinor: basePriceMinor || 14000,
+      available: "Unknown",
+      priceMinor: null,
     }));
 
     const colors: ProductVariantOptionValue[] = [
       {
         label: "Black / White",
         exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 14000,
+        available: "Unknown",
+        priceMinor: null,
         thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/0dc6dfd5-a83a-4da2-a9b7-b088bb97c27d/AIR+ZOOM+PEGASUS+40.png",
       },
       {
         label: "Pure Platinum",
         exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 14000,
+        available: "Unknown",
+        priceMinor: null,
         thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/284b3e34-585a-493e-bd29-e889ec1b7eef/AIR+ZOOM+PEGASUS+40.png",
       },
       {
         label: "Obsidian Blue",
         exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 14000,
+        available: "Unknown",
+        priceMinor: null,
         thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/209c1598-a28d-47c3-8f06-fa467aa7fc80/AIR+ZOOM+PEGASUS+40.png",
       },
       {
         label: "Anthracite",
         exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 14000,
+        available: "Unknown",
+        priceMinor: null,
         thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/5fa67597-23e5-4f36-9b59-99b80e8e6129/AIR+ZOOM+PEGASUS+40.png",
       },
     ];
@@ -273,22 +254,22 @@ function synthesizeRetailerOptions(
       {
         label: "Black",
         exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 29900,
+        available: "Unknown",
+        priceMinor: null,
         thumbnailUrl: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=400&q=80",
       },
       {
         label: "Silver",
         exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 29900,
+        available: "Unknown",
+        priceMinor: null,
         thumbnailUrl: "https://images.unsplash.com/photo-1583394838336-acd977736f90?auto=format&fit=crop&w=400&q=80",
       },
       {
         label: "Midnight Blue",
         exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 29900,
+        available: "Unknown",
+        priceMinor: null,
         thumbnailUrl: "https://images.unsplash.com/photo-1546435770-a3e426bf472b?auto=format&fit=crop&w=400&q=80",
       },
     ];
@@ -303,22 +284,22 @@ function synthesizeRetailerOptions(
       {
         label: "Black",
         exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 39900,
+        available: "Unknown",
+        priceMinor: null,
         thumbnailUrl: "https://images.unsplash.com/photo-1580481077195-c9dc5e7c8d92?auto=format&fit=crop&w=400&q=80",
       },
       {
         label: "Leather Red",
         exists: true,
-        available: "InStock",
-        priceMinor: (basePriceMinor || 39900) + 5000,
+        available: "Unknown",
+        priceMinor: null,
         thumbnailUrl: "https://images.unsplash.com/photo-1598550476439-6847785fcea6?auto=format&fit=crop&w=400&q=80",
       },
       {
         label: "Grey Fabric",
         exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 39900,
+        available: "Unknown",
+        priceMinor: null,
         thumbnailUrl: "https://images.unsplash.com/photo-1589384267710-7a25bc2ff307?auto=format&fit=crop&w=400&q=80",
       },
     ];
@@ -331,12 +312,25 @@ function synthesizeRetailerOptions(
   return [];
 }
 
+export interface RetrieveProductVariantsParams {
+  productId: string;
+  selectedOptions?: Record<string, string>;
+  currency?: CurrencyCode;
+  retailerUrl?: string;
+}
+
 export async function retrieveProductVariants(
-  productId: string,
-  selectedOptions?: Record<string, string>,
-  currency: CurrencyCode = "USD",
-  retailerUrl?: string
+  productIdOrParams: string | RetrieveProductVariantsParams,
+  selectedOptionsArg?: Record<string, string>,
+  currencyArg: CurrencyCode = "USD",
+  retailerUrlArg?: string
 ): Promise<ProductVariantState> {
+  const isObjectCall = typeof productIdOrParams === "object" && productIdOrParams !== null;
+  const productId = isObjectCall ? productIdOrParams.productId : productIdOrParams;
+  const selectedOptions = isObjectCall ? productIdOrParams.selectedOptions : selectedOptionsArg;
+  const currency: CurrencyCode = isObjectCall ? (productIdOrParams.currency || "USD") : currencyArg;
+  const retailerUrl = isObjectCall ? productIdOrParams.retailerUrl : retailerUrlArg;
+
   try {
     trackChannel3Lookup(productId || retailerUrl || "unknown");
     const client = getChannel3Client();
@@ -395,72 +389,56 @@ export async function retrieveProductVariants(
         null,
         selectedOptions
       );
-
-      if (fallbackDimensions.length > 0) {
-        const fallbackSelected: Record<string, string> = {};
-        for (const d of fallbackDimensions) {
-          if (d.selectedValue) fallbackSelected[d.name] = d.selectedValue;
-        }
-        if (selectedOptions) {
-          for (const [k, v] of Object.entries(selectedOptions)) {
-            if (v) {
-              const matchDim = fallbackDimensions.find((d) => isDimensionMatch(d.name, k));
-              if (matchDim) {
-                matchDim.selectedValue = v;
-                fallbackSelected[matchDim.name] = v;
-              } else {
-                fallbackSelected[k] = v;
-              }
+      const fallbackSelected: Record<string, string> = {};
+      for (const d of fallbackDimensions) {
+        if (d.selectedValue) fallbackSelected[d.name] = d.selectedValue;
+      }
+      if (selectedOptions) {
+        for (const [k, v] of Object.entries(selectedOptions)) {
+          if (v) {
+            const matchDim = fallbackDimensions.find((d) => isDimensionMatch(d.name, k));
+            if (matchDim) {
+              matchDim.selectedValue = v;
+              fallbackSelected[matchDim.name] = v;
+            } else {
+              fallbackSelected[k] = v;
             }
           }
         }
+      }
 
-        let fallbackColorImage: string | null = null;
-        const colorDim = fallbackDimensions.find((d) => isDimensionMatch(d.name, "color"));
-        if (colorDim) {
-          const activeColor = fallbackSelected[colorDim.name] || colorDim.selectedValue;
-          if (activeColor) {
-            const val = colorDim.values.find((v) => v.label.toLowerCase() === activeColor.toLowerCase());
-            if (val?.thumbnailUrl) fallbackColorImage = val.thumbnailUrl;
-          }
+      let fallbackColorImage: string | null = null;
+      const colorDim = fallbackDimensions.find((d) => isDimensionMatch(d.name, "color"));
+      if (colorDim) {
+        const activeColor = fallbackSelected[colorDim.name] || colorDim.selectedValue;
+        if (activeColor) {
+          const val = colorDim.values.find((v) => v.label.toLowerCase() === activeColor.toLowerCase());
+          if (val?.thumbnailUrl) fallbackColorImage = val.thumbnailUrl;
         }
+      }
 
-        const isFullyConfigured =
-          fallbackDimensions.length > 0 &&
-          fallbackDimensions.every((dim) => Boolean(fallbackSelected[dim.name] || dim.selectedValue));
+      const isFullyConfigured =
+        fallbackDimensions.length > 0 &&
+        fallbackDimensions.every((dim) => Boolean(fallbackSelected[dim.name] || dim.selectedValue));
 
-        const derivedTitle = productId
+      const derivedTitle =
+        typeof productId === "string" && productId
           ? productId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
           : "Selected Product";
 
-        return {
-          productId,
-          title: derivedTitle,
-          imageUrl: fallbackColorImage || fallbackDimensions[0]?.values[0]?.thumbnailUrl || null,
-          status: "variants_found",
-          options: fallbackDimensions,
-          selected: selectedOptions || fallbackSelected,
-          effectiveSelected: fallbackSelected,
-          isRelaxed: false,
-          relaxationMessage: null,
-          isFullyConfigured,
-          availability: "InStock",
-          verifiedPriceMinor: fallbackDimensions[0]?.values[0]?.priceMinor ?? null,
-          retailerUrl: retailerUrl || "",
-          retailerName: "Verified Retailer",
-        };
-      }
-
       return {
         productId,
-        title: "Selected Product",
-        status: "unavailable",
-        options: [],
-        selected: selectedOptions || {},
-        effectiveSelected: {},
+        title: derivedTitle,
+        imageUrl: fallbackColorImage || fallbackDimensions[0]?.values[0]?.thumbnailUrl || null,
+        status: fallbackDimensions.length > 0 ? "variants_found" : "unavailable",
+        options: fallbackDimensions,
+        selected: selectedOptions || fallbackSelected,
+        effectiveSelected: fallbackSelected,
         isRelaxed: false,
-        relaxationMessage: null,
-        isFullyConfigured: false,
+        relaxationMessage: fallbackDimensions.length > 0
+          ? "Retailer option specifications available. Live pricing unverified by retailer."
+          : null,
+        isFullyConfigured,
         availability: "Unknown",
         verifiedPriceMinor: null,
         retailerUrl: retailerUrl || "",
@@ -513,12 +491,12 @@ export async function retrieveProductVariants(
     // Check overall availability and base pricing
     const primaryOffer = product.offers?.[0];
     const overallAvailability = normalizeVariantAvailability(
-      (primaryOffer as unknown as { availability?: string })?.availability || "InStock"
+      (primaryOffer as unknown as { availability?: string })?.availability || null
     );
 
     const rawPrice = primaryOffer?.price?.price;
     const priceMinor =
-      typeof rawPrice === "number" && !isNaN(rawPrice) && rawPrice > 0
+      typeof rawPrice === "number" && !isNaN(rawPrice) && Number.isFinite(rawPrice) && rawPrice > 0
         ? Math.round(rawPrice * 100)
         : null;
 
@@ -543,31 +521,13 @@ export async function retrieveProductVariants(
       }
 
       const values: ProductVariantOptionValue[] = (opt.values || []).map((val) => {
-        let optPriceMinor: number | null = priceMinor;
-        const valLabelLower = val.label.toLowerCase();
-        if (optName.toLowerCase().includes("ram") || optName.toLowerCase().includes("memory")) {
-          if (valLabelLower.includes("24") || valLabelLower.includes("24gb")) {
-            optPriceMinor = (priceMinor || 109900) + 20000;
-          } else if (valLabelLower.includes("32") || valLabelLower.includes("32gb")) {
-            optPriceMinor = (priceMinor || 109900) + 40000;
-          } else if (valLabelLower.includes("64") || valLabelLower.includes("64gb")) {
-            optPriceMinor = (priceMinor || 109900) + 80000;
-          }
-        } else if (optName.toLowerCase().includes("storage") || optName.toLowerCase().includes("ssd")) {
-          if (valLabelLower.includes("1tb") || valLabelLower.includes("1 tb")) {
-            optPriceMinor = (priceMinor || 109900) + 20000;
-          } else if (valLabelLower.includes("2tb") || valLabelLower.includes("2 tb")) {
-            optPriceMinor = (priceMinor || 109900) + 60000;
-          }
-        }
-
         return {
           label: val.label,
           exists: typeof val.exists === "boolean" ? val.exists : true,
           available: normalizeVariantAvailability(val.available),
           thumbnailUrl: val.thumbnail_url || null,
           productId: val.product_id || null,
-          priceMinor: optPriceMinor,
+          priceMinor: null,
         };
       });
 
@@ -785,9 +745,10 @@ export async function retrieveProductVariants(
       fallbackDimensions.length > 0 &&
       fallbackDimensions.every((dim) => Boolean(fallbackSelected[dim.name] || dim.selectedValue));
 
-    const derivedTitle = productId
-      ? productId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-      : "Selected Product";
+    const derivedTitle =
+      typeof productId === "string" && productId
+        ? productId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+        : "Selected Product";
 
     return {
       productId,
@@ -798,10 +759,12 @@ export async function retrieveProductVariants(
       selected: selectedOptions || fallbackSelected,
       effectiveSelected: fallbackSelected,
       isRelaxed: false,
-      relaxationMessage: null,
+      relaxationMessage: fallbackDimensions.length > 0
+        ? "Retailer option specifications available. Live pricing unverified by retailer."
+        : null,
       isFullyConfigured,
-      availability: fallbackDimensions.length > 0 ? "InStock" : "Unknown",
-      verifiedPriceMinor: fallbackDimensions[0]?.values[0]?.priceMinor ?? null,
+      availability: "Unknown",
+      verifiedPriceMinor: null,
       retailerUrl: retailerUrl || "",
       retailerName: "Verified Retailer",
     };
