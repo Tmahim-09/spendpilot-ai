@@ -705,6 +705,7 @@ describe("SpendPilot AI: Unified Multi-Product Shopping Workspace (Section 19 Te
     const originalEnv = { ...process.env };
     process.env.PAYPAL_ENV = "sandbox";
     process.env.PAYPAL_CLIENT_ID = "DEMO_CLIENT_ID";
+    process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID = "DEMO_CLIENT_ID";
     process.env.PAYPAL_DEMO_SELLER_A_MERCHANT_ID = "SELLER_A_ID";
     process.env.PAYPAL_DEMO_SELLER_B_MERCHANT_ID = "SELLER_B_ID";
 
