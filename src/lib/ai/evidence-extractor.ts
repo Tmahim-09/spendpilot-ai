@@ -87,6 +87,15 @@ export function extractEvidenceFacts(products: NormalizedProduct[]): ExtractedEv
       }
     }
 
+    // 5b. Selected Offer Configuration Attributes (strictly tied to selected offer)
+    if (product.selectedOffer?.configurationAttributes && typeof product.selectedOffer.configurationAttributes === "object") {
+      for (const [cfgKey, cfgVal] of Object.entries(product.selectedOffer.configurationAttributes).slice(0, 5)) {
+        if (cfgVal && typeof cfgVal === "string" && cfgVal.trim().length > 0) {
+          addFact("specification", cfgKey, cfgVal.trim(), `selectedOffer.configurationAttributes.${cfgKey}`);
+        }
+      }
+    }
+
     // 6. Source Facts / Features
     if (Array.isArray(product.sourceFacts)) {
       for (const feat of product.sourceFacts.slice(0, 5)) {

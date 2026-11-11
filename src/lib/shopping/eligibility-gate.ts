@@ -161,13 +161,17 @@ export function filterEligibleCandidates(params: {
       }
     }
 
-    // 4. Strict Budget ceiling check
-    if (budgetCents && budgetCents > 0 && product.priceMinor !== null) {
-      // Allow max 5% tolerance for near_budget, otherwise strictly enforce budget
-      if (product.priceMinor > budgetCents * 1.05) {
+    // 4. Strict Budget ceiling check (No 5% tolerance bypass: ceilings are absolute)
+    if (budgetCents && budgetCents > 0) {
+      const activePrice =
+        product.priceMinor !== null && product.priceMinor !== undefined
+          ? product.priceMinor
+          : product.selectedOffer?.priceMinor ?? null;
+
+      if (activePrice !== null && activePrice > budgetCents) {
         disqualifiedProducts.push({
           product,
-          reason: `Excluded: Price ${formatMinorMoney(product.priceMinor, currency)} exceeds maximum budget ${formatMinorMoney(budgetCents, currency)}.`,
+          reason: `Excluded: Price ${formatMinorMoney(activePrice, currency)} exceeds maximum budget ${formatMinorMoney(budgetCents, currency)}.`,
         });
         continue;
       }

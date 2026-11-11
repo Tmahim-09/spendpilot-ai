@@ -75,6 +75,19 @@ export function validateAndCleanComparison(
     bestMatchId = firstProductId;
   }
 
+  // Configuration Integrity: Never assign bestMatchProductId (Top Pick) to an 'unverified' configuration if a 'verified' candidate is available
+  const currentBest = candidateMap.get(bestMatchId);
+  if (currentBest && currentBest.configurationStatus === "unverified") {
+    const verifiedCandidate = candidateProducts.find((p) => p.configurationStatus === "verified");
+    if (verifiedCandidate) {
+      const verifiedId = verifiedCandidate.sourceProductId || verifiedCandidate.title;
+      rejectionReasons.push(
+        `bestMatchProductId "${bestMatchId}" is an unverified configuration while verified candidate "${verifiedId}" exists; promoting verified candidate.`
+      );
+      bestMatchId = verifiedId;
+    }
+  }
+
   // 2. Summary & Reason
   const summary =
     typeof raw.summary === "string" && raw.summary.trim().length > 0
@@ -101,6 +114,8 @@ export function validateAndCleanComparison(
 
   // 4. Criteria & Evidence Fact Validation
   const validatedCriteria: ComparisonCriterion[] = [];
+  const ungroundedMissingInfo: MissingInformation[] = [];
+
   if (Array.isArray(raw.criteria)) {
     for (const rawCrit of raw.criteria) {
       if (!rawCrit || typeof rawCrit !== "object") continue;
@@ -159,6 +174,34 @@ export function validateAndCleanComparison(
             }
           }
 
+          // Strict Grounding Rule:
+          // If Gemini explicitly provided an evidenceFactIds array with zero valid facts,
+          // OR if the candidate product has no specifications/facts for a technical hardware spec,
+          // downgrade ungrounded claims of "strong" or "partial" to "unknown".
+          const hadExplicitFactIds = aObj.evidenceFactIds !== undefined;
+          const candidateProd = candidateMap.get(prodId);
+          const hasSpecs =
+            candidateProd &&
+            (Object.keys(candidateProd.specifications || {}).length > 0 ||
+              (candidateProd.sourceFacts || []).length > 0);
+          const isTechSpec = /\b(?:ram|memory|storage|ssd|hard drive|processor|cpu|gpu|graphics|battery|display|screen|resolution|os)\b/i.test(name);
+
+          const isUngrounded =
+            (hadExplicitFactIds && validatedFactIds.length === 0) ||
+            (!hasSpecs && isTechSpec);
+
+          if (assessment !== "unknown" && isUngrounded) {
+            rejectionReasons.push(
+              `Downgraded ungrounded assessment "${assessment}" to "unknown" for criterion "${name}" on product "${prodId}" because no valid evidence facts were cited.`
+            );
+            assessment = "unknown";
+            ungroundedMissingInfo.push({
+              productId: prodId,
+              field: name,
+              explanation: `No verified specifications or source facts available for ${name}.`,
+            });
+          }
+
           validatedAssessments.push({
             productId: prodId,
             assessment,
@@ -209,7 +252,11 @@ export function validateAndCleanComparison(
   }
 
   // 7. Missing Information
-  const validatedMissing: MissingInformation[] = [];
+  const validatedMissing: MissingInformation[] = [...ungroundedMissingInfo];
+  const seenMissingKeys = new Set(
+    ungroundedMissingInfo.map((m) => `${m.productId}::${m.field.toLowerCase()}`)
+  );
+
   if (Array.isArray(raw.missingInformation)) {
     for (const m of raw.missingInformation) {
       if (!m || typeof m !== "object") continue;
@@ -218,7 +265,9 @@ export function validateAndCleanComparison(
       const field = typeof mObj.field === "string" ? mObj.field.trim() : "";
       const explanation = typeof mObj.explanation === "string" ? mObj.explanation.trim() : "";
 
-      if (candidateMap.has(pId) && field.length > 0 && explanation.length > 0) {
+      const key = `${pId}::${field.toLowerCase()}`;
+      if (candidateMap.has(pId) && field.length > 0 && explanation.length > 0 && !seenMissingKeys.has(key)) {
+        seenMissingKeys.add(key);
         validatedMissing.push({ productId: pId, field, explanation });
       }
     }

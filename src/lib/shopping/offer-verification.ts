@@ -279,7 +279,7 @@ export function selectRetailerOffer(
   return {
     ...product,
     selectedOffer: updatedTarget,
-    priceMinor: isVerified ? updatedTarget.priceMinor : product.priceMinor ?? updatedTarget.priceMinor,
+    priceMinor: updatedTarget.priceMinor,
     compareAtPriceMinor: updatedTarget.compareAtPriceMinor ?? null,
     currency: updatedTarget.currency,
     retailerName: updatedTarget.domain,

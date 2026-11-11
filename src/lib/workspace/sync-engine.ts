@@ -275,32 +275,53 @@ export function syncWorkspaceFromBrief(
     } else {
       // Independent items (single or multiple)
       let independentGroup = ws.groups.find((g) => g.type === "independent");
+      const defaultBudgetMinor = brief.budget?.maximum?.amountMinor;
+      const defaultBudgetCurrency =
+        (brief.budget?.maximum?.currency as CurrencyCode) || currency;
 
       if (!independentGroup) {
-        const newItems: ShoppingItem[] = brief.productRequirements.map((req) => ({
-          id: req.id,
-          productRequest: req.displayName || req.category,
-          category: req.category,
-          displayName: req.displayName,
-          requirementId: req.id,
-          hardConstraints: req.constraints.reduce((acc, c) => {
-            acc[c.key] = c.value;
-            return acc;
-          }, {} as Record<string, string | number | boolean>),
-          preferences: {},
-          priority: "essential",
-          status: "ready_to_search",
-          candidates: [],
-          dependencies: [],
-          answeredQuestionIds: [],
-          searchQuery: req.searchQuery || req.displayName,
-        }));
+        const newItems: ShoppingItem[] = brief.productRequirements.map((req) => {
+          const itemBudgetMinor = req.suggestedBudgetMinor ?? defaultBudgetMinor;
+          return {
+            id: req.id,
+            productRequest: req.displayName || req.category,
+            category: req.category,
+            displayName: req.displayName,
+            requirementId: req.id,
+            hardConstraints: req.constraints.reduce((acc, c) => {
+              acc[c.key] = c.value;
+              return acc;
+            }, {} as Record<string, string | number | boolean>),
+            preferences: {},
+            individualBudget: itemBudgetMinor
+              ? {
+                  amountMinor: itemBudgetMinor,
+                  currency: defaultBudgetCurrency,
+                  strict: true,
+                }
+              : undefined,
+            priority: "essential",
+            status: "ready_to_search",
+            candidates: [],
+            dependencies: [],
+            answeredQuestionIds: [],
+            searchQuery: req.searchQuery || req.displayName,
+          };
+        });
 
         independentGroup = {
           id: `grp_indep_${now}`,
           type: "independent",
           title: "My Shopping List",
           sharedRequirements: {},
+          budget: defaultBudgetMinor
+            ? {
+                amountMinor: defaultBudgetMinor,
+                currency: defaultBudgetCurrency,
+                scope: "group",
+                strict: true,
+              }
+            : undefined,
           items: newItems,
           status: "searching",
           createdAt: now,
@@ -328,6 +349,11 @@ export function syncWorkspaceFromBrief(
             return acc;
           }, { ...item.hardConstraints });
 
+          const itemBudgetMinor =
+            matchingReq.suggestedBudgetMinor ??
+            item.individualBudget?.amountMinor ??
+            defaultBudgetMinor;
+
           return {
             ...item,
             productRequest: matchingReq.displayName || matchingReq.category,
@@ -335,6 +361,13 @@ export function syncWorkspaceFromBrief(
             displayName: matchingReq.displayName,
             requirementId: matchingReq.id,
             hardConstraints: updatedConstraints,
+            individualBudget: itemBudgetMinor
+              ? {
+                  amountMinor: itemBudgetMinor,
+                  currency: item.individualBudget?.currency || defaultBudgetCurrency,
+                  strict: true,
+                }
+              : item.individualBudget,
             searchQuery: matchingReq.searchQuery || item.searchQuery,
           };
         });
@@ -343,29 +376,49 @@ export function syncWorkspaceFromBrief(
         const existingItemIds = new Set(independentGroup.items.map((i) => i.id));
         const newReqs = brief.productRequirements.filter((r) => !existingItemIds.has(r.id));
 
-        const appendedItems: ShoppingItem[] = newReqs.map((req) => ({
-          id: req.id,
-          productRequest: req.displayName || req.category,
-          category: req.category,
-          displayName: req.displayName,
-          requirementId: req.id,
-          hardConstraints: req.constraints.reduce((acc, c) => {
-            acc[c.key] = c.value;
-            return acc;
-          }, {} as Record<string, string | number | boolean>),
-          preferences: {},
-          priority: "essential",
-          status: "ready_to_search",
-          candidates: [],
-          dependencies: [],
-          answeredQuestionIds: [],
-          searchQuery: req.searchQuery || req.displayName,
-        }));
+        const appendedItems: ShoppingItem[] = newReqs.map((req) => {
+          const itemBudgetMinor = req.suggestedBudgetMinor ?? defaultBudgetMinor;
+          return {
+            id: req.id,
+            productRequest: req.displayName || req.category,
+            category: req.category,
+            displayName: req.displayName,
+            requirementId: req.id,
+            hardConstraints: req.constraints.reduce((acc, c) => {
+              acc[c.key] = c.value;
+              return acc;
+            }, {} as Record<string, string | number | boolean>),
+            preferences: {},
+            individualBudget: itemBudgetMinor
+              ? {
+                  amountMinor: itemBudgetMinor,
+                  currency: defaultBudgetCurrency,
+                  strict: true,
+                }
+              : undefined,
+            priority: "essential",
+            status: "ready_to_search",
+            candidates: [],
+            dependencies: [],
+            answeredQuestionIds: [],
+            searchQuery: req.searchQuery || req.displayName,
+          };
+        });
 
         const finalItems = [...updatedExistingItems, ...appendedItems];
 
         const updatedGroup: ShoppingGroup = {
           ...independentGroup,
+          budget:
+            independentGroup.budget ??
+            (defaultBudgetMinor
+              ? {
+                  amountMinor: defaultBudgetMinor,
+                  currency: defaultBudgetCurrency,
+                  scope: "group",
+                  strict: true,
+                }
+              : undefined),
           items: finalItems,
           updatedAt: now,
         };

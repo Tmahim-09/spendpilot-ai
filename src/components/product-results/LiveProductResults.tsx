@@ -387,7 +387,7 @@ export function LiveProductResults({
             </h2>
 
             <p className="text-xs text-zinc-600 dark:text-[#A3A3A3]">
-              Found {products.length} verified products
+              Found {displayProducts.length} matching products
               {formattedBudget ? (
                 <>
                   {" "}with starting prices under{" "}

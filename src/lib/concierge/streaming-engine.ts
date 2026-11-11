@@ -6,7 +6,10 @@ import {
 import { CONCIERGE_SYSTEM_INSTRUCTION } from "./system-instruction.ts";
 import { buildConciergeDialogueContext } from "./context-builder.ts";
 import { evaluateNextQuestion } from "./question-tracker.ts";
-import { isDelegatedOrNoPreference } from "../orchestrator/intent-analyzer.ts";
+import {
+  isDelegatedOrNoPreference,
+  isConversationalAcknowledgement,
+} from "../orchestrator/intent-analyzer.ts";
 import { orchestrateShoppingTurn } from "../orchestrator/index.ts";
 import { upsertCanonicalAttribute } from "../shopping/canonical-attributes.ts";
 import {
@@ -167,13 +170,15 @@ export async function* streamConciergeTurn(
     question: nextQuestion,
   };
 
+  const isAck = isConversationalAcknowledgement(userMessage);
   const canSearch = questionEval.canProceedToSearch;
-  const shouldExecuteSearch = canSearch && !nextQuestion;
+  const isSearchAction = orchestratorResult.suggestedAction === "start_product_search";
+  const shouldExecuteSearch = !isAck && (isSearchAction || canSearch) && !nextQuestion;
 
   yield {
     type: "action",
-    action: orchestratorResult.suggestedAction,
-    canSearch,
+    action: isAck ? "respond" : orchestratorResult.suggestedAction,
+    canSearch: !isAck && canSearch,
     shouldExecuteSearch,
   };
 
@@ -382,9 +387,9 @@ export async function* streamConciergeTurn(
     orchestratorResult.assistantMessage
   );
 
-  // Critical rule: If assistant asks a question, product search MUST NOT execute
+  // Critical rule: If assistant asks a question or user sent acknowledgement, product search MUST NOT execute
   const assistantAsksQuestion = /\?\s*$/.test(naturalAssistantContent.trim()) || Boolean(nextQuestion);
-  const finalShouldExecuteSearch = shouldExecuteSearch && !assistantAsksQuestion;
+  const finalShouldExecuteSearch = !isAck && shouldExecuteSearch && !assistantAsksQuestion;
 
   // 5. Final State Synchronization
   const updatedUserMessage: ChatMessage = {

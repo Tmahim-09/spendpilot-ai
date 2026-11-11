@@ -191,27 +191,40 @@ export function filterQualifyingProducts({
       });
 
       if (qualifyingOffers.length > 0) {
-        // Respect verified selection or preserve explicit unverified status
-        const isAlreadyVerified =
-          product.configurationStatus === "verified" &&
-          product.selectedOffer?.verificationStatus === "verified";
+        // Authoritative Selected Offer:
+        // A previously selected offer can ONLY be retained if it actually qualifies under the budget ceiling.
+        // If the previous selected offer is not in qualifyingOffers (e.g. exceeds budget), it MUST be replaced by qualifyingOffers[0].
+        const isExistingSelectedOfferQualifying =
+          product.selectedOffer &&
+          qualifyingOffers.some(
+            (o) =>
+              (o.url && product.selectedOffer?.url && o.url === product.selectedOffer.url) ||
+              (o.domain.toLowerCase() === product.selectedOffer?.domain.toLowerCase() &&
+                o.priceMinor === product.selectedOffer?.priceMinor)
+          ) &&
+          product.selectedOffer.priceMinor <= range.hardMaxMinor;
+
+        const authoritativeOffer =
+          isExistingSelectedOfferQualifying && product.selectedOffer
+            ? product.selectedOffer
+            : qualifyingOffers[0];
+
         const isExplicitlyUnverified =
           product.configurationStatus === "unverified" && product.priceMinor === null;
 
-        const primaryOffer =
-          isAlreadyVerified && product.selectedOffer ? product.selectedOffer : qualifyingOffers[0];
-
         qualifyingProducts.push({
           ...product,
-          priceMinor: isExplicitlyUnverified ? null : primaryOffer.priceMinor,
-          compareAtPriceMinor: isExplicitlyUnverified ? null : (primaryOffer.compareAtPriceMinor ?? null),
-          currency: primaryOffer.currency,
-          retailerName: primaryOffer.domain,
-          retailerUrl: primaryOffer.url,
-          availability: primaryOffer.availability,
+          priceMinor: isExplicitlyUnverified ? null : authoritativeOffer.priceMinor,
+          compareAtPriceMinor: isExplicitlyUnverified
+            ? null
+            : (authoritativeOffer.compareAtPriceMinor ?? null),
+          currency: authoritativeOffer.currency,
+          retailerName: authoritativeOffer.domain,
+          retailerUrl: authoritativeOffer.url,
+          availability: authoritativeOffer.availability,
           offers: qualifyingOffers,
           offersCount: qualifyingOffers.length,
-          selectedOffer: product.selectedOffer || primaryOffer,
+          selectedOffer: authoritativeOffer,
         });
       }
     } else if (

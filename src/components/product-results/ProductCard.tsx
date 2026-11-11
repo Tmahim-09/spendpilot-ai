@@ -64,9 +64,16 @@ export function ProductCard({
   const isRanked = typeof product.rank === "number" && !isUnverified;
   const isTopPick = product.rank === 1 && !isUnverified;
 
-  // Check if within specified budget limit
+  // Check if within specified budget limit (normalize dollars to minor cents)
+  const budgetCents =
+    budget !== null && budget !== undefined
+      ? budget > 10000
+        ? Math.round(budget)
+        : Math.round(budget * 100)
+      : null;
+
   const isWithinBudget =
-    budget !== null && effectivePriceMinor !== null ? effectivePriceMinor <= budget : null;
+    budgetCents !== null && effectivePriceMinor !== null ? effectivePriceMinor <= budgetCents : null;
 
   // Extract top 2-3 key specs for quick compact display
   const keySpecs: string[] = [];
@@ -117,7 +124,7 @@ export function ProductCard({
           ) : (
             <span className="text-[11px] text-zinc-600 dark:text-[#737373] font-bold flex items-center gap-1">
               <Tag className="h-3 w-3 text-[#FF6A00]" />
-              <span className="truncate max-w-[120px]">{product.brand || "Verified Brand"}</span>
+              <span className="truncate max-w-[120px]">{product.brand || "Catalog Option"}</span>
             </span>
           )}
 
@@ -129,7 +136,7 @@ export function ProductCard({
             }`}
           >
             {product.availability === "in_stock" && <Check className="h-2.5 w-2.5" />}
-            {product.availability === "in_stock" ? "In Stock" : "Check Store"}
+            {product.availability === "in_stock" ? "In Stock" : product.availability === "out_of_stock" ? "Out of Stock" : "Check Store"}
           </span>
         </div>
 
@@ -157,7 +164,7 @@ export function ProductCard({
         {/* Brand & Title */}
         <div className="mb-2">
           <span className="text-[11px] text-zinc-500 dark:text-[#888888] font-bold block truncate mb-0.5">
-            {product.brand || product.retailerName || "Verified Retailer"}
+            {product.brand || product.retailerName || "Retailer Option"}
           </span>
           <h3 className="text-sm font-bold text-zinc-900 dark:text-[#F5F5F5] line-clamp-2 leading-snug" title={product.title}>
             {product.title}
@@ -257,23 +264,61 @@ export function ProductCard({
                   {product.offers.map((offer, idx) => {
                     const offerKey = offer.id || offer.url || `${offer.domain}_${offer.priceMinor}`;
                     const isSelected = activeOffer?.url === offer.url || (!activeOffer && idx === 0);
+                    const isOfferOverBudget =
+                      budgetCents !== null &&
+                      typeof offer.priceMinor === "number" &&
+                      offer.priceMinor > budgetCents;
+
                     return (
                       <div
                         key={offerKey}
                         className={`flex items-center justify-between p-1.5 rounded-lg text-[11px] border ${
-                          isSelected ? "border-[#35C979]/40 bg-[#35C979]/10" : "border-orange-200/70 dark:border-[#1e1e1e] bg-white dark:bg-[#121212]"
+                          isSelected
+                            ? "border-[#35C979]/40 bg-[#35C979]/10"
+                            : isOfferOverBudget
+                            ? "border-red-200/50 dark:border-red-900/30 bg-red-50/30 dark:bg-red-950/10"
+                            : "border-orange-200/70 dark:border-[#1e1e1e] bg-white dark:bg-[#121212]"
                         }`}
                       >
-                        <span className="font-bold text-zinc-800 dark:text-[#D4D4D4]">{offer.domain}</span>
+                        <div className="flex items-center gap-1.5 truncate max-w-[140px]">
+                          <span className="font-bold text-zinc-800 dark:text-[#D4D4D4] truncate">
+                            {offer.domain}
+                          </span>
+                          {isOfferOverBudget && (
+                            <span className="shrink-0 text-[9px] font-bold text-rose-500 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 px-1 py-0.2 rounded border border-rose-200 dark:border-rose-900/50">
+                              Over budget
+                            </span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-zinc-900 dark:text-[#F5F5F5]">
+                          <span
+                            className={`font-mono font-bold ${
+                              isOfferOverBudget
+                                ? "text-rose-600 dark:text-rose-400"
+                                : "text-zinc-900 dark:text-[#F5F5F5]"
+                            }`}
+                          >
                             {formatCurrency(offer.priceMinor, offer.currency)}
                           </span>
                           {onSelectOffer && !isSelected && (
                             <button
                               type="button"
-                              onClick={() => onSelectOffer(product, offer)}
-                              className="btn-3d-secondary rounded px-1.5 py-0.5 text-[10px] font-bold"
+                              disabled={isOfferOverBudget}
+                              onClick={() => {
+                                if (!isOfferOverBudget) {
+                                  onSelectOffer(product, offer);
+                                }
+                              }}
+                              className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                                isOfferOverBudget
+                                  ? "cursor-not-allowed opacity-40 bg-zinc-200 dark:bg-zinc-800 text-zinc-500"
+                                  : "btn-3d-secondary"
+                              }`}
+                              title={
+                                isOfferOverBudget
+                                  ? "Cannot select: exceeds your active budget ceiling"
+                                  : "Select this retailer offer"
+                              }
                             >
                               Select
                             </button>

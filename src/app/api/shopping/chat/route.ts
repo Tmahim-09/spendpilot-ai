@@ -7,6 +7,7 @@ import { orchestrateShoppingTurn } from "@/lib/orchestrator/index";
 import { resolveNaturalMessage } from "@/lib/ai/normalize-interaction-response";
 import { createTurnTracker } from "@/lib/observability/call-tracker";
 import { syncWorkspaceFromBrief } from "@/lib/workspace/sync-engine";
+import { isConversationalAcknowledgement } from "@/lib/orchestrator/intent-analyzer";
 import type {
   ChatRequestPayload,
   ChatResponsePayload,
@@ -112,9 +113,12 @@ export async function POST(req: Request) {
       precomputedOrchestration: orchestratorResult,
     });
 
+    const isAck = isConversationalAcknowledgement(userMessage);
+    const effectiveShouldExecuteSearch = !isAck && Boolean(result.shouldExecuteSearch);
+
     // Record turn decision reason and log summary
     tracker.setDecisionReason(
-      result.shouldExecuteSearch
+      effectiveShouldExecuteSearch
         ? "ready_for_product_search"
         : result.assistantMessage.nextQuestion
         ? "clarification_question_required"
@@ -134,26 +138,26 @@ export async function POST(req: Request) {
       revision: result.session.revision,
       message: naturalContent,
       assistantMessage: naturalContent,
-      action: result.action,
-      scope: result.scope,
+      action: isAck ? "continue_conversation" : result.action,
+      scope: isAck ? "shopping_related" : result.scope,
       requirements: result.session.requirements,
-      nextQuestion: result.assistantMessage.nextQuestion || null,
-      clarification: result.assistantMessage.clarification || (result.assistantMessage.nextQuestion ? {
+      nextQuestion: isAck ? null : (result.assistantMessage.nextQuestion || null),
+      clarification: isAck ? null : (result.assistantMessage.clarification || (result.assistantMessage.nextQuestion ? {
         questionId: result.assistantMessage.nextQuestion.id,
         attributeKey: result.assistantMessage.nextQuestion.attributeKey,
         question: result.assistantMessage.nextQuestion.text,
         options: (result.assistantMessage.nextQuestion.options || []).map((o) => ({ label: o.label || o.value, value: o.value || o.label })),
-      } : null),
-      questions: result.assistantMessage.questions || [],
+      } : null)),
+      questions: isAck ? [] : (result.assistantMessage.questions || []),
       suggestedReplies: result.assistantMessage.suggestedReplies || [],
       quickReplies: result.assistantMessage.suggestedReplies || [],
-      conversationStatus: result.shouldExecuteSearch
+      conversationStatus: effectiveShouldExecuteSearch
         ? "searching"
         : result.shouldExecuteComparison
         ? "comparing"
         : "idle",
-      canSearch: result.session.canSearch,
-      shouldExecuteSearch: result.shouldExecuteSearch,
+      canSearch: !isAck && result.session.canSearch,
+      shouldExecuteSearch: effectiveShouldExecuteSearch,
       shouldExecuteComparison: result.shouldExecuteComparison,
       comparisonRequestedProductIds: result.comparisonProductIds,
       variantConfiguration: result.variantConfiguration,

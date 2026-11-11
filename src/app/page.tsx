@@ -34,7 +34,11 @@ import {
   getProgressMessage,
   type SearchProgressState,
 } from "@/lib/shopping/search-progress";
-import { isDelegatedOrNoPreference } from "@/lib/orchestrator/intent-analyzer";
+import { resolveAuthoritativeBudget } from "@/lib/shopping/budget-resolver";
+import {
+  isDelegatedOrNoPreference,
+  isConversationalAcknowledgement,
+} from "@/lib/orchestrator/intent-analyzer";
 import type {
   NormalizedProduct,
   ProductOfferItem,
@@ -368,19 +372,20 @@ export default function Home() {
       activeItemSearches.current.set(originatingItemId, searchSeq);
       const searchId = `search_${originatingItemId}_${searchSeq}_${Date.now()}`;
 
-      // Resolve item-specific budget and currency (strictly item-scoped or coordinated group budget)
-      const effectiveBudgetMinor =
-        itemRecord.item.individualBudget?.amountMinor ??
-        (itemRecord.group.type === "coordinated_setup" ? itemRecord.group.budget?.amountMinor : null) ??
-        options.budgetMinor ??
-        null;
+      // Authoritatively resolve item-specific budget and currency (Hierarchy: item -> setup remaining -> group -> brief -> session)
+      const resolvedBudget = resolveAuthoritativeBudget({
+        item: itemRecord.item,
+        group: itemRecord.group,
+        workspace: curWs,
+        brief: chatSession.shoppingBrief,
+        sessionBudget: chatSession.budget,
+        sessionCurrency: chatSession.currency || currency,
+        requestedBudgetMinor: options.budgetMinor,
+        requestedCurrency: options.currency,
+      });
 
-      const searchCurrency =
-        itemRecord.item.individualBudget?.currency ??
-        (itemRecord.group.type === "coordinated_setup" ? itemRecord.group.budget?.currency : null) ??
-        options.currency ??
-        currency;
-
+      const effectiveBudgetMinor = resolvedBudget.budgetMinor;
+      const searchCurrency = resolvedBudget.currency;
       const majorBudget = minorToMajorUnits(effectiveBudgetMinor);
 
       // Derive item canonical attributes strictly from item's own constraints/preferences or coordinated group requirements
@@ -625,7 +630,6 @@ export default function Home() {
         }
 
         const finalMsg = getProgressMessage("completed", searchQuery, reqCategory, { isWinter });
-        let wasAccepted = false;
 
         setChatSession((prev) => {
           const curWs = prev.workspace;
@@ -651,7 +655,6 @@ export default function Home() {
             return prev;
           }
 
-          wasAccepted = true;
           saveWorkspaceToStorage(nextWs);
 
           const hasRecentIntro = prev.messages.slice(-3).some(
@@ -680,19 +683,24 @@ export default function Home() {
           };
         });
 
-        // Stage E: Completed -> Clear transient progress ONLY when search update was accepted
-        if (wasAccepted) {
-          setItemProgressMap((prev) => {
-            const next = new Map(prev);
-            next.delete(originatingItemId);
-            return next;
-          });
-          setItemStatusTextMap((prev) => {
-            const next = new Map(prev);
-            next.delete(originatingItemId);
-            return next;
-          });
-        }
+        // Stage E: Completed -> Clear transient progress deterministically when search concludes
+        setItemProgressMap((prev) => {
+          const next = new Map(prev);
+          next.delete(originatingItemId);
+          return next;
+        });
+        setItemStatusTextMap((prev) => {
+          const next = new Map(prev);
+          next.delete(originatingItemId);
+          return next;
+        });
+        setRankingItemIds((prev) => {
+          const next = new Set(prev);
+          next.delete(originatingItemId);
+          return next;
+        });
+        setIsSearchingProducts(false);
+        setIsRankingAi(false);
       } catch {
         if (activeItemSearches.current.get(originatingItemId) !== searchSeq) return;
         setSearchingItemIds((prev) => {
@@ -730,7 +738,7 @@ export default function Home() {
         });
       }
     },
-    [chatSession.workspace, chatSession.shoppingBrief, currency]
+    [chatSession.workspace, chatSession.shoppingBrief, chatSession.budget, chatSession.currency, currency]
   );
 
   const handleSendChatMessage = useCallback(
@@ -818,6 +826,38 @@ export default function Home() {
           messages: [...prev.messages.filter((m) => m.id !== userMsg.id), userMsg, assistantMsg],
         }));
         return;
+      }
+
+      // Conversational Acknowledgement Guard (Scenario H):
+      // When products or assistant messages are already displayed, acknowledgements like "ok", "great", "thanks"
+      // must NOT re-trigger search or increment workspace revision.
+      if (isConversationalAcknowledgement(cleanMsg)) {
+        const activeItem = getActiveWorkspaceItem(sessionToUse.workspace);
+        const hasExistingResults =
+          (activeItem?.candidates && activeItem.candidates.length > 0) ||
+          sessionToUse.messages.some((m) => m.role === "assistant");
+
+        if (hasExistingResults) {
+          const userMsg = {
+            id: meta?.clientMessageId || `msg_u_${Date.now()}`,
+            role: "user" as const,
+            content: messageText,
+            createdAt: Date.now(),
+          };
+          const assistantMsg = {
+            id: `msg_a_ack_${Date.now()}`,
+            role: "assistant" as const,
+            content:
+              "You're welcome! Feel free to explore the options below, ask questions about specific features, or let me know if you'd like to adjust any requirements.",
+            createdAt: Date.now() + 10,
+          };
+
+          setChatSession((prev) => ({
+            ...prev,
+            messages: [...prev.messages.filter((m) => m.id !== userMsg.id), userMsg, assistantMsg],
+          }));
+          return;
+        }
       }
 
       if (
@@ -1267,6 +1307,31 @@ export default function Home() {
       setChatSession((prev) => {
         const ws = prev.workspace;
         if (!ws) return prev;
+
+        // Strict Budget Check: Cannot select an offer exceeding the resolved budget ceiling
+        const itemRecord = findItemInWorkspace(ws, resolvedItemId);
+        if (itemRecord) {
+          const resolvedBudget = resolveAuthoritativeBudget({
+            item: itemRecord.item,
+            group: itemRecord.group,
+            workspace: ws,
+            brief: prev.shoppingBrief,
+            sessionBudget: prev.budget,
+            sessionCurrency: prev.currency,
+          });
+
+          if (
+            resolvedBudget.budgetMinor !== null &&
+            typeof offer.priceMinor === "number" &&
+            offer.priceMinor > resolvedBudget.budgetMinor
+          ) {
+            console.warn(
+              `[SpendPilot] Rejected offer selection: offer price ${offer.priceMinor} exceeds budget ceiling ${resolvedBudget.budgetMinor}`
+            );
+            return prev;
+          }
+        }
+
         const nextWs = selectOfferForItem(ws, resolvedItemId, pid, offer);
         saveWorkspaceToStorage(nextWs);
         return {
@@ -1463,6 +1528,21 @@ export default function Home() {
   );
 
   const activeWorkspaceItem = getActiveWorkspaceItem(currentWorkspace);
+  const activeWorkspaceGroup = currentWorkspace.groups.find((g) =>
+    g.items.some((i) => i.id === activeWorkspaceItem?.id)
+  ) || null;
+
+  const resolvedActiveItemBudget = activeWorkspaceItem
+    ? resolveAuthoritativeBudget({
+        item: activeWorkspaceItem,
+        group: activeWorkspaceGroup,
+        workspace: currentWorkspace,
+        brief: chatSession.shoppingBrief,
+        sessionBudget: chatSession.budget,
+        sessionCurrency: chatSession.currency || currency,
+      })
+    : null;
+
   const displayedProducts = activeWorkspaceItem?.candidates ?? [];
   const displayedComparison = activeWorkspaceItem?.comparison ?? null;
   const displayedEvidenceFacts = activeWorkspaceItem?.evidenceFacts ?? {};
@@ -1532,9 +1612,9 @@ export default function Home() {
         {displayedHasSearched && (displayedProducts.length > 0 || isItemSearching || displayedSearchError) && (
           <LiveProductResults
             query={activeWorkspaceItem?.productRequest || chatSession.originalRequest || "products"}
-            budget={minorToMajorUnits(activeWorkspaceItem?.individualBudget?.amountMinor ?? null)}
-            budgetMinor={activeWorkspaceItem?.individualBudget?.amountMinor ?? null}
-            currency={activeWorkspaceItem?.individualBudget?.currency ?? currency}
+            budget={minorToMajorUnits(resolvedActiveItemBudget?.budgetMinor ?? null)}
+            budgetMinor={resolvedActiveItemBudget?.budgetMinor ?? null}
+            currency={resolvedActiveItemBudget?.currency ?? currency}
             products={displayedProducts}
             comparison={displayedComparison}
             evidenceFacts={displayedEvidenceFacts}
