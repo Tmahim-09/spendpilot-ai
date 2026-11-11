@@ -959,8 +959,8 @@ export function extractDeterministicPatches(
     const isMicroscope = /\b(?:microscope|olympus|nikon|leica)\b/i.test(lower);
     const isWaterFilter = /\b(?:water filter|water purifier|filter housing|filter cartridge|sediment filter)\b/i.test(lower);
 
-    const attrKey = isCamera ? "camera_model" : isAppliance ? "model_number" : isMicroscope ? "microscope_model" : isWaterFilter ? "filter_system_model" : "brand_or_model";
-    const targetDevice = isCamera ? "camera" : isAppliance ? "appliance" : isMicroscope ? "microscope" : isWaterFilter ? "water filter housing or system" : "device";
+    const attrKey = isCamera ? "camera_model" : isAppliance ? "model_number" : isMicroscope ? "microscope_model" : "brand_or_model";
+    const targetDevice = isCamera ? "camera" : isAppliance ? "appliance" : isMicroscope ? "microscope" : isWaterFilter ? "water filter system or housing" : "brand or model";
     const qText = `What is the exact brand or model number of your ${targetDevice}?`;
 
     patches.push({

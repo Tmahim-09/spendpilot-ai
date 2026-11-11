@@ -133,6 +133,7 @@ export function extractStructuredOutputText(raw: unknown): string {
 
 /**
  * Strips markdown code fences (e.g. ```json ... ```) and extracts bare JSON string.
+ * Supports both JSON objects { ... } and JSON arrays [ ... ].
  */
 export function extractCleanJsonString(text: string): string {
   let cleaned = text.trim();
@@ -142,10 +143,15 @@ export function extractCleanJsonString(text: string): string {
     cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   }
 
-  // If text has text before or after the JSON object, isolate { ... }
   const firstBrace = cleaned.indexOf("{");
   const lastBrace = cleaned.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+  const firstBracket = cleaned.indexOf("[");
+  const lastBracket = cleaned.lastIndexOf("]");
+
+  // If outer structure is an array [ ... ]
+  if (firstBracket !== -1 && lastBracket > firstBracket && (firstBrace === -1 || firstBracket < firstBrace)) {
+    cleaned = cleaned.slice(firstBracket, lastBracket + 1);
+  } else if (firstBrace !== -1 && lastBrace > firstBrace) {
     cleaned = cleaned.slice(firstBrace, lastBrace + 1);
   }
 
@@ -163,77 +169,149 @@ export function isRawJsonString(text: string): boolean {
   }
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) return true;
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) return true;
+  if (/^\s*(\{|\[)/.test(trimmed) && /(\}|\])\s*$/.test(trimmed)) return true;
   if (
-    trimmed.includes('"action":') &&
-    (trimmed.includes('"slot":') ||
-      trimmed.includes('"question":') ||
-      trimmed.includes('"updates":') ||
-      trimmed.includes('"assistantMessage":') ||
-      trimmed.includes('"response":'))
+    trimmed.includes('"action"') &&
+    (trimmed.includes('"search_products"') ||
+      trimmed.includes('"query"') ||
+      trimmed.includes('"filters"') ||
+      trimmed.includes('"slot"') ||
+      trimmed.includes('"question"') ||
+      trimmed.includes('"updates"') ||
+      trimmed.includes('"assistantMessage"') ||
+      trimmed.includes('"response"'))
   ) {
     return true;
   }
   return false;
 }
 
+export const DEFAULT_SAFE_NATURAL_FALLBACK = "I'm finding the best options for you.";
+
 /**
- * Recursively resolves a natural language message from a potentially nested or JSON-serialized string.
+ * Recursively resolves a natural language message from a potentially nested or JSON-serialized string or object.
  * Guarantees that internal action keys and JSON braces NEVER appear in the returned message!
  */
-export function resolveNaturalMessage(messageCandidate: unknown, fallbackMessage = ""): string {
-  if (!messageCandidate) return fallbackMessage;
+export function resolveNaturalMessage(messageCandidate: unknown, fallbackMessage?: string): string {
+  // Ensure the fallback message itself is never raw JSON
+  const safeFallback = fallbackMessage !== undefined
+    ? (!isRawJsonString(fallbackMessage) ? fallbackMessage.trim() : DEFAULT_SAFE_NATURAL_FALLBACK)
+    : DEFAULT_SAFE_NATURAL_FALLBACK;
 
-  if (typeof messageCandidate !== "string") {
-    if (typeof messageCandidate === "object") {
-      const obj = messageCandidate as Record<string, unknown>;
-      const candidate =
-        obj.assistantMessage ||
-        obj.response ||
-        obj.message ||
-        (typeof obj.question === "string" ? obj.question : (obj.question as Record<string, unknown>)?.text) ||
-        "";
-      if (typeof candidate === "string" && candidate.trim()) {
-        return resolveNaturalMessage(candidate, fallbackMessage);
-      }
-    }
-    return fallbackMessage;
+  if (messageCandidate === null || messageCandidate === undefined) {
+    return safeFallback;
   }
 
-  const trimmed = messageCandidate.trim();
+  // Handle Array candidates (e.g. [ { action: "search_products", ... } ])
+  if (Array.isArray(messageCandidate)) {
+    for (const item of messageCandidate) {
+      if (item && typeof item === "object") {
+        const obj = item as Record<string, unknown>;
+        const cand =
+          obj.assistantMessage ||
+          obj.response ||
+          obj.message ||
+          (typeof obj.question === "string" ? obj.question : (obj.question as Record<string, unknown>)?.text);
+        if (typeof cand === "string" && cand.trim() && !isRawJsonString(cand)) {
+          return resolveNaturalMessage(cand, safeFallback);
+        }
+      }
+    }
+    // No valid natural language message found in the array: NEVER return raw array/JSON!
+    return safeFallback;
+  }
 
-  // If candidate is a JSON string, extract the customer-facing message from inside it!
-  if (isRawJsonString(trimmed)) {
+  // Handle Object candidates
+  if (typeof messageCandidate === "object") {
+    const obj = messageCandidate as Record<string, unknown>;
+    const cand =
+      obj.assistantMessage ||
+      obj.response ||
+      obj.message ||
+      (typeof obj.question === "string" ? obj.question : (obj.question as Record<string, unknown>)?.text);
+    if (typeof cand === "string" && cand.trim() && !isRawJsonString(cand)) {
+      return resolveNaturalMessage(cand, safeFallback);
+    }
+    return safeFallback;
+  }
+
+  if (typeof messageCandidate !== "string") {
+    return safeFallback;
+  }
+
+  let trimmed = messageCandidate.trim();
+
+  // Strip code fences if present
+  if (trimmed.startsWith("```")) {
+    trimmed = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  }
+
+  // Check if string is raw JSON or internal action payload
+  if (isRawJsonString(trimmed) || /^\s*(\{|\[)/.test(trimmed)) {
     try {
-      const parsed = JSON.parse(extractCleanJsonString(trimmed));
-      const extracted =
-        parsed.assistantMessage ||
-        parsed.response ||
-        parsed.message ||
-        (typeof parsed.question === "string" ? parsed.question : parsed.question?.text) ||
-        "";
-      if (typeof extracted === "string" && extracted.trim()) {
-        return resolveNaturalMessage(extracted, fallbackMessage);
+      const cleanJson = extractCleanJsonString(trimmed);
+      const parsed = JSON.parse(cleanJson);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (item && typeof item === "object") {
+            const cand =
+              item.assistantMessage ||
+              item.response ||
+              item.message ||
+              (typeof item.question === "string" ? item.question : item.question?.text);
+            if (typeof cand === "string" && cand.trim() && !isRawJsonString(cand)) {
+              return resolveNaturalMessage(cand, safeFallback);
+            }
+          }
+        }
+        return safeFallback;
+      } else if (parsed && typeof parsed === "object") {
+        const cand =
+          parsed.assistantMessage ||
+          parsed.response ||
+          parsed.message ||
+          (typeof parsed.question === "string" ? parsed.question : parsed.question?.text);
+        if (typeof cand === "string" && cand.trim() && !isRawJsonString(cand)) {
+          return resolveNaturalMessage(cand, safeFallback);
+        }
+        return safeFallback;
       }
     } catch {
       // Regex extraction fallback if JSON parsing fails
       const respMatch = trimmed.match(/"response"\s*:\s*"([^"]+)"/i);
-      if (respMatch && respMatch[1]) return respMatch[1];
+      if (respMatch && respMatch[1] && !isRawJsonString(respMatch[1])) {
+        return resolveNaturalMessage(respMatch[1], safeFallback);
+      }
 
       const msgMatch = trimmed.match(/"assistantMessage"\s*:\s*"([^"]+)"/i);
-      if (msgMatch && msgMatch[1]) return msgMatch[1];
+      if (msgMatch && msgMatch[1] && !isRawJsonString(msgMatch[1])) {
+        return resolveNaturalMessage(msgMatch[1], safeFallback);
+      }
 
       const qMatch = trimmed.match(/"question"\s*:\s*"([^"]+)"/i);
-      if (qMatch && qMatch[1]) return qMatch[1];
+      if (qMatch && qMatch[1] && !isRawJsonString(qMatch[1])) {
+        return resolveNaturalMessage(qMatch[1], safeFallback);
+      }
+
+      // If it looks like JSON or contains action/query/filters, NEVER return raw text!
+      return safeFallback;
     }
+    // Parsed without exception but contained no customer-facing text
+    return safeFallback;
   }
 
-  // Ensure no trailing JSON or unparsed internal markers remain
+  // Clean surrounding quotes
   let result = trimmed;
-  if (result.startsWith('"') && result.endsWith('"')) {
-    result = result.slice(1, -1);
+  if (result.startsWith('"') && result.endsWith('"') && result.length >= 2) {
+    result = result.slice(1, -1).trim();
   }
 
-  return result.trim() || fallbackMessage;
+  // Final sanity check: if the remaining string is JSON or contains action parameters, reject it!
+  if (isRawJsonString(result) || /^\s*(\{|\[)/.test(result)) {
+    return safeFallback;
+  }
+
+  return result || safeFallback;
 }
 
 /**
@@ -481,6 +559,24 @@ export function extractRequirementUpdates(
     }
   }
 
+  // Format 4: Action payload filters { filters: { category: "Laptop", tags: ["gaming"] } }
+  if (updatesObj.filters && typeof updatesObj.filters === "object") {
+    for (const [fk, fv] of Object.entries(updatesObj.filters as Record<string, unknown>)) {
+      const canonicalKey = canonicalizeAttributeKey(fk) || fk;
+      if (typeof fv === "string" || typeof fv === "number") {
+        result[canonicalKey] = {
+          value: fv,
+          source: "ai_suggested",
+        };
+      } else if (Array.isArray(fv) && fv.length > 0 && typeof fv[0] === "string") {
+        result[canonicalKey] = {
+          value: fv.join(", "),
+          source: "ai_suggested",
+        };
+      }
+    }
+  }
+
   return result;
 }
 
@@ -529,7 +625,19 @@ export function normalizeInteractionResponse(
 
   try {
     const cleanJson = extractCleanJsonString(rawText);
-    const parsed = JSON.parse(cleanJson) as Record<string, unknown>;
+    const parsedRaw = JSON.parse(cleanJson);
+    let parsed: Record<string, unknown> = {};
+
+    if (Array.isArray(parsedRaw)) {
+      const actionItem = parsedRaw.find(
+        (item) => item && typeof item === "object" && (item.action || item.query || item.filters)
+      ) || parsedRaw[0];
+      if (actionItem && typeof actionItem === "object") {
+        parsed = actionItem as Record<string, unknown>;
+      }
+    } else if (parsedRaw && typeof parsedRaw === "object") {
+      parsed = parsedRaw as Record<string, unknown>;
+    }
 
     // 1. Resolve Scope
     let scope: DomainScope = "shopping_related";
@@ -543,7 +651,7 @@ export function normalizeInteractionResponse(
     }
 
     // 2. Resolve Action
-    const rawActionStr = String(parsed.action || "");
+    const rawActionStr = String(parsed.action || (parsed.query ? "search_products" : ""));
     const action = normalizeActionName(rawActionStr);
 
     if (action === "out_of_scope" || scope === "out_of_scope") {
@@ -592,7 +700,7 @@ export function normalizeInteractionResponse(
 
     // 5. Resolve Requirement Updates
     const requirementUpdates = extractRequirementUpdates(
-      parsed.requirementUpdates || parsed.updates || parsed.requirementsUpdate
+      parsed.requirementUpdates || parsed.updates || parsed.requirementsUpdate || (parsed.filters ? { filters: parsed.filters } : undefined)
     );
 
     // 6. Ready for search

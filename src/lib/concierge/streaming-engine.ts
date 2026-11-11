@@ -195,12 +195,15 @@ export async function* streamConciergeTurn(
   // 4. Genuine Gemini Streaming with Safe Model Failover
   let fullAccumulatedText = "";
   let hasStreamedAnyDelta = false;
+  let isJsonSearchAction = false;
   const hasRealApiKey =
     Boolean(process.env.GEMINI_API_KEY) && process.env.GEMINI_API_KEY !== "test-dummy-api-key";
 
   if (customStreamChunks) {
     let chunkCount = 0;
     let isJsonCandidate = false;
+    let isClassificationDecided = false;
+    let bufferedChunks: string[] = [];
     let rawAccum = "";
     try {
       for await (const chunk of customStreamChunks) {
@@ -209,11 +212,35 @@ export async function* streamConciergeTurn(
           throw new Error("Simulated stream network interruption.");
         }
         rawAccum += chunk;
-        if (!isJsonCandidate && (rawAccum.trim().startsWith("{") || rawAccum.trim().startsWith("```"))) {
-          isJsonCandidate = true;
-        }
-
-        if (!isJsonCandidate) {
+        if (!isClassificationDecided) {
+          const trimmed = rawAccum.trimStart();
+          if (trimmed.length === 0) {
+            bufferedChunks.push(chunk);
+            continue;
+          }
+          if (trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith("```")) {
+            isJsonCandidate = true;
+            isClassificationDecided = true;
+          } else {
+            isJsonCandidate = false;
+            isClassificationDecided = true;
+            for (const b of bufferedChunks) {
+              hasStreamedAnyDelta = true;
+              fullAccumulatedText += b;
+              yield {
+                type: "delta",
+                text: b,
+              };
+            }
+            bufferedChunks = [];
+            hasStreamedAnyDelta = true;
+            fullAccumulatedText += chunk;
+            yield {
+              type: "delta",
+              text: chunk,
+            };
+          }
+        } else if (!isJsonCandidate) {
           hasStreamedAnyDelta = true;
           fullAccumulatedText += chunk;
           yield {
@@ -225,9 +252,15 @@ export async function* streamConciergeTurn(
 
       if (isJsonCandidate) {
         const norm = normalizeInteractionResponse(rawAccum);
-        fullAccumulatedText = norm.assistantMessage || orchestratorResult.assistantMessage;
+        if (norm.action === "search_products" || norm.readyForSearch) {
+          isJsonSearchAction = true;
+        }
+        fullAccumulatedText = resolveNaturalMessage(
+          norm.assistantMessage,
+          orchestratorResult.assistantMessage || getRandomSearchingText()
+        );
         if (
-          (orchestratorResult.suggestedAction === "start_product_search" || shouldExecuteSearch) &&
+          (orchestratorResult.suggestedAction === "start_product_search" || shouldExecuteSearch || isJsonSearchAction) &&
           (/what specific preferences|what details matter most|ready to help you find what you need/i.test(fullAccumulatedText) ||
             /\?$/.test(fullAccumulatedText.trim()))
         ) {
@@ -281,17 +314,43 @@ export async function* streamConciergeTurn(
         });
 
         let isJsonCandidate = false;
+        let isClassificationDecided = false;
+        let bufferedChunks: string[] = [];
         let rawAccum = "";
 
         for await (const chunk of responseStream) {
           const deltaText = chunk.text;
           if (deltaText) {
             rawAccum += deltaText;
-            if (!isJsonCandidate && (rawAccum.trim().startsWith("{") || rawAccum.trim().startsWith("```"))) {
-              isJsonCandidate = true;
-            }
-
-            if (!isJsonCandidate) {
+            if (!isClassificationDecided) {
+              const trimmed = rawAccum.trimStart();
+              if (trimmed.length === 0) {
+                bufferedChunks.push(deltaText);
+                continue;
+              }
+              if (trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith("```")) {
+                isJsonCandidate = true;
+                isClassificationDecided = true;
+              } else {
+                isJsonCandidate = false;
+                isClassificationDecided = true;
+                for (const b of bufferedChunks) {
+                  hasStreamedAnyDelta = true;
+                  fullAccumulatedText += b;
+                  yield {
+                    type: "delta",
+                    text: b,
+                  };
+                }
+                bufferedChunks = [];
+                hasStreamedAnyDelta = true;
+                fullAccumulatedText += deltaText;
+                yield {
+                  type: "delta",
+                  text: deltaText,
+                };
+              }
+            } else if (!isJsonCandidate) {
               hasStreamedAnyDelta = true;
               fullAccumulatedText += deltaText;
               yield {
@@ -304,9 +363,15 @@ export async function* streamConciergeTurn(
 
         if (isJsonCandidate) {
           const norm = normalizeInteractionResponse(rawAccum);
-          fullAccumulatedText = norm.assistantMessage || orchestratorResult.assistantMessage;
+          if (norm.action === "search_products" || norm.readyForSearch) {
+            isJsonSearchAction = true;
+          }
+          fullAccumulatedText = resolveNaturalMessage(
+            norm.assistantMessage,
+            orchestratorResult.assistantMessage || getRandomSearchingText()
+          );
           if (
-            (orchestratorResult.suggestedAction === "start_product_search" || shouldExecuteSearch) &&
+            (orchestratorResult.suggestedAction === "start_product_search" || shouldExecuteSearch || isJsonSearchAction) &&
             (/what specific preferences|what details matter most|ready to help you find what you need/i.test(fullAccumulatedText) ||
               /\?$/.test(fullAccumulatedText.trim()))
           ) {
@@ -384,12 +449,14 @@ export async function* streamConciergeTurn(
   // Ensure content is strictly natural language, never JSON
   const naturalAssistantContent = resolveNaturalMessage(
     fullAccumulatedText,
-    orchestratorResult.assistantMessage
+    orchestratorResult.assistantMessage || getRandomSearchingText()
   );
 
   // Critical rule: If assistant asks a question or user sent acknowledgement, product search MUST NOT execute
-  const assistantAsksQuestion = /\?\s*$/.test(naturalAssistantContent.trim()) || Boolean(nextQuestion);
-  const finalShouldExecuteSearch = !isAck && shouldExecuteSearch && !assistantAsksQuestion;
+  // If model explicitly decided to search (isJsonSearchAction), override any pending question so search proceeds
+  const effectiveNextQuestion = isJsonSearchAction ? null : nextQuestion;
+  const assistantAsksQuestion = /\?\s*$/.test(naturalAssistantContent.trim()) || Boolean(effectiveNextQuestion);
+  const finalShouldExecuteSearch = !isAck && (shouldExecuteSearch || isJsonSearchAction) && !assistantAsksQuestion;
 
   // 5. Final State Synchronization
   const updatedUserMessage: ChatMessage = {
@@ -405,12 +472,12 @@ export async function* streamConciergeTurn(
     role: "assistant",
     content: naturalAssistantContent,
     createdAt: Date.now(),
-    nextQuestion: nextQuestion
+    nextQuestion: effectiveNextQuestion
       ? {
-          id: nextQuestion.id,
-          attributeKey: nextQuestion.attributeKey,
-          text: nextQuestion.text,
-          options: nextQuestion.options,
+          id: effectiveNextQuestion.id,
+          attributeKey: effectiveNextQuestion.attributeKey,
+          text: effectiveNextQuestion.text,
+          options: effectiveNextQuestion.options,
           required: false,
           inputType: "single_select",
         }

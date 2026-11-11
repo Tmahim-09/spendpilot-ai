@@ -116,6 +116,13 @@ interface ContinuousChatWorkspaceProps {
   onViewProducts?: () => void;
 }
 
+const FIRST_MESSAGE_THINKING_WORDS = ["Thinking", "Evaluating", "Understanding", "Reasoning"] as const;
+
+function getRandomThinkingWord(counter = 0): string {
+  const index = Math.abs((Date.now() + counter) % FIRST_MESSAGE_THINKING_WORDS.length);
+  return FIRST_MESSAGE_THINKING_WORDS[index];
+}
+
 export function ContinuousChatWorkspace({
   session,
   isLoading,
@@ -134,6 +141,8 @@ export function ContinuousChatWorkspace({
   const [currencyOverride, setCurrencyOverride] = useState<CurrencyCode | null>(null);
   const [budgetInputOverride, setBudgetInputOverride] = useState<string | null>(null);
   const [hasClickedProceed, setHasClickedProceed] = useState(false);
+  const [hasChosenPreference, setHasChosenPreference] = useState(false);
+  const [thinkingLabel, setThinkingLabel] = useState<string>("Thinking");
   const [prevSessionKey, setPrevSessionKey] = useState(session.sessionId);
   const [heroWarmGreeting, setHeroWarmGreeting] = useState<string>(
     "Welcome to SpendPilot. Tell me what you're looking for and let's find the best match."
@@ -149,6 +158,8 @@ export function ContinuousChatWorkspace({
   if (session.sessionId !== prevSessionKey) {
     setPrevSessionKey(session.sessionId);
     setHasClickedProceed(false);
+    setHasChosenPreference(false);
+    setThinkingLabel("Thinking");
   }
 
   const selectedCurrency: CurrencyCode = currencyOverride ?? session.currency ?? currency ?? "USD";
@@ -265,6 +276,12 @@ export function ContinuousChatWorkspace({
     messageCounter.current += 1;
     const clientMessageId = `msg_u_submit_${messageCounter.current}`;
 
+    const userMsgCount = session.messages.filter((m) => m.role === "user").length;
+    const hasAnswered = Boolean(session.answeredQuestionIds && session.answeredQuestionIds.length > 0);
+    if (userMsgCount === 0 && !hasAnswered && !hasChosenPreference) {
+      setThinkingLabel(getRandomThinkingWord(messageCounter.current));
+    }
+
     let parsedBudgetMinor: number | null | undefined = undefined;
     if (budgetValue && budgetValue.trim()) {
       const num = parseFloat(budgetValue.trim());
@@ -314,6 +331,7 @@ export function ContinuousChatWorkspace({
   ) => {
     if (isLoading || isSubmitting.current) return;
     isSubmitting.current = true;
+    setHasChosenPreference(true);
     const isProceedVal =
       value.toLowerCase().includes("proceed") ||
       label.toLowerCase().includes("proceed") ||
@@ -341,6 +359,11 @@ export function ContinuousChatWorkspace({
   const handleSelectStarterPrompt = (prompt: string) => {
     if (isLoading || isSubmitting.current) return;
     isSubmitting.current = true;
+    const userMsgCount = session.messages.filter((m) => m.role === "user").length;
+    const hasAnswered = Boolean(session.answeredQuestionIds && session.answeredQuestionIds.length > 0);
+    if (userMsgCount === 0 && !hasAnswered && !hasChosenPreference) {
+      setThinkingLabel(getRandomThinkingWord(messageCounter.current));
+    }
     messageCounter.current += 1;
     const clientMessageId = `msg_u_starter_${messageCounter.current}`;
     onSendMessage(prompt, { clientMessageId });
@@ -380,6 +403,19 @@ export function ContinuousChatWorkspace({
     (lastIdx, msg, idx) => (msg.role === "assistant" ? idx : lastIdx),
     -1
   );
+
+  // Unified loading label determination:
+  // On first user message: randomly one of "Thinking", "Evaluating", "Understanding", "Reasoning"
+  // After preference choice: uses progress/status message with literal dots removed
+  const isFirstMessageState =
+    !hasChosenPreference &&
+    (!session.answeredQuestionIds || session.answeredQuestionIds.length === 0);
+
+  let loadingLabel = thinkingLabel || "Thinking";
+  if (!isFirstMessageState) {
+    const rawStatus = searchProgress?.message || activeStatusText || "Thinking";
+    loadingLabel = rawStatus.replace(/\.{2,}$/, "").replace(/\.+$/, "").trim();
+  }
 
   return (
     <div id="spendpilot-chat-workspace" className="w-full max-w-4xl mx-auto flex flex-col flex-1 px-3 sm:px-4 py-4 sm:py-6">
@@ -496,7 +532,7 @@ export function ContinuousChatWorkspace({
                   >
                     <p className="whitespace-pre-wrap">
                       {isAssistant
-                        ? cleanRepetitiveAcknowledgements(resolveNaturalMessage(msg.content, msg.content))
+                        ? cleanRepetitiveAcknowledgements(resolveNaturalMessage(msg.content, "I'm looking into options for you."))
                         : resolveNaturalMessage(msg.content, msg.content)}
                     </p>
                   </div>
@@ -566,12 +602,17 @@ export function ContinuousChatWorkspace({
           })}
 
           {/* ─────────────────────────────────────────────────────────────
-              ANIMATED SEARCH PROGRESS EXPERIENCE (STAGES A - D)
-              Transient animated status: guaranteed NOT to persist in chat messages.
+              UNIFIED THINKING / PROGRESS INDICATOR
+              Single consistent indicator for both isLoading and searchProgress.
+              Never displays multiple or separate bubbles for understanding/searching/comparing.
+              Dots animate independently with literal '...' removed.
              ───────────────────────────────────────────────────────────── */}
-          {searchProgress ? (
+          {(isLoading || Boolean(searchProgress)) && (
             <div
-              className="flex items-start gap-2.5 text-xs text-[#FF8126] py-2 animate-fadeIn"
+              className="flex items-center gap-2.5 text-xs text-[#FF8126] py-2 animate-fadeIn"
+              role="status"
+              aria-live="polite"
+              aria-label={`${loadingLabel} in progress`}
               data-testid="search-progress-container"
             >
               <div className="relative h-7 w-7 rounded-xl border border-[#FF6A00]/40 bg-[#161210] p-1 shrink-0 flex items-center justify-center shadow-sm shadow-[#FF6A00]/20">
@@ -583,10 +624,8 @@ export function ContinuousChatWorkspace({
                   className="h-full w-full object-contain"
                 />
               </div>
-              <div className="rounded-2xl border border-orange-200 dark:border-[#352b42] bg-[#FFF8F2] dark:bg-[#17131e] px-4 py-2.5 flex items-center gap-2.5 shadow-sm">
-                <span className="font-bold text-zinc-900 dark:text-zinc-100">
-                  {searchProgress.message}
-                </span>
+              <div className="rounded-2xl border border-orange-200 dark:border-[#352b42] bg-[#FFF8F2] dark:bg-[#17131e] px-3.5 py-2 flex items-center gap-2 shadow-sm">
+                <span className="font-bold text-zinc-900 dark:text-zinc-100">{loadingLabel}</span>
                 <span className="flex gap-1" aria-hidden="true">
                   <span className="h-1.5 w-1.5 rounded-full bg-[#FF6A00] animate-bounce motion-reduce:animate-none" />
                   <span className="h-1.5 w-1.5 rounded-full bg-[#FF6A00] animate-bounce motion-reduce:animate-none [animation-delay:0.2s]" />
@@ -594,27 +633,7 @@ export function ContinuousChatWorkspace({
                 </span>
               </div>
             </div>
-          ) : isLoading ? (
-            <div className="flex items-center gap-2.5 text-xs text-[#FF8126] py-2 animate-fadeIn">
-              <div className="relative h-7 w-7 rounded-xl border border-[#FF6A00]/40 bg-[#161210] p-1 shrink-0 flex items-center justify-center shadow-sm shadow-[#FF6A00]/20">
-                <Image
-                  src="/logo/SpendPilotLOGO.png"
-                  alt="SpendPilot"
-                  width={20}
-                  height={20}
-                  className="h-full w-full object-contain"
-                />
-              </div>
-              <div className="rounded-2xl border border-orange-200 dark:border-[#352b42] bg-[#FFF8F2] dark:bg-[#17131e] px-3.5 py-2 flex items-center gap-2">
-                <span className="font-bold">{activeStatusText || "Thinking"}</span>
-                <span className="flex gap-1" aria-hidden="true">
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#FF6A00] animate-bounce motion-reduce:animate-none" />
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#FF6A00] animate-bounce motion-reduce:animate-none [animation-delay:0.2s]" />
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#FF6A00] animate-bounce motion-reduce:animate-none [animation-delay:0.4s]" />
-                </span>
-              </div>
-            </div>
-          ) : null}
+          )}
 
           <div ref={messagesEndRef} className="h-8 shrink-0" aria-hidden="true" />
         </div>

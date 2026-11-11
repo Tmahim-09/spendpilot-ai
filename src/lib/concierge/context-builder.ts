@@ -69,7 +69,7 @@ Status: ${brief.status}`);
   if (recentMessages.length > 0) {
     const dialogueLines = recentMessages.map((m) => {
       const roleName = m.role === "user" ? "User" : "SpendPilot Concierge";
-      const naturalText = resolveNaturalMessage(m.content, m.content);
+      const naturalText = resolveNaturalMessage(m.content, "I'm looking into options for you.");
       return `${roleName}: "${naturalText.replace(/\n+/g, " ").trim()}"`;
     });
     sections.push(`RECENT CONVERSATION DIALOGUE (Current Task):\n${dialogueLines.join("\n")}`);
