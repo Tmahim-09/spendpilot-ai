@@ -21,49 +21,10 @@ import type {
   ProductVariantDimension,
   ProductVariantOptionValue,
   CurrencyCode,
+  ProductOfferItem,
 } from "@/types";
 import { formatCurrency } from "@/lib/utils";
-import { isSupportedCurrency } from "@/lib/money";
-
-function isDimensionMatch(dimName: string, reqKey: string): boolean {
-  const d = dimName.toLowerCase().trim();
-  const r = reqKey.toLowerCase().trim();
-  if (d === r || d.includes(r) || r.includes(d)) return true;
-  if (
-    (r === "storage" || r === "ssd") &&
-    (d.includes("storage") || d.includes("hard drive") || d.includes("capacity") || d.includes("ssd") || d.includes("drive"))
-  )
-    return true;
-  if ((r === "ram" || r === "memory") && (d.includes("ram") || d.includes("memory"))) return true;
-  if ((r === "color" || r === "colour") && (d.includes("color") || d.includes("colour") || d.includes("finish")))
-    return true;
-  if (r === "size" && d.includes("size")) return true;
-  return false;
-}
-
-function normalizeOptionValue(val: string): string {
-  return val.toLowerCase().replace(/\s+/g, "").replace(/ssd|unifiedmemory|ram/gi, "");
-}
-
-function matchesRequestedOptions(
-  requested: Record<string, string>,
-  effective: Record<string, string> | undefined
-): boolean {
-  if (!effective) return false;
-  for (const [k, v] of Object.entries(requested)) {
-    if (!v) continue;
-    const matchKey = Object.keys(effective).find((ek) => isDimensionMatch(ek, k));
-    if (!matchKey) return false;
-    const effVal = effective[matchKey];
-    if (!effVal) return false;
-    const normReq = normalizeOptionValue(v);
-    const normEff = normalizeOptionValue(effVal);
-    if (normEff !== normReq && !normEff.includes(normReq) && !normReq.includes(normEff)) {
-      return false;
-    }
-  }
-  return true;
-}
+import { evaluateVariantConfirmation } from "@/lib/channel3/variants";
 
 interface ProductVariantConfiguratorProps {
   product: NormalizedProduct;
@@ -339,6 +300,15 @@ export function ProductVariantConfigurator({
   const hasInitializedRef = useRef<string | null>(null);
   const activeRequestIdRef = useRef<number>(0);
 
+  // Tracks verified response tied strictly to exact requested options, price, and offer
+  const [lastConfirmedResponse, setLastConfirmedResponse] = useState<{
+    requestId: number;
+    options: Record<string, string>;
+    priceMinor: number;
+    currency: CurrencyCode;
+    offer: ProductOfferItem | null;
+  } | null>(null);
+
   const productId = product.sourceProductId || product.title;
 
   // Load product variants on open or when selections change
@@ -383,18 +353,32 @@ export function ProductVariantConfigurator({
           setCurrentImageUrl(data.variantState.imageUrl);
         }
 
-        // Merge selections: user's requested options take precedence over server defaults!
-        setSelectedOptions((prev) => ({
-          ...data.variantState?.effectiveSelected,
-          ...prev,
-          ...optionsToSelect,
-        }));
+        // Evaluate confirmation strictly against the real Channel3 response
+        const confirmationResult = evaluateVariantConfirmation(
+          data.variantState,
+          optionsToSelect,
+          currency,
+          product
+        );
+
+        if (confirmationResult.isConfirmed && confirmationResult.effectivePriceMinor) {
+          setLastConfirmedResponse({
+            requestId: currentRequestId,
+            options: { ...optionsToSelect },
+            priceMinor: confirmationResult.effectivePriceMinor,
+            currency,
+            offer: confirmationResult.matchingOffer,
+          });
+        } else {
+          setLastConfirmedResponse(null);
+        }
       } catch (err: unknown) {
         if (currentRequestId !== activeRequestIdRef.current) {
           return;
         }
         const msg = err instanceof Error ? err.message : "Unable to retrieve variant metadata";
         setError(msg);
+        setLastConfirmedResponse(null);
       } finally {
         if (currentRequestId === activeRequestIdRef.current) {
           if (isInitial) {
@@ -405,7 +389,7 @@ export function ProductVariantConfigurator({
         }
       }
     },
-    [productId, currency, product.sourceProductId, product.retailerUrl]
+    [productId, currency, product]
   );
 
   useEffect(() => {
@@ -414,11 +398,13 @@ export function ProductVariantConfigurator({
         hasInitializedRef.current = productId;
         setSelectedOptions(initialSelections);
         setVariantState(null);
+        setLastConfirmedResponse(null);
         setCurrentImageUrl(product.imageUrl || null);
         void fetchVariants(initialSelections, true);
       }
-    } else if (!isOpen) {
+    } else if (!isOpen && hasInitializedRef.current !== null) {
       hasInitializedRef.current = null;
+      setLastConfirmedResponse(null);
     }
   }, [isOpen, productId, initialSelections, product.imageUrl, fetchVariants]);
 
@@ -430,6 +416,10 @@ export function ProductVariantConfigurator({
     const updated = { ...selectedOptions, [dimensionName]: label };
     setSelectedOptions(updated);
 
+    // Immediately invalidate confirmed configuration when option changes!
+    setIsUpdating(true);
+    setLastConfirmedResponse(null);
+
     // If selecting a color and option has a thumbnail/image, update product hero image immediately!
     const isColor =
       dimensionName.toLowerCase().includes("color") ||
@@ -439,62 +429,45 @@ export function ProductVariantConfigurator({
       setCurrentImageUrl(optVal.thumbnailUrl);
     }
 
-    // Immediately update variantState locally so dropdown labels and checkmarks reflect with zero lag
-    setVariantState((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        effectiveSelected: {
-          ...prev.effectiveSelected,
-          [dimensionName]: label,
-        },
-        options: prev.options.map((dim) =>
-          dim.name === dimensionName ? { ...dim, selectedValue: label } : dim
-        ),
-      };
-    });
-
-    // Re-verify with backend in background without unmounting the options UI
+    // Re-verify with backend in background without mutating variantState locally
     void fetchVariants(updated, false);
   };
 
   if (!isOpen) return null;
 
-  // Determine configuration verification strictly
-  const isPriceValid =
-    typeof variantState?.verifiedPriceMinor === "number" &&
-    Number.isFinite(variantState.verifiedPriceMinor) &&
-    Number.isSafeInteger(variantState.verifiedPriceMinor) &&
-    variantState.verifiedPriceMinor > 0;
+  const isPending = isLoading || isUpdating;
+  const hasRequestedCustomOptions = Object.keys(selectedOptions).some(
+    (k) => Boolean(selectedOptions[k] && selectedOptions[k].trim())
+  );
 
-  const isCurrencyValid = isSupportedCurrency(currency);
+  // Exact comparison between requested selections and confirmed options in lastConfirmedResponse
+  const areRequestedOptionsConfirmed = Boolean(
+    !isPending &&
+    lastConfirmedResponse &&
+    Object.keys(selectedOptions).filter((k) => Boolean(selectedOptions[k])).length ===
+      Object.keys(lastConfirmedResponse.options).filter((k) => Boolean(lastConfirmedResponse.options[k])).length &&
+    Object.entries(selectedOptions)
+      .filter(([, v]) => Boolean(v))
+      .every(([k, v]) => lastConfirmedResponse.options[k] === v)
+  );
 
-  const hasRequestedCustomOptions = Object.keys(selectedOptions).length > 0;
-
-  const isExactOptionsMatch =
-    Boolean(variantState) &&
-    !variantState!.isRelaxed &&
-    variantState!.status === "variants_found" &&
-    hasRequestedCustomOptions &&
-    matchesRequestedOptions(selectedOptions, variantState!.effectiveSelected);
-
-  const isUnchangedBaseProduct =
+  const isUnchangedBaseProduct = Boolean(
+    !isPending &&
     !hasRequestedCustomOptions &&
     product.priceMinor !== null &&
     product.priceMinor > 0 &&
-    product.configurationStatus === "verified";
+    product.configurationStatus === "verified"
+  );
 
   const isConfigurationConfirmed = Boolean(
-    variantState &&
-    isCurrencyValid &&
-    ((isExactOptionsMatch && isPriceValid) || isUnchangedBaseProduct)
+    !isPending && (areRequestedOptionsConfirmed || isUnchangedBaseProduct)
   );
 
   // Never use a parent product price as the confirmed price of a different configuration.
   // Missing variant price must remain null.
   const effectivePriceMinor: number | null = isConfigurationConfirmed
-    ? (isExactOptionsMatch && isPriceValid
-        ? (variantState?.verifiedPriceMinor ?? null)
+    ? (areRequestedOptionsConfirmed
+        ? lastConfirmedResponse!.priceMinor
         : (product.priceMinor ?? null))
     : null;
 
@@ -510,20 +483,13 @@ export function ProductVariantConfigurator({
   const budgetDeltaMinor = isOverBudget && budgetMinor && effectivePriceMinor ? effectivePriceMinor - budgetMinor : 0;
 
   const handleConfirm = () => {
+    if (isPending) return;
+
     if (isConfigurationConfirmed && effectivePriceMinor) {
       const confirmedUrl = variantState?.retailerUrl || product.retailerUrl;
       const matchingOffer =
-        variantState?.offers?.find((o) => o.priceMinor === effectivePriceMinor) ||
-        product.offers?.find((o) => o.priceMinor === effectivePriceMinor) ||
-        (variantState?.retailerUrl
-          ? {
-              domain: variantState.retailerName || product.retailerName || "Verified Retailer",
-              url: variantState.retailerUrl,
-              priceMinor: effectivePriceMinor,
-              currency,
-              availability: variantState.availability === "InStock" ? "in_stock" : "unknown",
-            }
-          : null);
+        lastConfirmedResponse?.offer ||
+        (isUnchangedBaseProduct ? (product.offers?.[0] || null) : null);
 
       onConfirmSelection({
         productId,
@@ -538,8 +504,7 @@ export function ProductVariantConfigurator({
         confirmedOffer: matchingOffer,
       });
     } else {
-      // Verification failed: preserve user's selected configuration as unverified metadata
-      // without changing the existing verified price or retailer offer!
+      // Verification failed or custom unverified options: save as unverified preferences
       onConfirmSelection({
         productId,
         title: product.title,
@@ -863,8 +828,17 @@ export function ProductVariantConfigurator({
               Cancel
             </button>
 
-            {/* If configuration is verified, allow confirmed selection. Otherwise allow saving as unverified metadata. */}
-            {isConfigurationConfirmed ? (
+            {/* Action buttons: confirmation is disabled while variant verification is pending */}
+            {isPending ? (
+              <button
+                type="button"
+                disabled
+                className="btn-3d-secondary w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-bold opacity-60 cursor-not-allowed"
+              >
+                <RefreshCw className="h-4 w-4 animate-spin text-[#FF6A00]" />
+                <span>Verifying Configuration...</span>
+              </button>
+            ) : isConfigurationConfirmed ? (
               isOverBudget ? (
                 <button
                   type="button"

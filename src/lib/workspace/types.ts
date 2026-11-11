@@ -87,6 +87,7 @@ export interface ShoppingItem {
   selectedProduct?: NormalizedProduct | null;
   selectedOffer?: ProductOfferItem | null;
   selectedVariant?: Record<string, string>;
+  unverifiedVariantPreferences?: Record<string, string>;
   dependencies: string[]; // List of ShoppingItem IDs this item depends on
   compatibility?: ItemCompatibilityReport;
   answeredQuestionIds: string[];

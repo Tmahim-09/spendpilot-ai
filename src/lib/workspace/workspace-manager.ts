@@ -1241,8 +1241,40 @@ export function updateVariantForItem(
   selection: ProductVariantSelection
 ): ShoppingWorkspace {
   if (selection.isConfirmed === false) {
-    // Preserve existing verified configurations when a new configuration cannot be confirmed
-    return workspace;
+    // Save unverified variant preferences on the item without altering verified price, offer, or configuration
+    const now = Date.now();
+    let updatedAny = false;
+
+    const updatedGroups = workspace.groups.map((group) => {
+      const hasItem = group.items.some((i) => i.id === itemId);
+      if (!hasItem) return group;
+
+      const updatedItems = group.items.map((item) => {
+        if (item.id !== itemId) return item;
+        updatedAny = true;
+        return {
+          ...item,
+          unverifiedVariantPreferences: (selection.selectedOptions as Record<string, string>) || {},
+        };
+      });
+
+      return {
+        ...group,
+        items: updatedItems,
+        updatedAt: now,
+      };
+    });
+
+    if (!updatedAny) {
+      return workspace;
+    }
+
+    return {
+      ...workspace,
+      revision: workspace.revision + 1,
+      groups: updatedGroups,
+      updatedAt: now,
+    };
   }
 
   // Find item and candidate in workspace to verify variant belongs to correct product

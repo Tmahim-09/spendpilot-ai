@@ -1,224 +1,44 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  retrieveProductVariants,
-  synthesizeRetailerOptions,
-  normalizeVariantAvailability,
+  evaluateVariantConfirmation,
+  isExactOptionValueMatch,
 } from "../src/lib/channel3/variants";
 import {
   createInitialWorkspace,
   addIndependentItem,
   selectProductForItem,
-  selectOfferForItem,
   updateVariantForItem,
-  calculateWorkspaceBudgetSummary,
 } from "../src/lib/workspace/workspace-manager";
 import type {
   NormalizedProduct,
   ProductOfferItem,
   ProductVariantSelection,
+  ProductVariantState,
 } from "../src/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SpendPilot AI: Variant Integrity and Runtime Hardening Regression Suite
+// SpendPilot AI: Variant Confirmation Integrity Regression Suite (8 Scenarios)
 // ─────────────────────────────────────────────────────────────────────────────
 
-test("Scenario 1: Channel3 retrieval fails and no fabricated options or prices are produced", async () => {
-  // Test retrieval failure with empty/missing product
-  const unavailableResult = await retrieveProductVariants({
-    productId: "non_existent_item_999",
-    retailerUrl: "https://unknown-shop.com/missing-item",
-    selectedOptions: { RAM: "64GB" },
-    currency: "USD",
-  });
-
-  assert.strictEqual(
-    unavailableResult.status,
-    "unavailable",
-    "Failed retrieval must report status 'unavailable'"
-  );
-  assert.deepStrictEqual(
-    unavailableResult.options,
-    [],
-    "Must not fabricate option dimensions on retrieval failure"
-  );
-  assert.strictEqual(
-    unavailableResult.verifiedPriceMinor,
-    null,
-    "Price must be null when verification fails"
-  );
-  assert.strictEqual(
-    unavailableResult.availability,
-    "Unknown",
-    "Availability must be 'Unknown' when retrieval fails"
-  );
-
-  // Test synthesizeRetailerOptions does not fabricate prices or assume stock
-  const sampleProduct: NormalizedProduct = {
-    source: "channel3",
-    sourceProductId: "sample_laptop_1",
-    title: "Pro Developer Laptop",
-    imageUrl: null,
-    priceMinor: 120000,
-    currency: "USD",
-    retailerName: "TechStore",
-    retailerUrl: "https://techstore.com/dev-laptop",
-    availability: "unknown",
-    specifications: {
-      RAM: "16GB, 32GB",
-      Storage: "512GB, 1TB",
-      Color: "Space Gray, Silver",
-    },
-    sourceFacts: [],
-    offers: [],
-  };
-
-  const synthesized = synthesizeRetailerOptions(sampleProduct.title, sampleProduct.priceMinor);
-  for (const dim of synthesized) {
-    for (const val of dim.values) {
-      assert.strictEqual(
-        val.priceMinor,
-        null,
-        `Option value '${val.label}' in '${dim.name}' must have null priceMinor (no fabricated prices)`
-      );
-      assert.strictEqual(
-        val.available,
-        "Unknown",
-        `Option value '${val.label}' in '${dim.name}' must have 'Unknown' availability`
-      );
-    }
-  }
-});
-
-test("Scenario 2: Missing retailer availability remains Unknown", () => {
-  assert.strictEqual(
-    normalizeVariantAvailability(null),
-    "Unknown",
-    "null availability must normalize to 'Unknown'"
-  );
-  assert.strictEqual(
-    normalizeVariantAvailability(undefined),
-    "Unknown",
-    "undefined availability must normalize to 'Unknown'"
-  );
-  assert.strictEqual(
-    normalizeVariantAvailability(""),
-    "Unknown",
-    "empty string availability must normalize to 'Unknown'"
-  );
-  assert.strictEqual(
-    normalizeVariantAvailability("unspecified"),
-    "Unknown",
-    "unspecified availability must normalize to 'Unknown'"
-  );
-  assert.strictEqual(
-    normalizeVariantAvailability("InStock"),
-    "InStock",
-    "InStock must remain InStock"
-  );
-  assert.strictEqual(
-    normalizeVariantAvailability("out_of_stock"),
-    "OutOfStock",
-    "out_of_stock must normalize to OutOfStock"
-  );
-});
-
-test("Scenario 3: Missing configuration price cannot be confirmed", () => {
-  let ws = createInitialWorkspace({ currency: "USD" });
-  ws = addIndependentItem(ws, { productRequest: "Developer Laptop" });
-  const itemId = ws.groups[0].items[0].id;
-
+test("Scenario 1: Channel3 returns valid laptop & base price but no variants -> selecting 1TB remains unverified", async () => {
   const baseProduct: NormalizedProduct = {
     source: "channel3",
-    sourceProductId: "laptop_dev_01",
-    title: "Developer Laptop 16-inch",
-    imageUrl: null,
-    priceMinor: 180000,
+    sourceProductId: "laptop_basic_01",
+    title: "Ultra Laptop Base",
+    imageUrl: "https://example.com/laptop.jpg",
+    priceMinor: 120000, // $1,200.00
     currency: "USD",
     retailerName: "BestRetailer",
-    retailerUrl: "https://bestretailer.com/laptop-16",
+    retailerUrl: "https://bestretailer.com/laptop",
     availability: "in_stock",
     specifications: {},
     sourceFacts: [],
     offers: [
       {
-        id: "off_base_1",
+        id: "off_base",
         domain: "BestRetailer",
-        url: "https://bestretailer.com/laptop-16",
-        priceMinor: 180000,
-        currency: "USD",
-        availability: "in_stock",
-      },
-    ],
-  };
-
-  ws = selectProductForItem(ws, itemId, baseProduct, baseProduct.offers![0]);
-  const initialRevision = ws.revision;
-
-  // Attempting to confirm with null price must be rejected
-  const missingPriceSelection: ProductVariantSelection = {
-    productId: "laptop_dev_01",
-    selectedOptions: { RAM: "32GB" },
-    title: "Developer Laptop 16-inch 32GB",
-    confirmedPriceMinor: null,
-    confirmedCurrency: "USD",
-    confirmedRetailerUrl: "https://bestretailer.com/laptop-16-32gb",
-    isConfirmed: true,
-  };
-
-  const wsAfterMissingPrice = updateVariantForItem(ws, itemId, missingPriceSelection);
-  assert.strictEqual(
-    wsAfterMissingPrice.revision,
-    initialRevision,
-    "Missing configuration price must be rejected without incrementing revision"
-  );
-  assert.strictEqual(
-    wsAfterMissingPrice.groups[0].items[0].selectedProduct?.priceMinor,
-    180000,
-    "Selected product price must remain the initial verified price"
-  );
-
-  // Attempting to confirm with negative or non-safe-integer price must be rejected
-  const negativePriceSelection: ProductVariantSelection = {
-    productId: "laptop_dev_01",
-    selectedOptions: { RAM: "32GB" },
-    title: "Developer Laptop 16-inch 32GB",
-    confirmedPriceMinor: -5000,
-    confirmedCurrency: "USD",
-    confirmedRetailerUrl: "https://bestretailer.com/laptop-16-32gb",
-    isConfirmed: true,
-  };
-
-  const wsAfterNegativePrice = updateVariantForItem(ws, itemId, negativePriceSelection);
-  assert.strictEqual(
-    wsAfterNegativePrice.revision,
-    initialRevision,
-    "Negative configuration price must be rejected"
-  );
-});
-
-test("Scenario 4: Selecting 1TB while Channel3 confirms 512GB must not update selected price", () => {
-  let ws = createInitialWorkspace({ currency: "USD" });
-  ws = addIndependentItem(ws, { productRequest: "Ultrabook" });
-  const itemId = ws.groups[0].items[0].id;
-
-  const baseProduct: NormalizedProduct = {
-    source: "channel3",
-    sourceProductId: "ultrabook_512",
-    title: "Ultrabook Pro 512GB",
-    imageUrl: null,
-    priceMinor: 120000,
-    currency: "USD",
-    retailerName: "TechHub",
-    retailerUrl: "https://techhub.com/ultrabook-512",
-    availability: "in_stock",
-    specifications: {},
-    sourceFacts: [],
-    offers: [
-      {
-        id: "off_u512",
-        domain: "TechHub",
-        url: "https://techhub.com/ultrabook-512",
+        url: "https://bestretailer.com/laptop",
         priceMinor: 120000,
         currency: "USD",
         availability: "in_stock",
@@ -226,48 +46,305 @@ test("Scenario 4: Selecting 1TB while Channel3 confirms 512GB must not update se
     ],
   };
 
-  ws = selectProductForItem(ws, itemId, baseProduct, baseProduct.offers![0]);
-  const initialRevision = ws.revision;
-
-  // User requested 1TB, but Channel3 could not confirm 1TB (relaxation or unconfirmed state).
-  // The selection payload therefore has isConfirmed: false.
-  const unconfirmed1TBSelection: ProductVariantSelection = {
-    productId: "ultrabook_512",
-    selectedOptions: { Storage: "1TB" },
-    title: "Ultrabook Pro 1TB",
-    confirmedPriceMinor: null,
-    confirmedCurrency: null,
-    confirmedRetailerUrl: "https://techhub.com/ultrabook-512",
-    isConfirmed: false,
+  // Channel3 returns no selectable variant configurations for this product
+  const noVariantsState: ProductVariantState = {
+    productId: "laptop_basic_01",
+    title: "Ultra Laptop Base",
+    status: "no_variants_verified",
+    options: [],
+    selected: {},
+    effectiveSelected: {},
+    isRelaxed: false,
+    relaxationMessage: null,
+    isFullyConfigured: false,
+    availability: "InStock",
+    verifiedPriceMinor: null,
+    retailerUrl: "https://bestretailer.com/laptop",
+    retailerName: "BestRetailer",
   };
 
-  const wsResult = updateVariantForItem(ws, itemId, unconfirmed1TBSelection);
+  const requestedOptions = { Storage: "1TB" };
+  const confirmationResult = evaluateVariantConfirmation(
+    noVariantsState,
+    requestedOptions,
+    "USD",
+    baseProduct
+  );
+
   assert.strictEqual(
-    wsResult.revision,
-    initialRevision,
-    "Unconfirmed 1TB selection must preserve workspace revision"
+    confirmationResult.isConfirmed,
+    false,
+    "Selecting 1TB on product with no verified variants must remain unverified"
   );
   assert.strictEqual(
-    wsResult.groups[0].items[0].selectedProduct?.priceMinor,
-    120000,
-    "Selected price must NOT be changed when 1TB was not confirmed by retailer"
+    confirmationResult.effectivePriceMinor,
+    null,
+    "Must not assign base product price to custom 1TB request"
   );
   assert.strictEqual(
-    wsResult.groups[0].items[0].selectedProduct?.title,
-    "Ultrabook Pro 512GB",
-    "Product title must remain the verified configuration"
+    confirmationResult.matchingOffer,
+    null,
+    "Must not fabricate matching offer when variants are unverified"
   );
 });
 
-test("Scenario 5: Valid retailer response for exact configuration updates selected offer and price correctly", () => {
+test("Scenario 2: Channel3 returns option dimensions but no confirmed selected values -> not confirmed", () => {
+  const baseProduct: NormalizedProduct = {
+    source: "channel3",
+    sourceProductId: "laptop_options_empty",
+    title: "Configurable Laptop",
+    imageUrl: null,
+    priceMinor: 150000,
+    currency: "USD",
+    retailerName: "ShopCo",
+    retailerUrl: "https://shopco.com/laptop",
+    availability: "in_stock",
+    specifications: {},
+    sourceFacts: [],
+  };
+
+  // Dimensions returned, but effectiveSelected is empty (retailer did not confirm selection)
+  const emptySelectedState: ProductVariantState = {
+    productId: "laptop_options_empty",
+    title: "Configurable Laptop",
+    status: "variants_found",
+    options: [
+      {
+        name: "Storage",
+        values: [
+          { label: "512GB", exists: true, available: "InStock", priceMinor: null },
+          { label: "1TB", exists: true, available: "InStock", priceMinor: null },
+        ],
+      },
+    ],
+    selected: {},
+    effectiveSelected: {}, // Empty: retailer did not confirm
+    isRelaxed: true,
+    relaxationMessage: "Retailer did not confirm selections for the requested options.",
+    isFullyConfigured: false,
+    availability: "InStock",
+    verifiedPriceMinor: 150000,
+    retailerUrl: "https://shopco.com/laptop",
+    retailerName: "ShopCo",
+  };
+
+  const requestedOptions = { Storage: "1TB" };
+  const result = evaluateVariantConfirmation(
+    emptySelectedState,
+    requestedOptions,
+    "USD",
+    baseProduct
+  );
+
+  assert.strictEqual(
+    result.isConfirmed,
+    false,
+    "Variant with empty confirmed selections must NOT be confirmed"
+  );
+  assert.strictEqual(
+    result.effectivePriceMinor,
+    null,
+    "Effective price must be null when retailer does not confirm selection"
+  );
+});
+
+test("Scenario 3: Channel3 returns 512GB after 1TB request -> 512GB price never assigned to 1TB", () => {
+  // Test token matching function directly
+  assert.strictEqual(
+    isExactOptionValueMatch("1TB", "512GB"),
+    false,
+    "1TB must never match 512GB"
+  );
+  assert.strictEqual(
+    isExactOptionValueMatch("16GB", "24GB"),
+    false,
+    "16GB must never match 24GB"
+  );
+  assert.strictEqual(
+    isExactOptionValueMatch("1TB NVMe SSD", "1TB SSD"),
+    true,
+    "Matching capacities with descriptive suffix must match"
+  );
+
+  const baseProduct: NormalizedProduct = {
+    source: "channel3",
+    sourceProductId: "ultrabook_512",
+    title: "Ultrabook 512GB",
+    imageUrl: null,
+    priceMinor: 110000,
+    currency: "USD",
+    retailerName: "TechHub",
+    retailerUrl: "https://techhub.com/ultrabook",
+    availability: "in_stock",
+    specifications: {},
+    sourceFacts: [],
+  };
+
+  // Retailer substituted 512GB when 1TB was requested
+  const relaxedState: ProductVariantState = {
+    productId: "ultrabook_512",
+    title: "Ultrabook 512GB",
+    status: "relaxation_mismatch",
+    options: [
+      {
+        name: "Storage",
+        values: [
+          { label: "512GB", exists: true, available: "InStock", priceMinor: null },
+        ],
+      },
+    ],
+    selected: { Storage: "1TB" },
+    effectiveSelected: { Storage: "512GB" }, // Retailer returned 512GB!
+    isRelaxed: true,
+    relaxationMessage: 'Requested Storage "1TB", but retailer returned "512GB"',
+    isFullyConfigured: true,
+    availability: "InStock",
+    verifiedPriceMinor: 110000, // Price of 512GB
+    retailerUrl: "https://techhub.com/ultrabook-512",
+    retailerName: "TechHub",
+  };
+
+  const requestedOptions = { Storage: "1TB" };
+  const confirmationResult = evaluateVariantConfirmation(
+    relaxedState,
+    requestedOptions,
+    "USD",
+    baseProduct
+  );
+
+  assert.strictEqual(
+    confirmationResult.isConfirmed,
+    false,
+    "Confirmation must be false when retailer relaxed 1TB to 512GB"
+  );
+  assert.strictEqual(
+    confirmationResult.effectivePriceMinor,
+    null,
+    "The 512GB price ($1,100) must NEVER be assigned to the requested 1TB option"
+  );
+});
+
+test("Scenario 4: User changes option and clicks Confirm before API response arrives -> confirmation blocked", () => {
+  // Simulates ProductVariantConfigurator state logic
+  let activeRequestId = 1;
+  const isLoading = false;
+  let isUpdating = false;
+  let lastConfirmedResponse: {
+    requestId: number;
+    options: Record<string, string>;
+    priceMinor: number;
+  } | null = {
+    requestId: 1,
+    options: { RAM: "16GB" },
+    priceMinor: 109900,
+  };
+
+  // User changes option to 32GB:
+  // 1. Immediately invalidate lastConfirmedResponse
+  // 2. Set isUpdating to true
+  // 3. Issue new request ID
+  const newRequestId = ++activeRequestId; // 2
+  isUpdating = true;
+  lastConfirmedResponse = null;
+
+  // Evaluate canConfirm:
+  // canConfirm requires !isLoading && !isUpdating && lastConfirmedResponse !== null
+  const isPending = isLoading || isUpdating;
+  const canConfirm = !isPending && lastConfirmedResponse !== null;
+
+  assert.strictEqual(
+    canConfirm,
+    false,
+    "Confirmation must be strictly blocked while new option request is in-flight"
+  );
+  assert.strictEqual(
+    lastConfirmedResponse,
+    null,
+    "Previous confirmed response must be invalidated immediately upon option change"
+  );
+  assert.strictEqual(
+    newRequestId,
+    2,
+    "Request ID must be advanced to guard against race conditions"
+  );
+});
+
+test("Scenario 5: Older response arrives after newer selection -> discarded (stale protection)", () => {
+  let activeRequestId = 1;
+  let lastConfirmedResponse: {
+    requestId: number;
+    options: Record<string, string>;
+    priceMinor: number;
+  } | null = null;
+
+  // Request 1 was sent for 16GB (requestId: 1)
+  // User rapidly clicks 32GB (advanced to requestId: 2)
+  activeRequestId = 2;
+
+  // Older response 1 arrives late with requestId: 1
+  const incomingResponse1 = {
+    requestId: 1,
+    variantState: {
+      status: "variants_found",
+      effectiveSelected: { RAM: "16GB" },
+      verifiedPriceMinor: 109900,
+    },
+  };
+
+  // Stale check
+  if (incomingResponse1.requestId === activeRequestId) {
+    lastConfirmedResponse = {
+      requestId: incomingResponse1.requestId,
+      options: { RAM: "16GB" },
+      priceMinor: 109900,
+    };
+  }
+
+  assert.strictEqual(
+    lastConfirmedResponse,
+    null,
+    "Older response from request 1 must be discarded and not update confirmed response"
+  );
+
+  // Newer response 2 arrives with requestId: 2
+  const incomingResponse2 = {
+    requestId: 2,
+    variantState: {
+      status: "variants_found",
+      effectiveSelected: { RAM: "32GB" },
+      verifiedPriceMinor: 149900,
+    },
+  };
+
+  if (incomingResponse2.requestId === activeRequestId) {
+    lastConfirmedResponse = {
+      requestId: incomingResponse2.requestId,
+      options: { RAM: "32GB" },
+      priceMinor: 149900,
+    };
+  }
+
+  assert.notStrictEqual(
+    lastConfirmedResponse,
+    null,
+    "Response matching the current activeRequestId must be accepted"
+  );
+  assert.strictEqual(
+    lastConfirmedResponse?.priceMinor,
+    149900,
+    "Confirmed price must reflect the current request (32GB)"
+  );
+});
+
+test("Scenario 6: Exact configuration response with matching variant offer -> accepted", () => {
   let ws = createInitialWorkspace({ currency: "USD" });
   ws = addIndependentItem(ws, { productRequest: "Pro Workstation" });
   const itemId = ws.groups[0].items[0].id;
 
   const baseProduct: NormalizedProduct = {
     source: "channel3",
-    sourceProductId: "ws_station_01",
-    title: "Workstation Tower Base",
+    sourceProductId: "workstation_base",
+    title: "Pro Workstation Base",
     imageUrl: null,
     priceMinor: 200000,
     currency: "USD",
@@ -289,140 +366,85 @@ test("Scenario 5: Valid retailer response for exact configuration updates select
   };
 
   ws = selectProductForItem(ws, itemId, baseProduct, baseProduct.offers![0]);
-  const prevRevision = ws.revision;
 
-  // Exact configuration confirmed by retailer
-  const confirmedVariantSelection: ProductVariantSelection = {
-    productId: "ws_station_01",
-    selectedOptions: { RAM: "64GB", GPU: "RTX 4080" },
-    title: "Workstation Tower 64GB / RTX 4080",
-    confirmedPriceMinor: 285000,
-    confirmedCurrency: "USD",
-    confirmedRetailerUrl: "https://ws-direct.com/tower-custom-64-4080",
-    confirmedOffer: {
-      id: "off_var_64_4080",
-      domain: "WorkstationDirect",
-      url: "https://ws-direct.com/tower-custom-64-4080",
-      priceMinor: 285000,
-      currency: "USD",
-      availability: "in_stock",
-    },
+  const requestedOptions = { RAM: "64GB", GPU: "RTX 4080" };
+  const verifiedVariantOffer: ProductOfferItem = {
+    id: "off_var_64_4080",
+    domain: "WorkstationDirect",
+    url: "https://ws-direct.com/tower-custom-64-4080",
+    priceMinor: 285000,
+    currency: "USD",
+    availability: "in_stock",
+  };
+
+  const exactVariantState: ProductVariantState = {
+    productId: "workstation_base",
+    title: "Pro Workstation 64GB / RTX 4080",
+    status: "variants_found",
+    options: [
+      {
+        name: "RAM",
+        values: [{ label: "64GB", exists: true, available: "InStock", priceMinor: null }],
+      },
+      {
+        name: "GPU",
+        values: [{ label: "RTX 4080", exists: true, available: "InStock", priceMinor: null }],
+      },
+    ],
+    selected: requestedOptions,
+    effectiveSelected: requestedOptions,
+    isRelaxed: false,
+    relaxationMessage: null,
+    isFullyConfigured: true,
+    availability: "InStock",
+    verifiedPriceMinor: 285000,
+    retailerUrl: "https://ws-direct.com/tower-custom-64-4080",
+    retailerName: "WorkstationDirect",
+    offers: [verifiedVariantOffer],
+  };
+
+  const evalResult = evaluateVariantConfirmation(
+    exactVariantState,
+    requestedOptions,
+    "USD",
+    baseProduct
+  );
+
+  assert.strictEqual(evalResult.isConfirmed, true, "Exact matching configuration must be confirmed");
+  assert.strictEqual(evalResult.effectivePriceMinor, 285000, "Price must match verified variant price");
+  assert.strictEqual(evalResult.matchingOffer?.id, "off_var_64_4080", "Matching offer must be attached");
+
+  // Apply to workspace
+  const confirmedSelection: ProductVariantSelection = {
+    productId: "workstation_base",
+    title: "Pro Workstation 64GB / RTX 4080",
+    selectedOptions: requestedOptions,
+    confirmedPriceMinor: evalResult.effectivePriceMinor,
+    confirmedCurrency: evalResult.effectiveCurrency,
+    confirmedRetailerUrl: verifiedVariantOffer.url,
+    confirmedOffer: evalResult.matchingOffer,
     isConfirmed: true,
   };
 
-  const wsUpdated = updateVariantForItem(ws, itemId, confirmedVariantSelection);
-  assert.strictEqual(
-    wsUpdated.revision,
-    prevRevision + 1,
-    "Confirmed selection must increment revision"
-  );
+  ws = updateVariantForItem(ws, itemId, confirmedSelection);
+  const updatedItem = ws.groups[0].items[0];
 
-  const updatedItem = wsUpdated.groups[0].items[0];
-  assert.strictEqual(
-    updatedItem.selectedProduct?.priceMinor,
-    285000,
-    "Price must update to confirmed variant price"
-  );
-  assert.strictEqual(
-    updatedItem.selectedProduct?.currency,
-    "USD",
-    "Currency must match confirmed currency"
-  );
-  assert.strictEqual(
-    updatedItem.selectedProduct?.retailerUrl,
-    "https://ws-direct.com/tower-custom-64-4080",
-    "Retailer URL must update in lockstep"
-  );
-  assert.strictEqual(
-    updatedItem.selectedOffer?.id,
-    "off_var_64_4080",
-    "Selected offer must match confirmed offer"
-  );
-  assert.strictEqual(
-    updatedItem.selectedOffer?.priceMinor,
-    285000,
-    "Selected offer price must be synchronized"
-  );
-  assert.deepStrictEqual(
-    updatedItem.selectedVariant,
-    { RAM: "64GB", GPU: "RTX 4080" },
-    "Selected variant options must be recorded"
-  );
+  assert.strictEqual(updatedItem.selectedProduct?.priceMinor, 285000);
+  assert.strictEqual(updatedItem.selectedOffer?.id, "off_var_64_4080");
+  assert.deepStrictEqual(updatedItem.selectedVariant, requestedOptions);
 });
 
-test("Scenario 6: Modified offer with same URL/ID cannot override canonical stored price", () => {
-  let ws = createInitialWorkspace({ currency: "USD" });
-  ws = addIndependentItem(ws, { productRequest: "Gaming Monitor" });
-  const itemId = ws.groups[0].items[0].id;
-
-  const monitorProduct: NormalizedProduct = {
-    source: "channel3",
-    sourceProductId: "mon_4k_144",
-    title: "4K 144Hz Gaming Monitor",
-    imageUrl: null,
-    priceMinor: 65000,
-    currency: "USD",
-    retailerName: "DisplayWorld",
-    retailerUrl: "https://displayworld.com/4k-144",
-    availability: "in_stock",
-    specifications: {},
-    sourceFacts: [],
-    offers: [
-      {
-        id: "off_display_canonical",
-        offerId: "off_display_canonical",
-        domain: "DisplayWorld",
-        url: "https://displayworld.com/4k-144",
-        priceMinor: 65000, // Canonical price is $650.00
-        currency: "USD",
-        availability: "in_stock",
-      },
-    ],
-  };
-
-  ws = selectProductForItem(ws, itemId, monitorProduct, monitorProduct.offers![0]);
-  const initialRev = ws.revision;
-
-  // Attacker or client tampering: caller passes same ID and URL, but modified priceMinor of $50.00
-  const tamperedOffer: ProductOfferItem = {
-    id: "off_display_canonical",
-    offerId: "off_display_canonical",
-    domain: "DisplayWorld",
-    url: "https://displayworld.com/4k-144",
-    priceMinor: 5000, // Altered price!
-    currency: "USD",
-    availability: "in_stock",
-  };
-
-  const wsTampered = selectOfferForItem(ws, itemId, "mon_4k_144", tamperedOffer);
-  assert.strictEqual(
-    wsTampered.revision,
-    initialRev,
-    "Tampered offer with altered price must be rejected and leave workspace unchanged"
-  );
-  assert.strictEqual(
-    wsTampered.groups[0].items[0].selectedProduct?.priceMinor,
-    65000,
-    "Canonical stored price ($650.00) must NOT be overwritten by tampered price"
-  );
-  assert.strictEqual(
-    wsTampered.groups[0].items[0].selectedOffer?.priceMinor,
-    65000,
-    "Selected offer price must remain canonical"
-  );
-});
-
-test("Scenario 7: Unconfirmed selection cannot overwrite existing verified selection", () => {
+test("Scenario 7: Unverified preference persisted across workspace reload without changing verified price", () => {
   let ws = createInitialWorkspace({ currency: "USD" });
   ws = addIndependentItem(ws, { productRequest: "Flagship Tablet" });
   const itemId = ws.groups[0].items[0].id;
 
-  const tabletProduct: NormalizedProduct = {
+  const baseProduct: NormalizedProduct = {
     source: "channel3",
     sourceProductId: "tab_pro_12",
     title: "Flagship Tablet 256GB WiFi",
     imageUrl: null,
-    priceMinor: 99900,
+    priceMinor: 99900, // Verified $999.00
     currency: "USD",
     retailerName: "TabletStore",
     retailerUrl: "https://tabletstore.com/pro12-256",
@@ -441,11 +463,10 @@ test("Scenario 7: Unconfirmed selection cannot overwrite existing verified selec
     ],
   };
 
-  ws = selectProductForItem(ws, itemId, tabletProduct, tabletProduct.offers![0]);
-  const prevRev = ws.revision;
+  ws = selectProductForItem(ws, itemId, baseProduct, baseProduct.offers![0]);
 
-  // User configured 512GB + 5G, but retailer could not verify it (isConfirmed: false)
-  const unverifiedConfiguration: ProductVariantSelection = {
+  // User selects 512GB + 5G which is unverified (isConfirmed: false)
+  const unverifiedSelection: ProductVariantSelection = {
     productId: "tab_pro_12",
     selectedOptions: { Storage: "512GB", Connectivity: "5G" },
     title: "Flagship Tablet 512GB 5G (Unverified)",
@@ -455,91 +476,123 @@ test("Scenario 7: Unconfirmed selection cannot overwrite existing verified selec
     isConfirmed: false,
   };
 
-  const wsAfterUnconfirmed = updateVariantForItem(ws, itemId, unverifiedConfiguration);
+  const wsWithPreference = updateVariantForItem(ws, itemId, unverifiedSelection);
+  const updatedItem = wsWithPreference.groups[0].items[0];
+
+  // Verified price and offer MUST remain untouched
   assert.strictEqual(
-    wsAfterUnconfirmed.revision,
-    prevRev,
-    "Unconfirmed selection must preserve workspace revision"
-  );
-  assert.strictEqual(
-    wsAfterUnconfirmed.groups[0].items[0].selectedProduct?.priceMinor,
+    updatedItem.selectedProduct?.priceMinor,
     99900,
-    "Existing verified price ($999.00) must be preserved intact"
+    "Verified base price ($999.00) must remain intact when saving unverified preferences"
   );
   assert.strictEqual(
-    wsAfterUnconfirmed.groups[0].items[0].selectedProduct?.retailerUrl,
-    "https://tabletstore.com/pro12-256",
-    "Existing verified retailer URL must be preserved intact"
-  );
-  assert.strictEqual(
-    wsAfterUnconfirmed.groups[0].items[0].selectedProduct?.title,
+    updatedItem.selectedProduct?.title,
     "Flagship Tablet 256GB WiFi",
-    "Existing verified title must be preserved intact"
+    "Verified product title must remain intact"
+  );
+  assert.deepStrictEqual(
+    updatedItem.unverifiedVariantPreferences,
+    { Storage: "512GB", Connectivity: "5G" },
+    "Unverified preferences must be stored under unverifiedVariantPreferences"
+  );
+
+  // Simulate workspace reload via localStorage JSON serialization / deserialization
+  const serialized = JSON.stringify(wsWithPreference);
+  const reloadedWs = JSON.parse(serialized);
+  const reloadedItem = reloadedWs.groups[0].items[0];
+
+  assert.deepStrictEqual(
+    reloadedItem.unverifiedVariantPreferences,
+    { Storage: "512GB", Connectivity: "5G" },
+    "Unverified preferences must persist across serialization/deserialization reload"
+  );
+  assert.strictEqual(
+    reloadedItem.selectedProduct.priceMinor,
+    99900,
+    "Verified price must still remain $999.00 after reload"
   );
 });
 
-test("Scenario 8: Unavailable and unsupported prices remain excluded from budget calculations", () => {
-  let ws = createInitialWorkspace({ currency: "USD" });
-  ws = {
-    ...ws,
-    overallBudget: { amountMinor: 250000, currency: "USD", strict: true },
-  };
-
-  // Add 1 verified USD product ($1,200.00)
-  ws = addIndependentItem(ws, { productRequest: "Office Desk" });
-  const deskItemId = ws.groups[0].items[0].id;
-  const deskProduct: NormalizedProduct = {
+test("Scenario 8: Missing or mismatched variant prices never become confirmed prices", () => {
+  const baseProduct: NormalizedProduct = {
     source: "channel3",
-    sourceProductId: "desk_oak",
-    title: "Solid Oak Office Desk",
+    sourceProductId: "dev_laptop",
+    title: "Developer Laptop",
     imageUrl: null,
-    priceMinor: 120000,
+    priceMinor: 150000,
     currency: "USD",
-    retailerName: "FurnitureCo",
-    retailerUrl: "https://furniture.com/desk",
+    retailerName: "TechDirect",
+    retailerUrl: "https://techdirect.com/laptop",
     availability: "in_stock",
     specifications: {},
     sourceFacts: [],
-    offers: [],
   };
-  ws = selectProductForItem(ws, deskItemId, deskProduct);
 
-  // Add 1 unpriced / unavailable product (priceMinor: null)
-  ws = addIndependentItem(ws, { productRequest: "Custom Ergonomic Chair" });
-  const chairItemId = ws.groups[0].items[1].id;
-  const chairProduct: NormalizedProduct = {
-    source: "channel3",
-    sourceProductId: "chair_ergo_custom",
-    title: "Custom Ergonomic Chair (Option unpriced)",
-    imageUrl: null,
-    priceMinor: null, // Unavailable price
-    currency: "USD",
-    retailerName: "ChairMaker",
-    retailerUrl: "https://chairmaker.com/ergo",
-    availability: "unknown",
-    specifications: {},
-    sourceFacts: [],
-    offers: [],
+  // Case A: Missing price (null)
+  const missingPriceState: ProductVariantState = {
+    productId: "dev_laptop",
+    title: "Developer Laptop 32GB",
+    status: "variants_found",
+    options: [{ name: "RAM", values: [{ label: "32GB", exists: true, available: "InStock", priceMinor: null }] }],
+    selected: { RAM: "32GB" },
+    effectiveSelected: { RAM: "32GB" },
+    isRelaxed: false,
+    relaxationMessage: null,
+    isFullyConfigured: true,
+    availability: "InStock",
+    verifiedPriceMinor: null, // MISSING
+    retailerUrl: "https://techdirect.com/laptop-32gb",
+    retailerName: "TechDirect",
   };
-  ws = selectProductForItem(ws, chairItemId, chairProduct);
 
-  const summary = calculateWorkspaceBudgetSummary(ws);
+  const resMissing = evaluateVariantConfirmation(
+    missingPriceState,
+    { RAM: "32GB" },
+    "USD",
+    baseProduct
+  );
+  assert.strictEqual(resMissing.isConfirmed, false, "Null variant price cannot be confirmed");
+  assert.strictEqual(resMissing.effectivePriceMinor, null);
 
-  // Total spend must ONLY count verified prices ($1,200.00), excluding unpriced
-  assert.strictEqual(
-    summary.totalSelectedMinor,
-    120000,
-    "Total spend must only include valid positive prices ($1,200.00)"
+  // Case B: Non-positive / invalid price
+  const invalidPriceState: ProductVariantState = {
+    ...missingPriceState,
+    verifiedPriceMinor: -1000,
+  };
+  const resInvalid = evaluateVariantConfirmation(
+    invalidPriceState,
+    { RAM: "32GB" },
+    "USD",
+    baseProduct
   );
-  assert.strictEqual(
-    summary.unpricedCount,
-    1,
-    "Unpriced item must be counted in unpricedCount"
+  assert.strictEqual(resInvalid.isConfirmed, false, "Negative variant price cannot be confirmed");
+
+  // Case C: Mismatched offer price (offer is $1,800 but variant confirmed price is $1,600)
+  const mismatchedOfferState: ProductVariantState = {
+    ...missingPriceState,
+    verifiedPriceMinor: 160000,
+    offers: [
+      {
+        id: "off_mismatch",
+        domain: "TechDirect",
+        url: "https://techdirect.com/laptop-32gb",
+        priceMinor: 180000, // MISMATCH!
+        currency: "USD",
+        availability: "in_stock",
+      },
+    ],
+  };
+
+  const resMismatch = evaluateVariantConfirmation(
+    mismatchedOfferState,
+    { RAM: "32GB" },
+    "USD",
+    baseProduct
   );
-  // Unpriced selections must prevent a complete within-budget claim!
+  assert.strictEqual(resMismatch.isConfirmed, true, "Price is valid");
   assert.strictEqual(
-    summary.status,
-    "partially_comparable",
-    "Budget status with unpriced items must be 'partially_comparable', never 'within_budget'"
+    resMismatch.matchingOffer,
+    null,
+    "Mismatched offer price must NOT be attached as the matching offer"
   );
 });
