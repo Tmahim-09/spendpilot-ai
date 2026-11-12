@@ -393,6 +393,62 @@ export async function retrieveProductVariants(
       }
     }
 
+    // Retry URL resolution when the product detail response omits variant dimensions.
+    // Only accept options returned by Channel3; never infer or fabricate choices.
+    if (
+      product &&
+      !product.variants?.options?.length &&
+      client &&
+      retailerUrl &&
+      /^https?:\/\//i.test(retailerUrl)
+    ) {
+      try {
+        const lookupRes = await client.products.lookup({ url: retailerUrl });
+        const lookupRoot = lookupRes as unknown as {
+          product?: Channel3Api.Product;
+          response?: unknown;
+          data?: Channel3Api.Product;
+          id?: string;
+        };
+        const responseValue = lookupRoot.response;
+        const responseProduct =
+          responseValue && typeof responseValue === "object"
+            ? (
+                "product" in responseValue
+                  ? (responseValue as { product?: Channel3Api.Product }).product
+                  : "id" in responseValue
+                    ? (responseValue as Channel3Api.Product)
+                    : undefined
+              )
+            : undefined;
+        const lookupProduct =
+          lookupRoot.product ||
+          responseProduct ||
+          lookupRoot.data ||
+          (lookupRoot.id ? (lookupRoot as Channel3Api.Product) : null);
+
+        if (lookupProduct?.variants?.options?.length) {
+          product = lookupProduct;
+        } else if (lookupProduct?.id && lookupProduct.id !== product.id) {
+          const retryRes = await client.products.retrieve({
+            product_id: lookupProduct.id,
+            selected_options:
+              selectedOptions && Object.keys(selectedOptions).length > 0
+                ? selectedOptions
+                : undefined,
+            currency: currency as Channel3Api.CurrencyCode,
+          });
+          const retryProduct =
+            (retryRes as unknown as { response?: Channel3Api.Product }).response ?? retryRes;
+          if ((retryProduct as Channel3Api.Product)?.variants?.options?.length) {
+            product = retryProduct as Channel3Api.Product;
+          }
+        }
+      } catch {
+        // Keep the original product response and provide the retailer fallback in the UI.
+      }
+    }
+
     if (!product) {
       return {
         productId,
