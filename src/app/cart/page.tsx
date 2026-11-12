@@ -492,13 +492,13 @@ export default function CartPage() {
                   Multi-Seller Sandbox Checkout
                 </h3>
                 <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
-                  Looking to evaluate our server-authoritative multi-seller split capture integration with the PayPal Orders v2 API? Visit our dedicated PayPal Sandbox demonstration to test multi-seller split checkout across distinct merchants using mock funds.
+                  This is a separate Sandbox test with four fixed sample products and two test seller accounts. It does not charge the products in this cart or send money to the retailers listed above. Real retailer purchases still happen on each retailer's own checkout page. To take one PayPal payment and split it to real retailers, each retailer must join SpendPilot through PayPal's marketplace seller onboarding and authorize your platform. A Channel3 product link by itself cannot receive a PayPal payment.
                 </p>
                 <Link
                   href="/paypal-demo"
                   className="btn-3d-primary w-full py-2.5 text-xs font-bold rounded-xl flex items-center justify-center gap-2 text-white"
                 >
-                  <span>Launch PayPal Multi-Seller Demo</span>
+                  <span>Open PayPal Sandbox Demo</span>
                   <ArrowRight className="h-4 w-4" />
                 </Link>
               </div>
