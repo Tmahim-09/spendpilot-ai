@@ -492,7 +492,7 @@ export default function CartPage() {
                   Multi-Seller Sandbox Checkout
                 </h3>
                 <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
-                  This is a separate Sandbox test with four fixed sample products and two test seller accounts. It does not charge the products in this cart or send money to the retailers listed above. Real retailer purchases still happen on each retailer's own checkout page. To take one PayPal payment and split it to real retailers, each retailer must join SpendPilot through PayPal's marketplace seller onboarding and authorize your platform. A Channel3 product link by itself cannot receive a PayPal payment.
+                  This is a separate Sandbox test with four fixed sample products and two test seller accounts. It does not charge the products in this cart or send money to the retailers listed above. Real retailer purchases still happen on each retailer&apos;s own checkout page. To take one PayPal payment and split it to real retailers, each retailer must join SpendPilot through PayPal&apos;s marketplace seller onboarding and authorize your platform. A Channel3 product link by itself cannot receive a PayPal payment.
                 </p>
                 <Link
                   href="/paypal-demo"
