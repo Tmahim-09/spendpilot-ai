@@ -963,7 +963,7 @@ export function extractDeterministicPatches(
 
   // 5. Dynamic open-world item name & category extraction
   let inferredItem = msg
-    .replace(/^.*?\b(?:i need to shop for upcoming winter season\.\s*we can start with|we can start with|i need|looking for|find me|can you find|search for|i want|i'm looking for)\s+/i, "")
+    .replace(/^.*?\b(?:i need to shop for upcoming winter season\.\s*we can start with|we can start with|i need|looking for|find me|can you find|search for|i want|i'm looking for|asking for a|asking for|get me)\s+/i, "")
     .replace(/\b(?:within|under|below|less than|budget of|my budget is)\s+\$?[0-9,.]+\s*(?:usd|eur|gbp)?\b/i, "")
     .replace(/\b(?:for my apartment|for my home|for university|for work|for college)\b/i, "")
     .trim();
@@ -1012,7 +1012,9 @@ export function extractDeterministicPatches(
     extractedPurposes.push("photography");
   }
 
-  const displayName = inferredItem.charAt(0).toUpperCase() + inferredItem.slice(1);
+  const displayName = lower.includes("macbook")
+    ? "MacBook"
+    : inferredItem.charAt(0).toUpperCase() + inferredItem.slice(1);
   const reqId = `req_${Date.now()}_${inferredItem.slice(0, 10).replace(/[^a-z0-9]/gi, "_")}`;
 
   patches.push({ type: "set_mode", mode: "single_product" });
@@ -1210,7 +1212,8 @@ export function extractDeterministicPatches(
       };
     }
 
-    const isSpecific = /\b(?:m1|m2|m3|thinkpad|dell xps|16gb|macbook air)\b/i.test(lower);
+    const isMacBook = /\bmacbook\b/i.test(lower);
+    const isSpecific = isMacBook || hasOs || /\b(?:m1|m2|m3|thinkpad|dell xps|16gb|macbook air)\b/i.test(lower);
     if (!isSpecific) {
       patches.push({
         type: "create_requirement",
@@ -1504,6 +1507,8 @@ export function extractDeterministicPatches(
     specificConstraints.push({ id: `c_os_${Date.now()}`, key: "os", value: "Windows", source: "user_explicit", strength: "hard" });
   } else if (/macos|macbook/i.test(lower)) {
     specificConstraints.push({ id: `c_os_${Date.now()}`, key: "os", value: "macOS", source: "user_explicit", strength: "hard" });
+    specificConstraints.push({ id: `c_brand_${Date.now()}`, key: "brand", value: "Apple", source: "user_explicit", strength: "hard" });
+    specificConstraints.push({ id: `c_family_${Date.now()}`, key: "product_family", value: "MacBook", source: "user_explicit", strength: "hard" });
   }
   if (/16gb/i.test(lower)) {
     specificConstraints.push({ id: `c_ram_${Date.now()}`, key: "ram", value: "16GB", source: "user_explicit", strength: "hard" });

@@ -172,7 +172,9 @@ export async function* streamConciergeTurn(
 
   const isAck = isConversationalAcknowledgement(userMessage);
   const canSearch = questionEval.canProceedToSearch;
-  const isSearchAction = orchestratorResult.suggestedAction === "start_product_search";
+  const isSearchAction =
+    orchestratorResult.suggestedAction === "start_product_search" ||
+    (orchestratorResult.suggestedAction === "start_new_task" && orchestratorResult.isReadyForSearch);
   const shouldExecuteSearch = !isAck && (isSearchAction || canSearch) && !nextQuestion;
 
   yield {
@@ -260,7 +262,10 @@ export async function* streamConciergeTurn(
           orchestratorResult.assistantMessage || getRandomSearchingText()
         );
         if (
-          (orchestratorResult.suggestedAction === "start_product_search" || shouldExecuteSearch || isJsonSearchAction) &&
+          (orchestratorResult.suggestedAction === "start_product_search" ||
+            orchestratorResult.suggestedAction === "start_new_task" ||
+            shouldExecuteSearch ||
+            isJsonSearchAction) &&
           (/what specific preferences|what details matter most|ready to help you find what you need/i.test(fullAccumulatedText) ||
             /\?$/.test(fullAccumulatedText.trim()))
         ) {
@@ -371,7 +376,10 @@ export async function* streamConciergeTurn(
             orchestratorResult.assistantMessage || getRandomSearchingText()
           );
           if (
-            (orchestratorResult.suggestedAction === "start_product_search" || shouldExecuteSearch || isJsonSearchAction) &&
+            (orchestratorResult.suggestedAction === "start_product_search" ||
+              orchestratorResult.suggestedAction === "start_new_task" ||
+              shouldExecuteSearch ||
+              isJsonSearchAction) &&
             (/what specific preferences|what details matter most|ready to help you find what you need/i.test(fullAccumulatedText) ||
               /\?$/.test(fullAccumulatedText.trim()))
           ) {
