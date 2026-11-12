@@ -803,14 +803,33 @@ export function ProductVariantConfigurator({
               <ExternalLink className="h-3 w-3" />
             </a>
           </div>
+        ) : !isLoading && variantState?.status === "no_variants_verified" ? (
+          <div className="my-3 py-4 px-4 rounded-xl border border-[#382b1d] bg-[#16120d] text-xs text-[#D4D4D4] space-y-2">
+            <div className="flex items-center gap-2 text-[#F5B942] font-semibold">
+              <Info className="h-4 w-4 shrink-0" />
+              <span>Retailer Options Not Indexed</span>
+            </div>
+            <p className="text-[#A3A3A3] leading-relaxed">
+              Channel3 did not return selectable options for this listing. The retailer may still offer different storage, size, color, or other choices. SpendPilot will not invent those options or attach an unverified price to them.
+            </p>
+            <a
+              href={variantState?.retailerUrl || product.retailerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs text-[#FF8126] hover:text-[#FFA057] transition-colors font-medium pt-1"
+            >
+              <span>Check available options on {variantState?.retailerName || product.retailerName || "the retailer website"}</span>
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
         ) : !isLoading ? (
           <div className="my-3 py-4 px-4 rounded-xl border border-[#222222] bg-[#141414] text-xs text-[#A3A3A3] space-y-2">
             <div className="flex items-center gap-2 text-[#F5F5F5] font-semibold">
               <Info className="h-4 w-4 text-[#69A8FF] shrink-0" />
-              <span>Standard Product Configuration</span>
+              <span>Configuration Status</span>
             </div>
             <p className="text-[#8E8E8E] leading-relaxed">
-              This product is available in its standard verified configuration.
+              No additional configuration data is available for this listing.
             </p>
           </div>
         ) : null}

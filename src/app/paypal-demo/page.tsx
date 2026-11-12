@@ -110,14 +110,38 @@ export default function PayPalDemoPage() {
       setIsSdkLoading(true);
       setCheckoutError(null);
 
-      // Collect merchant IDs for multi-seller checkout
-      const merchantIds = paypalConfig.sellers
-        .map((s) => s.merchantId)
-        .filter((id) => Boolean(id && id.trim()));
+      // Load only the seller accounts represented in the current demo cart.
+      const requiredSellerIds = Array.from(new Set(selectedItems.map((item) => item.product.sellerId)));
+      const requiredSellers = paypalConfig.sellers.filter((seller) =>
+        requiredSellerIds.includes(seller.id)
+      );
+      const missingSellerIds = requiredSellerIds.filter((sellerId) => {
+        const seller = requiredSellers.find((candidate) => candidate.id === sellerId);
+        return !seller?.merchantId?.trim();
+      });
 
-      if (merchantIds.length === 0) {
+      if (missingSellerIds.length > 0) {
+        const environmentVariableBySeller: Record<string, string> = {
+          seller_a: "PAYPAL_DEMO_SELLER_A_MERCHANT_ID",
+          seller_b: "PAYPAL_DEMO_SELLER_B_MERCHANT_ID",
+        };
+        const missingVariables = missingSellerIds
+          .map((sellerId) => environmentVariableBySeller[sellerId] || sellerId.toUpperCase() + "_MERCHANT_ID")
+          .join(", ");
         throw new Error(
-          "No Sandbox merchant IDs configured. Set PAYPAL_DEMO_SELLER_A_MERCHANT_ID and PAYPAL_DEMO_SELLER_B_MERCHANT_ID in .env.local."
+          "PayPal Sandbox checkout is not configured for the selected demo seller(s). Add " +
+          missingVariables +
+          " in Vercel Project Settings → Environment Variables (or .env.local for local development), then redeploy. No payment has been created."
+        );
+      }
+
+      const merchantIds = requiredSellerIds.map((sellerId) =>
+        requiredSellers.find((seller) => seller.id === sellerId)!.merchantId!.trim()
+      );
+
+      if (new Set(merchantIds).size !== merchantIds.length) {
+        throw new Error(
+          "Each demo seller must have a different PayPal Sandbox Merchant ID. Configure two distinct Sandbox Business accounts before testing split checkout."
         );
       }
 
@@ -308,8 +332,9 @@ export default function PayPalDemoPage() {
               PayPal Sandbox Demonstration
             </h2>
             <p className="text-xs sm:text-sm text-[#D4D4D4] leading-relaxed">
-              These are test products and transactions. This demonstration does not place
-              orders with actual retailers or arrange physical delivery.
+              These are fixed sample products for a Sandbox payment test. They are not imported
+              from your shopping list, do not place orders with actual retailers, and do
+              not arrange physical delivery.
             </p>
             <p className="text-[11px] text-[#A3A3A3] pt-1">
               Demonstrates a single PayPal Orders v2 checkout capturing funds across{" "}

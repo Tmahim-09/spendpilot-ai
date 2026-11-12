@@ -354,6 +354,75 @@ export function extractDeterministicPatches(
       };
     }
 
+    // MacBook primary-use answer (e.g. "Programming & university").
+    // Store this as a use-case preference instead of a generic free-form attribute.
+    if (
+      activeReq.category === "laptop" &&
+      /\b(?:programming|coding|software development|developer|university|college|student|study|creative work|video editing|photo editing|design|everyday productivity|business|professional work|gaming|travel)\b/i.test(lower)
+    ) {
+      const isProgramming = /\b(?:programming|coding|software development|developer)\b/i.test(lower);
+      const isUniversity = /\b(?:university|college|student|study)\b/i.test(lower);
+      const isCreative = /\b(?:creative work|video editing|photo editing|design)\b/i.test(lower);
+      const isGaming = /\bgaming\b/i.test(lower);
+      const isBusiness = /\b(?:business|professional work)\b/i.test(lower);
+      const primaryUse = isProgramming && isUniversity
+        ? "Programming & university"
+        : isProgramming
+          ? "Programming & development"
+          : isUniversity
+            ? "University & productivity"
+            : isCreative
+              ? "Creative work & editing"
+              : isGaming
+                ? "Gaming"
+                : isBusiness
+                  ? "Business & professional work"
+                  : /\btravel\b/i.test(lower)
+                    ? "Travel & portability"
+                    : "Everyday productivity";
+
+      const updatedPurpose = Array.from(new Set([...(activeReq.purpose || []), primaryUse]));
+      const existingQuery = activeReq.searchQuery || activeReq.displayName || "laptop";
+      const nextSearchQuery = existingQuery.toLowerCase().includes(primaryUse.toLowerCase())
+        ? existingQuery
+        : existingQuery + " " + primaryUse;
+
+      patches.push({
+        type: "add_constraint",
+        requirementId: activeReq.id,
+        constraint: {
+          id: "c_primary_use_" + Date.now(),
+          key: "primary_use",
+          value: primaryUse,
+          source: "user_explicit",
+          strength: "soft",
+        },
+      });
+      patches.push({
+        type: "update_requirement",
+        requirementId: activeReq.id,
+        updates: {
+          purpose: updatedPurpose,
+          searchQuery: nextSearchQuery,
+        },
+      });
+      patches.push({ type: "set_status", status: "ready_to_search" });
+
+      return {
+        action: "start_product_search",
+        assistantMessage:
+          "Got it. I'll prioritize " +
+          (activeReq.displayName || "MacBook") +
+          " for " +
+          primaryUse.toLowerCase() +
+          " and compare matching Apple models by performance, portability, memory, and price using the available retailer details.",
+        patches,
+        clarification: null,
+        question: null,
+        suggestedReplies: ["Show results"],
+      };
+    }
+
     // Laptop Turn 2 (e.g. "macOS, Apple MacBook", "macOS")
     if (/\b(?:macos|macbook|apple|windows|chromeos)\b/i.test(lower) && activeReq.category === "laptop") {
       const isMac = /\b(?:macos|macbook|apple)\b/i.test(lower);

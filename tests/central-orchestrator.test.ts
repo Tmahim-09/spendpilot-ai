@@ -112,6 +112,55 @@ describe("SpendPilot Phase 1: Central Shopping Orchestrator & Shopping Brief (Te
     assert.strictEqual(validateShoppingBrief(brief).success, true);
   });
 
+  test("MacBook-only requests retain Apple identity and ask one useful usage question", async () => {
+    const result = await orchestrateShoppingTurn({
+      userMessage: "I need a MacBook.",
+      activeSessionId: "sess_macbook_identity",
+    });
+
+    assert.strictEqual(result.brief.productRequirements.length, 1);
+    const requirement = result.brief.productRequirements[0];
+    assert.strictEqual(requirement.category, "laptop");
+    assert.match(requirement.displayName.toLowerCase(), /macbook/);
+
+    const constraints = new Map(requirement.constraints.map((constraint) => [constraint.key, constraint]));
+    assert.strictEqual(constraints.get("operating_system")?.value, "macOS");
+    assert.strictEqual(constraints.get("manufacturer")?.value, "Apple");
+    assert.strictEqual(constraints.get("product_family")?.value, "MacBook");
+
+    const questionText = result.question?.text || result.clarification?.question || "";
+    assert.match(questionText, /use your macbook/i);
+    assert.strictEqual(result.suggestedAction, "ask_question");
+  });
+
+  test("MacBook usage quick reply is recorded and starts an Apple-focused search", async () => {
+    const firstTurn = await orchestrateShoppingTurn({
+      userMessage: "I need a MacBook.",
+      activeSessionId: "sess_macbook_usage",
+    });
+
+    const secondTurn = await orchestrateShoppingTurn({
+      userMessage: "Programming & university",
+      activeBrief: firstTurn.brief,
+      activeTaskId: firstTurn.taskId,
+      answeredQuestionId: "q_macbook_primary_use",
+      activeSessionId: "sess_macbook_usage",
+    });
+
+    const requirement = secondTurn.brief.productRequirements[0];
+    assert.ok(requirement.purpose.includes("Programming & university"));
+    assert.match(requirement.searchQuery, /macbook/i);
+    assert.match(requirement.searchQuery, /programming & university/i);
+    assert.ok(
+      requirement.constraints.some(
+        (constraint) => constraint.key === "primary_use" &&
+          constraint.value === "Programming & university"
+      )
+    );
+    assert.strictEqual(secondTurn.suggestedAction, "start_product_search");
+    assert.strictEqual(secondTurn.question, null);
+  });
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Test C: Gaming setup
   // ─────────────────────────────────────────────────────────────────────────────
