@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { loadScript } from "@paypal/paypal-js";
@@ -42,6 +42,7 @@ export default function PayPalDemoPage() {
   const activeCheckoutTokenRef = useRef<string | null>(null);
   const paypalContainerRef = useRef<HTMLDivElement>(null);
   const paypalButtonsInstanceRef = useRef<{ close?: () => Promise<void> } | null>(null);
+  const paypalRenderGenerationRef = useRef(0);
 
   // Fetch public PayPal Sandbox configuration
   useEffect(() => {
@@ -63,12 +64,16 @@ export default function PayPalDemoPage() {
   }, []);
 
   // Compute cart items & subtotals per seller
-  const selectedItems = Object.entries(cartQuantities)
-    .filter(([, qty]) => qty > 0)
-    .map(([skuId, qty]) => {
-      const prod = DEMO_PRODUCTS.find((p) => p.skuId === skuId)!;
-      return { product: prod, quantity: qty };
-    });
+  const selectedItems = useMemo(
+    () =>
+      Object.entries(cartQuantities)
+        .filter(([, qty]) => qty > 0)
+        .map(([skuId, qty]) => {
+          const prod = DEMO_PRODUCTS.find((p) => p.skuId === skuId)!;
+          return { product: prod, quantity: qty };
+        }),
+    [cartQuantities]
+  );
 
   const sellerAItems = selectedItems.filter((i) => i.product.sellerId === "seller_a");
   const sellerBItems = selectedItems.filter((i) => i.product.sellerId === "seller_b");
@@ -95,6 +100,7 @@ export default function PayPalDemoPage() {
 
   // Render or re-render PayPal Buttons when configuration and cart change
   const renderPayPalButtons = useCallback(async () => {
+    const renderGeneration = ++paypalRenderGenerationRef.current;
     if (!paypalConfig || !paypalContainerRef.current) return;
 
     // Check if at least 1 item exists in cart
@@ -155,11 +161,15 @@ export default function PayPalDemoPage() {
         components: "buttons",
       });
 
+      if (renderGeneration !== paypalRenderGenerationRef.current || !paypalContainerRef.current) {
+        return;
+      }
+
       if (!paypal || !paypal.Buttons) {
         throw new Error("PayPal JavaScript SDK failed to initialize buttons.");
       }
 
-      // Clean up previous buttons instance if any
+      // Clean up previous buttons instance before mounting a replacement.
       if (paypalButtonsInstanceRef.current) {
         try {
           if (typeof paypalButtonsInstanceRef.current.close === "function") {
@@ -171,8 +181,9 @@ export default function PayPalDemoPage() {
         paypalButtonsInstanceRef.current = null;
       }
 
-      if (!paypalContainerRef.current) return;
-      paypalContainerRef.current.innerHTML = "";
+      if (renderGeneration !== paypalRenderGenerationRef.current || !paypalContainerRef.current) {
+        return;
+      }
 
       const buttons = paypal.Buttons({
         style: {
@@ -260,14 +271,30 @@ export default function PayPalDemoPage() {
         },
       });
 
-      if (paypalContainerRef.current) {
-        await buttons.render(paypalContainerRef.current);
-        paypalButtonsInstanceRef.current = buttons;
+      if (renderGeneration !== paypalRenderGenerationRef.current || !paypalContainerRef.current) {
+        await buttons.close?.().catch(() => undefined);
+        return;
+      }
+
+      // Track the instance before render so effect cleanup can close it if the
+      // cart changes or the page unmounts while PayPal is mounting its iframes.
+      paypalButtonsInstanceRef.current = buttons;
+      await buttons.render(paypalContainerRef.current);
+
+      if (renderGeneration !== paypalRenderGenerationRef.current) {
+        await buttons.close?.().catch(() => undefined);
+        if (paypalButtonsInstanceRef.current === buttons) {
+          paypalButtonsInstanceRef.current = null;
+        }
       }
     } catch (err) {
-      setCheckoutError(err instanceof Error ? err.message : "SDK loading failure");
+      if (renderGeneration === paypalRenderGenerationRef.current) {
+        setCheckoutError(err instanceof Error ? err.message : "SDK loading failure");
+      }
     } finally {
-      setIsSdkLoading(false);
+      if (renderGeneration === paypalRenderGenerationRef.current) {
+        setIsSdkLoading(false);
+      }
     }
   }, [paypalConfig, selectedItems]);
 
@@ -282,6 +309,14 @@ export default function PayPalDemoPage() {
       return () => {
         cancelled = true;
         clearTimeout(t);
+        // Invalidate any pending SDK load/render before the next cart render
+        // or unmount. Close the mounted instance without replacing its DOM.
+        paypalRenderGenerationRef.current += 1;
+        const currentButtons = paypalButtonsInstanceRef.current;
+        paypalButtonsInstanceRef.current = null;
+        if (currentButtons?.close) {
+          void currentButtons.close().catch(() => undefined);
+        }
       };
     }
   }, [paypalConfig, renderPayPalButtons, checkoutResult]);
