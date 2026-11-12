@@ -249,7 +249,7 @@ test("Laptop Flow: 'u suggest' triggers warm thinking & delegation response with
 
     const activeItem = getActiveWorkspaceItem(doneEvt.session.workspace);
     assert.ok(activeItem, "Active workspace item must exist");
-    assert.ok(activeItem.displayName.includes("MacBook"), "Display name must be MacBook");
+    assert.ok(Boolean(activeItem.displayName && activeItem.displayName.includes("MacBook")), "Display name must be MacBook");
     assert.equal(activeItem.individualBudget?.amountMinor, 120000);
     assert.equal(activeItem.individualBudget?.currency, "USD");
   });
