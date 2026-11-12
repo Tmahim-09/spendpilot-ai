@@ -25,8 +25,8 @@ function enforceExplicitMacBookIdentity(
   const message = userMessage.trim();
   const explicitlyNamesMacBook = /\bmacbook\b/i.test(message);
   const negatesMacBook =
-    /\b(?:not|no|without|exclude|excluding|instead of|rather than)\b.{0,24}\bmacbook\b/i.test(message) ||
-    /\bmacbook\b.{0,24}\b(?:not|excluded|rather than)\b/i.test(message);
+    /\b(?:not|no|without|exclude|excluding|avoid|do not want|don't want|not looking for|not interested in|instead of|rather than)\b.{0,32}\bmacbook\b/i.test(message) ||
+    /\bmacbook\b.{0,24}\b(?:excluded|not wanted|not needed|not interested in|not what i want|avoid)\b/i.test(message);
   const comparesPlatforms =
     /\bmacbook\b.{0,40}\b(?:vs\.?|versus|or)\b.{0,28}\b(?:windows|chromebook|chromeos|linux|pc)\b/i.test(message) ||
     /\b(?:windows|chromebook|chromeos|linux|pc)\b.{0,40}\b(?:vs\.?|versus|or)\b.{0,28}\bmacbook\b/i.test(message);
