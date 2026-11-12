@@ -477,12 +477,12 @@ export function LiveProductResults({
           <div className="flex items-center justify-between pb-2">
             <div className="space-y-0.5">
               <div className="flex items-center gap-2">
-                <Layers className="h-4 w-4 text-[#FF6A00] dark:text-[#888888]" />
+                <Layers className="h-4 w-4 text-[#FF6A00] dark:text-[#FF8126]" />
                 <h3 className="text-base sm:text-lg font-bold text-zinc-900 dark:text-[#F5F5F5]">
                   {comparison && aiStatus === "complete" ? "Product Details & Retailer Offers" : "Verified Retailer Offers"}
                 </h3>
               </div>
-              <p className="text-xs text-zinc-500 dark:text-[#737373]">
+              <p className="text-xs text-zinc-500 dark:text-[#A1A1AA]">
                 Direct links to verified merchant stores &bull; Prices and stock confirmed at merchant checkout
               </p>
             </div>
@@ -509,14 +509,14 @@ export function LiveProductResults({
         </section>
 
         {/* Transparent Policy & Merchant Notice */}
-        <div className="rounded-xl border border-orange-200 dark:border-[#222222] bg-[#FFF9F3] dark:bg-[#0e0e0e] p-4 text-xs text-zinc-600 dark:text-[#888888] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="rounded-xl border border-orange-200 dark:border-[#222222] bg-[#FFF9F3] dark:bg-[#0e0e0e] p-4 text-xs text-zinc-600 dark:text-[#D4D4D8] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <ShieldAlert className="h-4 w-4 text-[#F5B942] shrink-0" />
             <span>
               Prices and merchant stock availability are retrieved via Channel3 and confirmed directly on each retailer&apos;s site.
             </span>
           </div>
-          <span className="shrink-0 text-[11px] text-zinc-500 dark:text-[#737373]">
+          <span className="shrink-0 text-[11px] text-zinc-500 dark:text-[#A1A1AA]">
             Direct merchant referral links &bull; No markups or hidden fees
           </span>
         </div>

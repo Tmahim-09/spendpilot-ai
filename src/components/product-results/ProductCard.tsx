@@ -94,7 +94,7 @@ export function ProductCard({
     <article
       className={`flex flex-col justify-between rounded-2xl border p-4 sm:p-4.5 transition-all shadow-lg ${
         isTopPick
-          ? "border-orange-300 dark:border-[#FF6A00]/50 bg-gradient-to-b from-orange-50/90 via-white to-orange-50/40 dark:from-[#18130e] dark:to-[#0f0d0a] shadow-[0_8px_30px_-8px_rgba(255,106,0,0.18)] ring-1 ring-orange-400/40 dark:ring-[#FF6A00]/25"
+          ? "border-orange-300 dark:border-[#FF6A00]/60 bg-gradient-to-b from-orange-50/90 via-white to-orange-50/40 dark:from-[#161618] dark:to-[#0e0e10] shadow-[0_8px_30px_-8px_rgba(255,106,0,0.18)] dark:shadow-[0_8px_30px_-8px_rgba(255,106,0,0.25)] ring-1 ring-orange-400/40 dark:ring-[#FF6A00]/30"
           : "border-orange-200/80 dark:border-[#262626] bg-white dark:bg-gradient-to-b dark:from-[#141414] dark:to-[#0e0e0e] hover:border-orange-400 dark:hover:border-[#383838] hover:shadow-md"
       }`}
     >
@@ -122,7 +122,7 @@ export function ProductCard({
               <span>Unverified Option</span>
             </span>
           ) : (
-            <span className="text-[11px] text-zinc-600 dark:text-[#737373] font-bold flex items-center gap-1">
+            <span className="text-[11px] text-zinc-600 dark:text-[#A1A1AA] font-bold flex items-center gap-1">
               <Tag className="h-3 w-3 text-[#FF6A00]" />
               <span className="truncate max-w-[120px]">{product.brand || "Catalog Option"}</span>
             </span>
@@ -132,7 +132,7 @@ export function ProductCard({
             className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${
               product.availability === "in_stock"
                 ? "text-[#35C979] bg-[#35C979]/10 border border-[#35C979]/20"
-                : "text-zinc-500 dark:text-[#888888] bg-zinc-100 dark:bg-[#1a1a1a] border border-zinc-200 dark:border-[#282828]"
+                : "text-zinc-600 dark:text-[#A1A1AA] bg-zinc-100 dark:bg-[#1a1a1a] border border-zinc-200 dark:border-[#282828]"
             }`}
           >
             {product.availability === "in_stock" && <Check className="h-2.5 w-2.5" />}
@@ -156,14 +156,14 @@ export function ProductCard({
           ) : (
             <div className="flex flex-col items-center justify-center gap-1.5 text-zinc-400 dark:text-[#525252]">
               <ShoppingBag className="h-8 w-8 text-zinc-300 dark:text-[#333333]" aria-hidden="true" />
-              <span className="text-[10px] text-zinc-500 dark:text-[#737373]">Merchant Image</span>
+              <span className="text-[10px] text-zinc-500 dark:text-[#A1A1AA]">Merchant Image</span>
             </div>
           )}
         </div>
 
         {/* Brand & Title */}
         <div className="mb-2">
-          <span className="text-[11px] text-zinc-500 dark:text-[#888888] font-bold block truncate mb-0.5">
+          <span className="text-[11px] text-zinc-600 dark:text-[#D4D4D8] font-bold block truncate mb-0.5">
             {product.brand || product.retailerName || "Retailer Option"}
           </span>
           <h3 className="text-sm font-bold text-zinc-900 dark:text-[#F5F5F5] line-clamp-2 leading-snug" title={product.title}>
@@ -180,17 +180,17 @@ export function ProductCard({
                   {hasMultipleOffers ? `From ${startingPrice}` : startingPrice}
                 </span>
                 {compareAtPrice && (
-                  <span className="text-xs text-zinc-400 dark:text-[#737373] line-through tabular-nums">
+                  <span className="text-xs text-zinc-400 dark:text-[#A1A1AA] line-through tabular-nums">
                     {compareAtPrice}
                   </span>
                 )}
               </>
             ) : (
-              <span className="text-xs font-bold text-zinc-600 dark:text-[#A3A3A3]">
+              <span className="text-xs font-bold text-zinc-600 dark:text-[#D4D4D8]">
                 Check Merchant Price
               </span>
             )}
-            <span className="text-[10px] text-zinc-500 dark:text-[#737373] font-mono">
+            <span className="text-[10px] text-zinc-500 dark:text-[#A1A1AA] font-mono">
               {productCurrency}
             </span>
             {isWithinBudget && (
@@ -200,7 +200,7 @@ export function ProductCard({
             )}
           </div>
 
-          <span className="text-[11px] text-zinc-500 dark:text-[#888888] truncate max-w-[110px]" title={activeOffer?.domain || product.retailerName || "Retailer"}>
+          <span className="text-[11px] text-zinc-500 dark:text-[#D4D4D8] truncate max-w-[110px]" title={activeOffer?.domain || product.retailerName || "Retailer"}>
             via {activeOffer?.domain || product.retailerName || "Retailer"}
           </span>
         </div>
@@ -211,7 +211,7 @@ export function ProductCard({
             {keySpecs.map((spec) => (
               <span
                 key={spec}
-                className="inline-block rounded-md border border-orange-200/80 dark:border-[#242424] bg-orange-50/60 dark:bg-[#141414] px-2 py-0.5 text-[10px] font-medium text-zinc-700 dark:text-[#A3A3A3] truncate max-w-full"
+                className="inline-block rounded-md border border-orange-200/80 dark:border-[#333333] bg-orange-50/60 dark:bg-[#1a1a1a] px-2 py-0.5 text-[10px] font-medium text-zinc-700 dark:text-[#E4E4E7] truncate max-w-full"
               >
                 {spec}
               </span>
@@ -224,7 +224,7 @@ export function ProductCard({
           <button
             type="button"
             onClick={() => setShowDetails(!showDetails)}
-            className="flex w-full items-center justify-between text-[11px] font-bold text-zinc-600 dark:text-[#888888] hover:text-zinc-900 dark:hover:text-[#D4D4D4] py-1 transition-colors"
+            className="flex w-full items-center justify-between text-[11px] font-bold text-zinc-600 dark:text-[#D4D4D8] hover:text-zinc-900 dark:hover:text-white py-1 transition-colors"
             aria-expanded={showDetails}
           >
             <span>{showDetails ? "Hide details & offers" : "Details & offers"}</span>
@@ -236,13 +236,13 @@ export function ProductCard({
           </button>
 
           {showDetails && (
-            <div className="mt-2 space-y-2.5 rounded-xl border border-orange-200/80 dark:border-[#242424] bg-[#FFF9F3] dark:bg-[#0c0c0c] p-3 text-xs animate-fadeIn">
+            <div className="mt-2 space-y-2.5 rounded-xl border border-orange-200/80 dark:border-[#2a2a2a] bg-[#FFF9F3] dark:bg-[#111111] p-3 text-xs animate-fadeIn">
               {product.explanation && (
                 <div className="space-y-1">
                   <span className="text-[10px] font-bold uppercase text-[#FF8126] block">
                     SpendPilot Insight:
                   </span>
-                  <p className="text-[11px] text-zinc-700 dark:text-[#D4D4D4] leading-relaxed">
+                  <p className="text-[11px] text-zinc-700 dark:text-[#F5F5F5] leading-relaxed">
                     {product.explanation}
                   </p>
                 </div>
@@ -258,7 +258,7 @@ export function ProductCard({
               {/* Multiple Merchant Offers */}
               {product.offers && product.offers.length > 0 && (
                 <div className="space-y-1.5 pt-1 border-t border-orange-100 dark:border-[#1a1a1a]">
-                  <span className="text-[10px] font-bold uppercase text-zinc-500 dark:text-[#737373] block">
+                  <span className="text-[10px] font-bold uppercase text-zinc-500 dark:text-[#A1A1AA] block">
                     Store Offers ({product.offers.length}):
                   </span>
                   {product.offers.map((offer, idx) => {
@@ -277,11 +277,11 @@ export function ProductCard({
                             ? "border-[#35C979]/40 bg-[#35C979]/10"
                             : isOfferOverBudget
                             ? "border-red-200/50 dark:border-red-900/30 bg-red-50/30 dark:bg-red-950/10"
-                            : "border-orange-200/70 dark:border-[#1e1e1e] bg-white dark:bg-[#121212]"
+                            : "border-orange-200/70 dark:border-[#262626] bg-white dark:bg-[#161616]"
                         }`}
                       >
                         <div className="flex items-center gap-1.5 truncate max-w-[140px]">
-                          <span className="font-bold text-zinc-800 dark:text-[#D4D4D4] truncate">
+                          <span className="font-bold text-zinc-800 dark:text-[#F5F5F5] truncate">
                             {offer.domain}
                           </span>
                           {isOfferOverBudget && (
@@ -341,14 +341,14 @@ export function ProductCard({
               {/* Full Specs */}
               {product.specifications && Object.keys(product.specifications).length > 0 && (
                 <div className="space-y-1 pt-1 border-t border-orange-100 dark:border-[#1a1a1a]">
-                  <span className="text-[10px] font-bold uppercase text-zinc-500 dark:text-[#737373] block">
+                  <span className="text-[10px] font-bold uppercase text-zinc-500 dark:text-[#A1A1AA] block">
                     Specifications:
                   </span>
                   <div className="space-y-1 text-[11px]">
                     {Object.entries(product.specifications).slice(0, 6).map(([k, v]) => (
-                      <div key={k} className="flex justify-between text-zinc-500 dark:text-[#888888]">
+                      <div key={k} className="flex justify-between text-zinc-500 dark:text-[#A1A1AA]">
                         <span className="truncate pr-2">{k}:</span>
-                        <span className="text-zinc-800 dark:text-[#D4D4D4] font-bold truncate max-w-[60%]">{v}</span>
+                        <span className="text-zinc-800 dark:text-[#F5F5F5] font-bold truncate max-w-[60%]">{v}</span>
                       </div>
                     ))}
                   </div>

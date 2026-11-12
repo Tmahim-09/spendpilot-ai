@@ -570,7 +570,7 @@ function extractDimensionsFromProduct(
         ]
       : product.colors && product.colors.length > 0
       ? Array.from(
-          new Set(product.colors.map((c) => findNearestColorName(c.hex, false)))
+          new Set(product.colors.map((c) => findNearestColorName(c.hex, isApple)))
         ).map((cName) => ({
           label: cName,
           exists: true,
