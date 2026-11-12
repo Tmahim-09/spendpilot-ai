@@ -71,6 +71,7 @@ export interface ShoppingItem {
   productRequest: string;
   category: string;
   displayName?: string;
+  requirementId?: string; // Explicit 1-to-1 link to ShoppingBrief ProductRequirement.id
   hardConstraints: Record<string, string | number | boolean>;
   preferences: Record<string, string | number | boolean>;
   individualBudget?: ShoppingItemBudget;
@@ -86,6 +87,7 @@ export interface ShoppingItem {
   selectedProduct?: NormalizedProduct | null;
   selectedOffer?: ProductOfferItem | null;
   selectedVariant?: Record<string, string>;
+  unverifiedVariantPreferences?: Record<string, Record<string, string>>;
   dependencies: string[]; // List of ShoppingItem IDs this item depends on
   compatibility?: ItemCompatibilityReport;
   answeredQuestionIds: string[];
@@ -120,25 +122,48 @@ export interface ShoppingWorkspace {
   updatedAt: number;
 }
 
+export type CurrencyTotals = Partial<Record<CurrencyCode, number>>;
+
+export type BudgetComparisonStatus =
+  | "no_budget"
+  | "within_budget"
+  | "over_budget"
+  | "partially_comparable"
+  | "not_comparable";
+
 export interface GroupBudgetSummary {
   groupId: string;
   groupTitle: string;
   currency: CurrencyCode;
   allocatedBudgetMinor: number | null;
+  budgetCurrency: CurrencyCode | null;
+  totalsByCurrency: CurrencyTotals;
+  selectedTotalInBudgetCurrencyMinor: number | null;
   selectedTotalMinor: number;
   remainingBudgetMinor: number | null;
+  status: BudgetComparisonStatus;
   isOverBudget: boolean;
   isStrict: boolean;
   itemCount: number;
   selectedCount: number;
+  foreignCurrencyTotals: CurrencyTotals;
+  unpricedCount: number;
+  unsupportedCurrencyCount: number;
 }
 
 export interface WorkspaceBudgetSummary {
   currency: CurrencyCode;
   overallBudgetMinor: number | null;
+  budgetCurrency: CurrencyCode | null;
+  totalsByCurrency: CurrencyTotals;
+  selectedTotalInBudgetCurrencyMinor: number | null;
   totalSelectedMinor: number;
   remainingMinor: number | null;
+  status: BudgetComparisonStatus;
   isOverBudget: boolean;
+  foreignCurrencyTotals: CurrencyTotals;
+  unpricedCount: number;
+  unsupportedCurrencyCount: number;
   groups: GroupBudgetSummary[];
 }
 

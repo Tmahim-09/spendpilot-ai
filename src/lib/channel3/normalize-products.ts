@@ -1,5 +1,6 @@
 import type { Channel3Api } from "@channel3/sdk";
 import type { NormalizedProduct, ProductOfferItem, CurrencyCode } from "@/types";
+import { isSupportedCurrency } from "@/lib/money";
 
 /**
  * Validates whether a given URL is a syntactically valid HTTP/HTTPS URL.
@@ -95,21 +96,41 @@ export function normalizeChannel3Product(
 
       const domain = (offer.domain && typeof offer.domain === "string" ? offer.domain.trim() : "") || "Verified Retailer";
 
-      // Price extraction
+      // Price extraction: validate raw prices are finite positive numbers
       const rawPrice = offer.price?.price;
-      const priceVal = typeof rawPrice === "number" && !isNaN(rawPrice) && rawPrice > 0 ? rawPrice : null;
-
-      if (priceVal === null) {
-        continue;
-      }
-
-      const priceMinor = Math.round(priceVal * 100);
+      const isValidPrice = typeof rawPrice === "number" && Number.isFinite(rawPrice) && rawPrice > 0;
+      const priceMinor = isValidPrice ? Math.round(rawPrice * 100) : 0;
 
       const rawCompare = offer.price?.compare_at_price;
-      const compareVal = typeof rawCompare === "number" && !isNaN(rawCompare) && rawCompare > 0 ? rawCompare : null;
-      const compareAtPriceMinor = compareVal ? Math.round(compareVal * 100) : null;
+      const isValidCompare = typeof rawCompare === "number" && Number.isFinite(rawCompare) && rawCompare > 0;
+      const compareAtPriceMinor = isValidCompare ? Math.round(rawCompare * 100) : null;
 
-      const curr = (offer.price?.currency?.toUpperCase() as CurrencyCode) || fallbackCurrency;
+      // Currency extraction & validation against supported currencies (USD, EUR, GBP)
+      const rawCurr = typeof offer.price?.currency === "string" ? offer.price.currency.trim().toUpperCase() : "";
+      let offerCurrency: string;
+      let isSupported = false;
+      let monetaryStatus: "valid" | "unsupported_currency" | "missing_currency" | "invalid_price";
+
+      if (!rawCurr) {
+        // Never guess when currency is omitted by provider
+        offerCurrency = "UNKNOWN";
+        isSupported = false;
+        monetaryStatus = "missing_currency";
+      } else if (isSupportedCurrency(rawCurr)) {
+        offerCurrency = rawCurr;
+        isSupported = true;
+        monetaryStatus = isValidPrice ? "valid" : "invalid_price";
+      } else {
+        // Preserve actual unsupported currency code (e.g. JPY, CAD) without casting to CurrencyCode
+        offerCurrency = rawCurr;
+        isSupported = false;
+        monetaryStatus = "unsupported_currency";
+      }
+
+      // If price is invalid and currency was supported, mark invalid_price
+      if (!isValidPrice && isSupported) {
+        monetaryStatus = "invalid_price";
+      }
 
       // Extract offer-level dimensions if present in Channel3 response
       const offerDims: Record<string, string> = {};
@@ -130,7 +151,9 @@ export function normalizeChannel3Product(
         url: offer.url, // Preserves authentic Channel3 redirect and tracking parameters intact
         priceMinor,
         compareAtPriceMinor,
-        currency: curr,
+        currency: offerCurrency,
+        isSupportedCurrency: isSupported,
+        monetaryStatus,
         availability: normalizeAvailability(offer.availability),
         condition: offer.condition || null,
         verificationStatus: Object.keys(offerDims).length > 0 ? "verified" : "unverified",
@@ -145,7 +168,11 @@ export function normalizeChannel3Product(
   const initialOffer = normalizedOffers[0] || null;
   const initialPriceMinor = initialOffer ? initialOffer.priceMinor : null;
   const compareAtPriceMinor = initialOffer?.compareAtPriceMinor ?? null;
-  const currency = initialOffer ? initialOffer.currency : fallbackCurrency;
+  const currency = initialOffer
+    ? (isSupportedCurrency(initialOffer.currency) ? (initialOffer.currency as CurrencyCode) : initialOffer.currency)
+    : fallbackCurrency;
+  const isSupportedProductCurrency = initialOffer ? Boolean(initialOffer.isSupportedCurrency) : false;
+  const monetaryStatus = initialOffer ? initialOffer.monetaryStatus : "missing_currency";
   const retailerName = initialOffer ? initialOffer.domain : (brand ? `${brand} Retailer` : "Retailer Partner");
   const retailerUrl = initialOffer ? initialOffer.url : "#";
   const overallAvailability = initialOffer ? initialOffer.availability : "unknown";
@@ -190,6 +217,8 @@ export function normalizeChannel3Product(
     priceMinor: initialPriceMinor,
     compareAtPriceMinor,
     currency,
+    isSupportedCurrency: isSupportedProductCurrency,
+    monetaryStatus,
     retailerName,
     retailerUrl,
     availability: overallAvailability,

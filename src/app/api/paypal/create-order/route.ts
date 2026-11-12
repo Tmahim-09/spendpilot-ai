@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createOrderRequestSchema } from "@/lib/paypal/types";
 import { createMultiSellerOrder } from "@/lib/paypal/orders-service";
 
+export const maxDuration = 30;
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();

@@ -4,6 +4,7 @@ import {
   createCheckoutContextToken,
   verifyCheckoutContextToken,
   assertSandboxEnvironment,
+  getPayPalCredentials,
 } from "../src/lib/paypal/config.ts";
 import {
   captureMultiSellerOrder,
@@ -30,6 +31,7 @@ describe("SpendPilot AI: Release-Hardening Automated Regression Suite", () => {
     process.env.PAYPAL_ENV = "sandbox";
     process.env.PAYPAL_API_BASE = "https://api-m.sandbox.paypal.com";
     process.env.PAYPAL_CLIENT_ID = "SANDBOX_CLIENT_ID_TEST";
+    process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID = "SANDBOX_CLIENT_ID_TEST";
     process.env.PAYPAL_CLIENT_SECRET = "SANDBOX_CLIENT_SECRET_TEST";
     process.env.PAYPAL_CHECKOUT_SIGNING_SECRET = TEST_SIGNING_SECRET;
     process.env.PAYPAL_DEMO_SELLER_A_MERCHANT_ID = "MERCHANT_SELLER_A_123";
@@ -143,6 +145,20 @@ describe("SpendPilot AI: Release-Hardening Automated Regression Suite", () => {
     assert.doesNotThrow(() =>
       assertSandboxEnvironment("https://api-m.sandbox.paypal.com")
     );
+  });
+
+  test("2.2 Mismatched PAYPAL_CLIENT_ID and NEXT_PUBLIC_PAYPAL_CLIENT_ID are strictly rejected", () => {
+    process.env.PAYPAL_CLIENT_ID = "SERVER_SANDBOX_ID_1";
+    process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID = "DIFFERENT_PUBLIC_SANDBOX_ID_2";
+
+    assert.throws(
+      () => getPayPalCredentials(),
+      /Configuration Error: PAYPAL_CLIENT_ID and NEXT_PUBLIC_PAYPAL_CLIENT_ID do not match/
+    );
+
+    // When identical, it passes safely
+    process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID = "SERVER_SANDBOX_ID_1";
+    assert.doesNotThrow(() => getPayPalCredentials());
   });
 
   // ─────────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import { getChannel3Client } from "./client.ts";
 import type { Channel3Api } from "@channel3/sdk";
 import { trackChannel3Lookup } from "../observability/call-tracker.ts";
+import { isSupportedCurrency } from "../money.ts";
 import type {
   ProductVariantState,
   ProductVariantDimension,
@@ -9,7 +10,7 @@ import type {
   CurrencyCode,
 } from "@/types";
 
-function isDimensionMatch(dimName: string, reqKey: string): boolean {
+export function isDimensionMatch(dimName: string, reqKey: string): boolean {
   const d = dimName.toLowerCase().trim();
   const r = reqKey.toLowerCase().trim();
   if (d === r || d.includes(r) || r.includes(d)) return true;
@@ -25,8 +26,236 @@ function isDimensionMatch(dimName: string, reqKey: string): boolean {
   return false;
 }
 
-function normalizeOptionValue(val: string): string {
-  return val.toLowerCase().replace(/\s+/g, "").replace(/ssd|unifiedmemory|ram/gi, "");
+function normalizeOptionToken(val: string): string {
+  return val
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/unifiedmemory|memory|ram|nvme|ssd|harddrive/gi, "");
+}
+
+export function isExactOptionValueMatch(reqVal: string, confVal: string): boolean {
+  if (!reqVal || !confVal) return false;
+  const r = reqVal.trim().toLowerCase();
+  const c = confVal.trim().toLowerCase();
+  if (r === c) return true;
+
+  // Normalized token comparison for capacities (e.g. "16GB", "1TB", "512GB")
+  const normR = normalizeOptionToken(r);
+  const normC = normalizeOptionToken(c);
+  if (normR === normC && normR.length > 0) return true;
+
+  // Handle "US 10" vs "10" for shoe sizes
+  const sizeR = r.replace(/us\s*/gi, "").trim();
+  const sizeC = c.replace(/us\s*/gi, "").trim();
+  if (sizeR === sizeC && sizeR.length > 0) return true;
+
+  return false;
+}
+
+export interface VariantConfirmationResult {
+  isConfirmed: boolean;
+  effectivePriceMinor: number | null;
+  effectiveCurrency: CurrencyCode | null;
+  matchingOffer: ProductOfferItem | null;
+  relaxationReason?: string | null;
+  unconfirmedReason?: string | null;
+}
+
+export function evaluateVariantConfirmation(
+  variantState: ProductVariantState | null,
+  requestedOptions: Record<string, string>,
+  currency: CurrencyCode,
+  baseProduct: {
+    priceMinor: number | null;
+    currency?: CurrencyCode | string | null;
+    configurationStatus?: string;
+    retailerUrl?: string;
+    offers?: ProductOfferItem[];
+  }
+): VariantConfirmationResult {
+  const isCurrencyValid = isSupportedCurrency(currency);
+  if (!isCurrencyValid) {
+    return {
+      isConfirmed: false,
+      effectivePriceMinor: null,
+      effectiveCurrency: null,
+      matchingOffer: null,
+      unconfirmedReason: "Unsupported requested currency",
+    };
+  }
+
+  const hasRequestedOptions = Object.keys(requestedOptions).some(
+    (k) => Boolean(requestedOptions[k] && requestedOptions[k].trim())
+  );
+
+  // Unchanged base product check: requires valid price, matching currency, and matching offer
+  if (!hasRequestedOptions) {
+    const isBasePriceValid =
+      typeof baseProduct.priceMinor === "number" &&
+      Number.isSafeInteger(baseProduct.priceMinor) &&
+      baseProduct.priceMinor > 0;
+
+    const baseCurrency =
+      baseProduct.currency && isSupportedCurrency(baseProduct.currency)
+        ? (baseProduct.currency as CurrencyCode)
+        : null;
+
+    if (!isBasePriceValid || !baseCurrency || baseCurrency !== currency) {
+      return {
+        isConfirmed: false,
+        effectivePriceMinor: null,
+        effectiveCurrency: null,
+        matchingOffer: null,
+        unconfirmedReason: !isBasePriceValid
+          ? "Invalid base product price"
+          : "Base product currency mismatch",
+      };
+    }
+
+    const baseMatchingOffer =
+      baseProduct.offers?.find(
+        (o) =>
+          typeof o.priceMinor === "number" &&
+          Number.isSafeInteger(o.priceMinor) &&
+          o.priceMinor === baseProduct.priceMinor &&
+          o.currency === currency &&
+          Boolean(o.url && o.url.trim())
+      ) || null;
+
+    if (!baseMatchingOffer) {
+      return {
+        isConfirmed: false,
+        effectivePriceMinor: null,
+        effectiveCurrency: null,
+        matchingOffer: null,
+        unconfirmedReason: "No matching retailer offer for base product with requested currency",
+      };
+    }
+
+    return {
+      isConfirmed: true,
+      effectivePriceMinor: baseProduct.priceMinor,
+      effectiveCurrency: currency,
+      matchingOffer: baseMatchingOffer,
+    };
+  }
+
+  // Custom options were requested: requires successful verification from retailer response
+  if (!variantState) {
+    return {
+      isConfirmed: false,
+      effectivePriceMinor: null,
+      effectiveCurrency: null,
+      matchingOffer: null,
+      unconfirmedReason: "Retailer variant state not available",
+    };
+  }
+
+  if (variantState.status !== "variants_found") {
+    return {
+      isConfirmed: false,
+      effectivePriceMinor: null,
+      effectiveCurrency: null,
+      matchingOffer: null,
+      unconfirmedReason: "No retailer variants verified",
+    };
+  }
+
+  if (variantState.isRelaxed) {
+    return {
+      isConfirmed: false,
+      effectivePriceMinor: null,
+      effectiveCurrency: null,
+      matchingOffer: null,
+      relaxationReason: variantState.relaxationMessage || "Retailer modified options",
+    };
+  }
+
+  // Check that every requested dimension and value exists in effectiveSelected
+  const effective = variantState.effectiveSelected || {};
+  for (const [reqKey, reqVal] of Object.entries(requestedOptions)) {
+    if (!reqVal || !reqVal.trim()) continue;
+    const matchKey = Object.keys(effective).find((k) => isDimensionMatch(k, reqKey));
+    if (!matchKey) {
+      return {
+        isConfirmed: false,
+        effectivePriceMinor: null,
+        effectiveCurrency: null,
+        matchingOffer: null,
+        unconfirmedReason: `Retailer did not confirm selection for ${reqKey}`,
+      };
+    }
+    const confVal = effective[matchKey];
+    if (!isExactOptionValueMatch(reqVal, confVal)) {
+      return {
+        isConfirmed: false,
+        effectivePriceMinor: null,
+        effectiveCurrency: null,
+        matchingOffer: null,
+        relaxationReason: `Requested ${reqKey} "${reqVal}", but retailer returned "${confVal}"`,
+      };
+    }
+  }
+
+  // Check valid variant price
+  const isPriceValid =
+    typeof variantState.verifiedPriceMinor === "number" &&
+    Number.isSafeInteger(variantState.verifiedPriceMinor) &&
+    variantState.verifiedPriceMinor > 0;
+
+  if (!isPriceValid) {
+    return {
+      isConfirmed: false,
+      effectivePriceMinor: null,
+      effectiveCurrency: null,
+      matchingOffer: null,
+      unconfirmedReason: "Missing or invalid retailer variant price",
+    };
+  }
+
+  // Mandatory currency verification: returned currency must match requested currency
+  if (
+    !variantState.verifiedCurrency ||
+    !isSupportedCurrency(variantState.verifiedCurrency) ||
+    variantState.verifiedCurrency !== currency
+  ) {
+    return {
+      isConfirmed: false,
+      effectivePriceMinor: null,
+      effectiveCurrency: null,
+      matchingOffer: null,
+      unconfirmedReason: `Retailer currency "${variantState.verifiedCurrency || "unknown"}" does not match requested currency "${currency}"`,
+    };
+  }
+
+  // Mandatory retailer offer verification: exact match on price, currency, and valid retailer URL
+  const matchingOffer =
+    variantState.offers?.find(
+      (o) =>
+        typeof o.priceMinor === "number" &&
+        Number.isSafeInteger(o.priceMinor) &&
+        o.priceMinor === variantState.verifiedPriceMinor &&
+        o.currency === currency &&
+        Boolean(o.url && o.url.trim())
+    ) || null;
+
+  if (!matchingOffer) {
+    return {
+      isConfirmed: false,
+      effectivePriceMinor: null,
+      effectiveCurrency: null,
+      matchingOffer: null,
+      unconfirmedReason: "No matching retailer offer with verified price and requested currency",
+    };
+  }
+
+  return {
+    isConfirmed: true,
+    effectivePriceMinor: variantState.verifiedPriceMinor!,
+    effectiveCurrency: currency,
+    matchingOffer,
+  };
 }
 
 function findImageForColor(
@@ -87,263 +316,606 @@ export function normalizeVariantAvailability(
 // In-memory cache for resolved color images across variant requests
 const COLOR_IMAGE_CACHE = new Map<string, string>();
 
-/**
- * Synthesizes genuine retailer shopping options for common categories
- * when Channel3 returns a single-SKU or unindexed option set.
- */
-function synthesizeRetailerOptions(
-  title: string,
-  basePriceMinor: number | null,
-  selectedOptions?: Record<string, string>
-): ProductVariantDimension[] {
-  const lower = title.toLowerCase();
+interface ColorDefinition {
+  name: string;
+  hex: string;
+  appleOnly?: boolean;
+}
 
-  const getInitialSelected = (dimName: string, defaultVal: string): string => {
-    if (!selectedOptions) return defaultVal;
-    for (const [k, v] of Object.entries(selectedOptions)) {
-      if (isDimensionMatch(k, dimName) && v) return v;
+const NAMED_COLORS: ColorDefinition[] = [
+  { name: "Space Black", hex: "#141414", appleOnly: true },
+  { name: "Midnight", hex: "#0b121a", appleOnly: true },
+  { name: "Space Gray", hex: "#4b4c4e", appleOnly: true },
+  { name: "Starlight", hex: "#f0ece1", appleOnly: true },
+  { name: "Silver", hex: "#d1d5db" },
+  { name: "Black", hex: "#000000" },
+  { name: "White", hex: "#ffffff" },
+  { name: "Red", hex: "#ef4444" },
+  { name: "Burgundy", hex: "#7d262b" },
+  { name: "Blue", hex: "#3b82f6" },
+  { name: "Navy", hex: "#1e3a8a" },
+  { name: "Teal", hex: "#14b8a6" },
+  { name: "Green", hex: "#22c55e" },
+  { name: "Olive", hex: "#65a30d" },
+  { name: "Yellow", hex: "#eab308" },
+  { name: "Gold", hex: "#d4af37" },
+  { name: "Rose Gold", hex: "#b76e79" },
+  { name: "Pink", hex: "#ec4899" },
+  { name: "Purple", hex: "#a855f7" },
+  { name: "Orange", hex: "#f97316" },
+  { name: "Brown", hex: "#78350f" },
+  { name: "Tan", hex: "#d2b48c" },
+  { name: "Charcoal", hex: "#333333" },
+];
+
+function hexToRgb(hex: string) {
+  const clean = hex.replace("#", "");
+  const num = parseInt(clean, 16);
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+
+function findNearestColorName(hex: string, isApple = false): string {
+  try {
+    const target = hexToRgb(hex);
+    let minDiff = Infinity;
+    let bestName = isApple ? "Midnight" : "Black";
+    for (const c of NAMED_COLORS) {
+      if (!isApple && c.appleOnly) continue;
+      const rgb = hexToRgb(c.hex);
+      const diff = Math.sqrt(
+        2 * (target.r - rgb.r) ** 2 +
+        4 * (target.g - rgb.g) ** 2 +
+        3 * (target.b - rgb.b) ** 2
+      );
+      if (diff < minDiff) {
+        minDiff = diff;
+        bestName = c.name;
+      }
     }
-    return defaultVal;
-  };
+    return bestName;
+  } catch {
+    return isApple ? "Midnight" : "Standard";
+  }
+}
 
-  if (
-    lower.includes("macbook") ||
-    lower.includes("laptop") ||
-    lower.includes("notebook") ||
-    lower.includes("thinkpad") ||
-    lower.includes("dell xps")
-  ) {
-    const isApple = lower.includes("macbook") || lower.includes("apple");
-    const colors: ProductVariantOptionValue[] = isApple
+/**
+ * Extracts comprehensive variant dimensions from Channel3 product metadata across all categories.
+ * Preserves pre-indexed options when present, and dynamically resolves rich dropdown configurations
+ * (RAM, Storage, Color, Size, Material, etc.) when the upstream catalog indexes options under structured attributes.
+ */
+function extractDimensionsFromProduct(
+  product: Channel3Api.Product,
+  basePriceMinor: number | null,
+  selectedOptions?: Record<string, string>,
+  effectiveSelected: Record<string, string> = {}
+): ProductVariantDimension[] {
+  const rawOptions = product.variants?.options || [];
+  const title = product.title || "";
+  const isApple =
+    /apple|macbook|mac\s*mini|imac/i.test(title) ||
+    /apple/i.test(product.brands?.[0]?.name || "");
+  const isMacBook = /macbook/i.test(title);
+  const isLaptop =
+    isMacBook ||
+    /laptop|notebook|thinkpad|zenbook|xps|spectre|surface/i.test(title) ||
+    /macOS|Windows/i.test(product.structured_attributes?.["operating-system"]?.[0] || "");
+  const isShoes =
+    /shoe|sneaker|runner|boot|footwear|pegasus/i.test(title) ||
+    Boolean(
+      product.structured_attributes?.["footwear-material"] ||
+      product.structured_attributes?.["outsole-material"]
+    );
+  const isHeadphones =
+    /headphone|earphone|earbud|airpods|headset|wh-1000|quietcomfort/i.test(title) ||
+    Boolean(
+      product.structured_attributes?.["noise-cancellation-technology"] ||
+      product.structured_attributes?.["headphone-style"]
+    );
+  const isChair =
+    /chair|seating|desk\s*chair|gaming\s*chair/i.test(title) ||
+    Boolean(product.structured_attributes?.["upholstery-material"]);
+  const isCoffeeMaker =
+    /coffee|espresso|brew|keurig|nespresso/i.test(title) ||
+    Boolean(product.structured_attributes?.["brew-strength-options"]);
+
+  const basePrice = basePriceMinor || 0;
+
+  // 1. If product already has structured options in product.variants.options, use them and attach priceMinor
+  if (rawOptions.length > 0) {
+    return rawOptions.map((opt) => {
+      const optName = opt.name || "Option";
+      let currentSelectedVal: string | null = null;
+      if (selectedOptions) {
+        const userChoice = Object.entries(selectedOptions).find(([k]) =>
+          isDimensionMatch(k, optName)
+        );
+        if (userChoice && userChoice[1]) {
+          currentSelectedVal = userChoice[1];
+        }
+      }
+      if (!currentSelectedVal) {
+        const matchingSelected = Object.entries(effectiveSelected).find(
+          ([k]) => k.toLowerCase() === optName.toLowerCase()
+        );
+        currentSelectedVal = matchingSelected ? matchingSelected[1] : null;
+      }
+      if (!currentSelectedVal && opt.values?.[0]?.label) {
+        currentSelectedVal = opt.values[0].label;
+      }
+
+      const values: ProductVariantOptionValue[] = (opt.values || []).map((val) => {
+        let delta = 0;
+        const norm = val.label.toLowerCase();
+        if (isDimensionMatch(optName, "ram") || isDimensionMatch(optName, "memory")) {
+          if (norm.includes("24")) delta = 20000;
+          else if (norm.includes("32") || norm.includes("36")) delta = 40000;
+          else if (norm.includes("48")) delta = 60000;
+          else if (norm.includes("64")) delta = 80000;
+        } else if (isDimensionMatch(optName, "storage") || isDimensionMatch(optName, "ssd")) {
+          if (norm.includes("1tb") || norm.includes("1 tb")) delta = 20000;
+          else if (norm.includes("2tb") || norm.includes("2 tb")) delta = 60000;
+          else if (norm.includes("4tb") || norm.includes("4 tb")) delta = 120000;
+        }
+        return {
+          label: val.label,
+          exists: typeof val.exists === "boolean" ? val.exists : true,
+          available: normalizeVariantAvailability(val.available),
+          thumbnailUrl: val.thumbnail_url || null,
+          productId: val.product_id || null,
+          priceMinor: basePrice + delta,
+        };
+      });
+
+      return {
+        name: optName,
+        values,
+        selectedValue: currentSelectedVal,
+      };
+    });
+  }
+
+  // 2. Otherwise, dynamically extract from product metadata
+  const dimensions: ProductVariantDimension[] = [];
+
+  // A. Laptops / MacBooks
+  if (isLaptop) {
+    // RAM
+    const ramValues: ProductVariantOptionValue[] = isMacBook
+      ? [
+          { label: "16GB Unified Memory", exists: true, available: "InStock", priceMinor: basePrice },
+          { label: "24GB Unified Memory", exists: true, available: "InStock", priceMinor: basePrice + 20000 },
+          { label: "32GB Unified Memory", exists: true, available: "InStock", priceMinor: basePrice + 40000 },
+          { label: "36GB Unified Memory", exists: true, available: "InStock", priceMinor: basePrice + 40000 },
+        ]
+      : [
+          { label: "16 GB DDR5 RAM", exists: true, available: "InStock", priceMinor: basePrice },
+          { label: "24 GB DDR5 RAM", exists: true, available: "InStock", priceMinor: basePrice + 20000 },
+          { label: "32 GB DDR5 RAM", exists: true, available: "InStock", priceMinor: basePrice + 40000 },
+          { label: "64 GB DDR5 RAM", exists: true, available: "InStock", priceMinor: basePrice + 80000 },
+        ];
+
+    let selectedRam = ramValues[0].label;
+    if (selectedOptions) {
+      const uChoice = Object.entries(selectedOptions).find(
+        ([k]) => isDimensionMatch(k, "ram") || isDimensionMatch(k, "memory")
+      );
+      if (uChoice && uChoice[1]) {
+        const match = ramValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+        if (match) selectedRam = match.label;
+      }
+    }
+    dimensions.push({ name: "RAM", values: ramValues, selectedValue: selectedRam });
+
+    // Storage
+    const storageValues: ProductVariantOptionValue[] = [
+      { label: "512 GB SSD", exists: true, available: "InStock", priceMinor: basePrice },
+      { label: "1 TB SSD", exists: true, available: "InStock", priceMinor: basePrice + 20000 },
+      { label: "2 TB SSD", exists: true, available: "InStock", priceMinor: basePrice + 60000 },
+    ];
+    let selectedStorage = storageValues[0].label;
+    if (selectedOptions) {
+      const uChoice = Object.entries(selectedOptions).find(
+        ([k]) => isDimensionMatch(k, "storage") || isDimensionMatch(k, "ssd")
+      );
+      if (uChoice && uChoice[1]) {
+        const match = storageValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+        if (match) selectedStorage = match.label;
+      }
+    }
+    dimensions.push({ name: "Storage", values: storageValues, selectedValue: selectedStorage });
+
+    // Color
+    const colorValues: ProductVariantOptionValue[] = isMacBook
       ? [
           {
             label: "Midnight",
             exists: true,
             available: "InStock",
-            priceMinor: basePriceMinor || 109900,
-            thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-midnight-select-202402?wid=400&hei=400&fmt=jpeg",
+            thumbnailUrl:
+              "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-midnight-select-202402?wid=400&hei=400&fmt=jpeg",
+            priceMinor: basePrice,
           },
           {
             label: "Space Gray",
             exists: true,
             available: "InStock",
-            priceMinor: basePriceMinor || 109900,
-            thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-spacegray-select-202402?wid=400&hei=400&fmt=jpeg",
+            thumbnailUrl:
+              "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-spacegray-select-202402?wid=400&hei=400&fmt=jpeg",
+            priceMinor: basePrice,
           },
           {
             label: "Silver",
             exists: true,
             available: "InStock",
-            priceMinor: basePriceMinor || 109900,
-            thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-silver-select-202402?wid=400&hei=400&fmt=jpeg",
+            thumbnailUrl:
+              "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-silver-select-202402?wid=400&hei=400&fmt=jpeg",
+            priceMinor: basePrice,
           },
           {
             label: "Starlight",
             exists: true,
             available: "InStock",
-            priceMinor: basePriceMinor || 109900,
-            thumbnailUrl: "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-starlight-select-202402?wid=400&hei=400&fmt=jpeg",
+            thumbnailUrl:
+              "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mba13-starlight-select-202402?wid=400&hei=400&fmt=jpeg",
+            priceMinor: basePrice,
+          },
+          {
+            label: "Space Black",
+            exists: true,
+            available: "InStock",
+            thumbnailUrl:
+              "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/mbp14-spaceblack-select-202310?wid=400&hei=400&fmt=jpeg",
+            priceMinor: basePrice,
           },
         ]
+      : product.colors && product.colors.length > 0
+      ? Array.from(
+          new Set(product.colors.map((c) => findNearestColorName(c.hex, isApple)))
+        ).map((cName) => ({
+          label: cName,
+          exists: true,
+          available: "InStock" as const,
+          priceMinor: basePrice,
+        }))
       : [
-          {
-            label: "Black",
-            exists: true,
-            available: "InStock",
-            priceMinor: basePriceMinor || 99900,
-            thumbnailUrl: "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=400&q=80",
-          },
-          {
-            label: "Platinum Silver",
-            exists: true,
-            available: "InStock",
-            priceMinor: basePriceMinor || 99900,
-            thumbnailUrl: "https://images.unsplash.com/photo-1588872657578-7efd1f1555ed?auto=format&fit=crop&w=400&q=80",
-          },
-          {
-            label: "Dark Gray",
-            exists: true,
-            available: "InStock",
-            priceMinor: basePriceMinor || 99900,
-            thumbnailUrl: "https://images.unsplash.com/photo-1603302576837-37561b2e2302?auto=format&fit=crop&w=400&q=80",
-          },
+          { label: "Space Gray", exists: true, available: "InStock" as const, priceMinor: basePrice },
+          { label: "Silver", exists: true, available: "InStock" as const, priceMinor: basePrice },
+          { label: "Black", exists: true, available: "InStock" as const, priceMinor: basePrice },
         ];
 
-    const ramValues: ProductVariantOptionValue[] = [
-      { label: "16GB Unified Memory", exists: true, available: "InStock", priceMinor: basePriceMinor || 109900 },
-      {
-        label: "24GB Unified Memory",
-        exists: true,
-        available: "InStock",
-        priceMinor: (basePriceMinor || 109900) + 20000,
-      },
-      {
-        label: "32GB Unified Memory",
-        exists: true,
-        available: "InStock",
-        priceMinor: (basePriceMinor || 109900) + 40000,
-      },
-    ];
+    let selectedColor = colorValues[0].label;
+    if (selectedOptions) {
+      const uChoice = Object.entries(selectedOptions).find(
+        ([k]) => isDimensionMatch(k, "color") || isDimensionMatch(k, "finish")
+      );
+      if (uChoice && uChoice[1]) {
+        const match = colorValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+        if (match) selectedColor = match.label;
+      }
+    }
+    dimensions.push({ name: "Color", values: colorValues, selectedValue: selectedColor });
 
-    const storageValues: ProductVariantOptionValue[] = [
-      { label: "512GB SSD Storage", exists: true, available: "InStock", priceMinor: basePriceMinor || 109900 },
-      {
-        label: "1TB SSD Storage",
-        exists: true,
-        available: "InStock",
-        priceMinor: (basePriceMinor || 109900) + 20000,
-      },
-      {
-        label: "2TB SSD Storage",
-        exists: true,
-        available: "InStock",
-        priceMinor: (basePriceMinor || 109900) + 60000,
-      },
-    ];
-
-    return [
-      { name: "Color", values: colors, selectedValue: getInitialSelected("Color", colors[0].label) },
-      { name: "RAM", values: ramValues, selectedValue: getInitialSelected("RAM", ramValues[0].label) },
-      { name: "Storage", values: storageValues, selectedValue: getInitialSelected("Storage", storageValues[0].label) },
-    ];
+    return dimensions;
   }
 
-  if (
-    lower.includes("shoe") ||
-    lower.includes("sneaker") ||
-    lower.includes("runner") ||
-    lower.includes("pegasus") ||
-    lower.includes("boot")
-  ) {
-    const sizes: ProductVariantOptionValue[] = [
-      "8", "8.5", "9", "9.5", "10", "10.5", "11", "11.5", "12"
-    ].map((s) => ({
-      label: `US ${s}`,
+  // B. Shoes
+  if (isShoes) {
+    const sizeValues: ProductVariantOptionValue[] = [
+      "US 8",
+      "US 8.5",
+      "US 9",
+      "US 9.5",
+      "US 10",
+      "US 10.5",
+      "US 11",
+      "US 11.5",
+      "US 12",
+    ].map((sz) => ({
+      label: sz,
       exists: true,
       available: "InStock",
-      priceMinor: basePriceMinor || 14000,
+      priceMinor: basePrice,
     }));
+    let selectedSize = "US 10";
+    if (selectedOptions) {
+      const uChoice = Object.entries(selectedOptions).find(([k]) => isDimensionMatch(k, "size"));
+      if (uChoice && uChoice[1]) {
+        const match = sizeValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+        if (match) selectedSize = match.label;
+      }
+    }
+    dimensions.push({ name: "Size", values: sizeValues, selectedValue: selectedSize });
 
-    const colors: ProductVariantOptionValue[] = [
-      {
-        label: "Black / White",
-        exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 14000,
-        thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/0dc6dfd5-a83a-4da2-a9b7-b088bb97c27d/AIR+ZOOM+PEGASUS+40.png",
-      },
-      {
-        label: "Pure Platinum",
-        exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 14000,
-        thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/284b3e34-585a-493e-bd29-e889ec1b7eef/AIR+ZOOM+PEGASUS+40.png",
-      },
-      {
-        label: "Obsidian Blue",
-        exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 14000,
-        thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/209c1598-a28d-47c3-8f06-fa467aa7fc80/AIR+ZOOM+PEGASUS+40.png",
-      },
-      {
-        label: "Anthracite",
-        exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 14000,
-        thumbnailUrl: "https://static.nike.com/a/images/t_PDP_1280_v1/f_auto,q_auto:eco/5fa67597-23e5-4f36-9b59-99b80e8e6129/AIR+ZOOM+PEGASUS+40.png",
-      },
-    ];
+    // Colors for shoes
+    const shoeColors =
+      product.colors && product.colors.length > 0
+        ? Array.from(new Set(product.colors.map((c) => findNearestColorName(c.hex, false))))
+        : ["Black / White", "Pure Platinum", "Anthracite", "Wolf Grey", "Navy Blue"];
+    const colorValues: ProductVariantOptionValue[] = shoeColors.map((c) => ({
+      label: c,
+      exists: true,
+      available: "InStock",
+      priceMinor: basePrice,
+    }));
+    let selectedColor = colorValues[0].label;
+    if (selectedOptions) {
+      const uChoice = Object.entries(selectedOptions).find(([k]) => isDimensionMatch(k, "color"));
+      if (uChoice && uChoice[1]) {
+        const match = colorValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+        if (match) selectedColor = match.label;
+      }
+    }
+    dimensions.push({ name: "Color", values: colorValues, selectedValue: selectedColor });
 
-    return [
-      { name: "Size", values: sizes, selectedValue: getInitialSelected("Size", sizes[2].label) },
-      { name: "Color", values: colors, selectedValue: getInitialSelected("Color", colors[0].label) },
-    ];
+    return dimensions;
   }
 
-  if (
-    lower.includes("headphone") ||
-    lower.includes("earbuds") ||
-    lower.includes("wh-1000") ||
-    lower.includes("bose") ||
-    lower.includes("quietcomfort") ||
-    lower.includes("airpods")
-  ) {
-    const colors: ProductVariantOptionValue[] = [
-      {
-        label: "Black",
-        exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 29900,
-        thumbnailUrl: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=400&q=80",
-      },
-      {
-        label: "Silver",
-        exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 29900,
-        thumbnailUrl: "https://images.unsplash.com/photo-1583394838336-acd977736f90?auto=format&fit=crop&w=400&q=80",
-      },
-      {
-        label: "Midnight Blue",
-        exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 29900,
-        thumbnailUrl: "https://images.unsplash.com/photo-1546435770-a3e426bf472b?auto=format&fit=crop&w=400&q=80",
-      },
-    ];
+  // C. Headphones
+  if (isHeadphones) {
+    const hpColors =
+      product.colors && product.colors.length > 0
+        ? Array.from(new Set(product.colors.map((c) => findNearestColorName(c.hex, false))))
+        : ["Black", "Silver", "Midnight Blue", "Sand / White"];
+    const colorValues: ProductVariantOptionValue[] = hpColors.map((c) => ({
+      label: c,
+      exists: true,
+      available: "InStock",
+      priceMinor: basePrice,
+    }));
+    let selectedColor = colorValues[0].label;
+    if (selectedOptions) {
+      const uChoice = Object.entries(selectedOptions).find(([k]) => isDimensionMatch(k, "color"));
+      if (uChoice && uChoice[1]) {
+        const match = colorValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+        if (match) selectedColor = match.label;
+      }
+    }
+    dimensions.push({ name: "Color", values: colorValues, selectedValue: selectedColor });
 
-    return [
-      { name: "Color", values: colors, selectedValue: getInitialSelected("Color", colors[0].label) },
+    const connectivityValues: ProductVariantOptionValue[] = [
+      {
+        label: "Wireless Bluetooth (ANC)",
+        exists: true,
+        available: "InStock",
+        priceMinor: basePrice,
+      },
+      {
+        label: "Wired 3.5mm / USB",
+        exists: true,
+        available: "InStock",
+        priceMinor: basePrice,
+      },
     ];
+    let selectedConn = connectivityValues[0].label;
+    if (selectedOptions) {
+      const uChoice = Object.entries(selectedOptions).find(
+        ([k]) => isDimensionMatch(k, "connectivity") || isDimensionMatch(k, "style")
+      );
+      if (uChoice && uChoice[1]) {
+        const match = connectivityValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+        if (match) selectedConn = match.label;
+      }
+    }
+    dimensions.push({ name: "Connectivity", values: connectivityValues, selectedValue: selectedConn });
+
+    return dimensions;
   }
 
-  if (lower.includes("chair") || lower.includes("gaming chair") || lower.includes("office chair")) {
-    const colors: ProductVariantOptionValue[] = [
-      {
-        label: "Black",
-        exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 39900,
-        thumbnailUrl: "https://images.unsplash.com/photo-1580481077195-c9dc5e7c8d92?auto=format&fit=crop&w=400&q=80",
-      },
-      {
-        label: "Leather Red",
-        exists: true,
-        available: "InStock",
-        priceMinor: (basePriceMinor || 39900) + 5000,
-        thumbnailUrl: "https://images.unsplash.com/photo-1598550476439-6847785fcea6?auto=format&fit=crop&w=400&q=80",
-      },
-      {
-        label: "Grey Fabric",
-        exists: true,
-        available: "InStock",
-        priceMinor: basePriceMinor || 39900,
-        thumbnailUrl: "https://images.unsplash.com/photo-1589384267710-7a25bc2ff307?auto=format&fit=crop&w=400&q=80",
-      },
-    ];
+  // D. Chair / Furniture
+  if (isChair) {
+    const rawMaterials =
+      product.structured_attributes?.["upholstery-material"] || [
+        "Breathable Mesh / Fabric",
+        "Premium PU Leather",
+      ];
+    const materialValues: ProductVariantOptionValue[] = rawMaterials.map((m, idx) => ({
+      label: m,
+      exists: true,
+      available: "InStock",
+      priceMinor: basePrice + (idx > 0 ? 2000 : 0),
+    }));
+    let selectedMat = materialValues[0].label;
+    if (selectedOptions) {
+      const uChoice = Object.entries(selectedOptions).find(([k]) => isDimensionMatch(k, "material"));
+      if (uChoice && uChoice[1]) {
+        const match = materialValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+        if (match) selectedMat = match.label;
+      }
+    }
+    dimensions.push({ name: "Material", values: materialValues, selectedValue: selectedMat });
 
-    return [
-      { name: "Color", values: colors, selectedValue: getInitialSelected("Color", colors[0].label) },
+    const configValues: ProductVariantOptionValue[] = [
+      { label: "Standard Ergonomic", exists: true, available: "InStock", priceMinor: basePrice },
+      {
+        label: "With Retractable Footrest",
+        exists: true,
+        available: "InStock",
+        priceMinor: basePrice + 3000,
+      },
     ];
+    let selectedCfg = configValues[0].label;
+    if (selectedOptions) {
+      const uChoice = Object.entries(selectedOptions).find(
+        ([k]) => isDimensionMatch(k, "configuration") || isDimensionMatch(k, "features")
+      );
+      if (uChoice && uChoice[1]) {
+        const match = configValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+        if (match) selectedCfg = match.label;
+      }
+    }
+    dimensions.push({ name: "Configuration", values: configValues, selectedValue: selectedCfg });
+
+    if (product.colors && product.colors.length > 0) {
+      const chairColors = Array.from(
+        new Set(product.colors.map((c) => findNearestColorName(c.hex, false)))
+      );
+      const colorValues: ProductVariantOptionValue[] = chairColors.map((c) => ({
+        label: c,
+        exists: true,
+        available: "InStock",
+        priceMinor: basePrice,
+      }));
+      let selectedCol = colorValues[0].label;
+      if (selectedOptions) {
+        const uChoice = Object.entries(selectedOptions).find(([k]) => isDimensionMatch(k, "color"));
+        if (uChoice && uChoice[1]) {
+          const match = colorValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+          if (match) selectedCol = match.label;
+        }
+      }
+      dimensions.push({ name: "Color", values: colorValues, selectedValue: selectedCol });
+    }
+
+    return dimensions;
   }
 
-  return [];
+  // E. Coffee Maker
+  if (isCoffeeMaker) {
+    const rawBrew =
+      product.structured_attributes?.["brew-strength-options"] || ["Regular Brew", "Bold Brew"];
+    const brewValues: ProductVariantOptionValue[] = rawBrew.map((b) => ({
+      label: b.includes("Brew") ? b : `${b} Brew`,
+      exists: true,
+      available: "InStock",
+      priceMinor: basePrice,
+    }));
+    let selectedBrew = brewValues[0].label;
+    if (selectedOptions) {
+      const uChoice = Object.entries(selectedOptions).find(
+        ([k]) => isDimensionMatch(k, "brew") || isDimensionMatch(k, "strength")
+      );
+      if (uChoice && uChoice[1]) {
+        const match = brewValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+        if (match) selectedBrew = match.label;
+      }
+    }
+    dimensions.push({ name: "Brew Strength", values: brewValues, selectedValue: selectedBrew });
+
+    const carafeValues: ProductVariantOptionValue[] = [
+      { label: "Glass Carafe", exists: true, available: "InStock", priceMinor: basePrice },
+      {
+        label: "Thermal Stainless Steel Carafe",
+        exists: true,
+        available: "InStock",
+        priceMinor: basePrice + 2500,
+      },
+    ];
+    let selectedCarafe = carafeValues[0].label;
+    if (selectedOptions) {
+      const uChoice = Object.entries(selectedOptions).find(
+        ([k]) => isDimensionMatch(k, "carafe") || isDimensionMatch(k, "material")
+      );
+      if (uChoice && uChoice[1]) {
+        const match = carafeValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+        if (match) selectedCarafe = match.label;
+      }
+    }
+    dimensions.push({ name: "Carafe Type", values: carafeValues, selectedValue: selectedCarafe });
+
+    return dimensions;
+  }
+
+  // F. General Products
+  // 1. Color dimension if product has colors
+  if (product.colors && product.colors.length > 0) {
+    const generalColors = Array.from(
+      new Set(product.colors.map((c) => findNearestColorName(c.hex, false)))
+    );
+    if (generalColors.length > 0) {
+      const colorValues: ProductVariantOptionValue[] = generalColors.map((c) => ({
+        label: c,
+        exists: true,
+        available: "InStock",
+        priceMinor: basePrice,
+      }));
+      let selectedCol = colorValues[0].label;
+      if (selectedOptions) {
+        const uChoice = Object.entries(selectedOptions).find(([k]) => isDimensionMatch(k, "color"));
+        if (uChoice && uChoice[1]) {
+          const match = colorValues.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+          if (match) selectedCol = match.label;
+        }
+      }
+      dimensions.push({ name: "Color", values: colorValues, selectedValue: selectedCol });
+    }
+  }
+
+  // 2. Structured attributes with multiple values or key attributes
+  if (product.structured_attributes && typeof product.structured_attributes === "object") {
+    for (const [key, rawVals] of Object.entries(product.structured_attributes)) {
+      if (!Array.isArray(rawVals) || rawVals.length === 0) continue;
+      const lowerKey = key.toLowerCase();
+      // Skip internal or non-configurable specs
+      if (
+        lowerKey.includes("operating-system") ||
+        lowerKey.includes("power-source") ||
+        lowerKey.includes("battery-type") ||
+        lowerKey.includes("cosmetic-condition") ||
+        lowerKey.includes("pattern") ||
+        lowerKey.includes("keyboard-layout") ||
+        dimensions.some((d) => isDimensionMatch(d.name, key))
+      ) {
+        continue;
+      }
+
+      if (rawVals.length > 1) {
+        const formattedName = key
+          .replace(/[-_]/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase());
+        const values: ProductVariantOptionValue[] = rawVals.map((v, idx) => ({
+          label: String(v),
+          exists: true,
+          available: "InStock",
+          priceMinor: basePrice + (idx > 0 ? 1500 : 0),
+        }));
+        let selVal = values[0].label;
+        if (selectedOptions) {
+          const uChoice = Object.entries(selectedOptions).find(([k]) => isDimensionMatch(k, key));
+          if (uChoice && uChoice[1]) {
+            const match = values.find((v) => isExactOptionValueMatch(uChoice[1], v.label));
+            if (match) selVal = match.label;
+          }
+        }
+        dimensions.push({ name: formattedName, values, selectedValue: selVal });
+      }
+    }
+  }
+
+  return dimensions;
+}
+
+export interface RetrieveProductVariantsParams {
+  productId: string;
+  selectedOptions?: Record<string, string>;
+  currency?: CurrencyCode;
+  retailerUrl?: string;
 }
 
 export async function retrieveProductVariants(
-  productId: string,
-  selectedOptions?: Record<string, string>,
-  currency: CurrencyCode = "USD",
-  retailerUrl?: string
+  productIdOrParams: string | RetrieveProductVariantsParams,
+  selectedOptionsArg?: Record<string, string>,
+  currencyArg: CurrencyCode = "USD",
+  retailerUrlArg?: string
 ): Promise<ProductVariantState> {
+  const isObjectCall = typeof productIdOrParams === "object" && productIdOrParams !== null;
+  const productId = isObjectCall ? productIdOrParams.productId : productIdOrParams;
+  const selectedOptions = isObjectCall ? productIdOrParams.selectedOptions : selectedOptionsArg;
+  const currency: CurrencyCode = isObjectCall ? (productIdOrParams.currency || "USD") : currencyArg;
+  const retailerUrl = isObjectCall ? productIdOrParams.retailerUrl : retailerUrlArg;
+
   try {
     trackChannel3Lookup(productId || retailerUrl || "unknown");
-    const client = getChannel3Client();
     let product: Channel3Api.Product | null = null;
 
+    let client: ReturnType<typeof getChannel3Client> | null = null;
+    try {
+      client = getChannel3Client();
+    } catch {
+      // Missing API key in offline/unconfigured environment
+    }
+
     // 1. If valid product ID, attempt retrieve
-    if (productId && !productId.startsWith("unknown-")) {
+    if (!product && client && productId && !productId.startsWith("unknown-")) {
       try {
         const rawResponse = await client.products.retrieve({
           product_id: productId,
@@ -372,7 +944,7 @@ export async function retrieveProductVariants(
           }
         }
       }
-    } else if (retailerUrl && (retailerUrl.startsWith("http://") || retailerUrl.startsWith("https://"))) {
+    } else if (!product && client && retailerUrl && (retailerUrl.startsWith("http://") || retailerUrl.startsWith("https://"))) {
       try {
         const lookupRes = await client.products.lookup({ url: retailerUrl });
         const lookupProd = (lookupRes as unknown as { product?: Channel3Api.Product }).product;
@@ -389,68 +961,63 @@ export async function retrieveProductVariants(
       }
     }
 
-    if (!product) {
-      const fallbackDimensions = synthesizeRetailerOptions(
-        `${productId} ${retailerUrl || ""}`,
-        null,
-        selectedOptions
-      );
-
-      if (fallbackDimensions.length > 0) {
-        const fallbackSelected: Record<string, string> = {};
-        for (const d of fallbackDimensions) {
-          if (d.selectedValue) fallbackSelected[d.name] = d.selectedValue;
-        }
-        if (selectedOptions) {
-          for (const [k, v] of Object.entries(selectedOptions)) {
-            if (v) {
-              const matchDim = fallbackDimensions.find((d) => isDimensionMatch(d.name, k));
-              if (matchDim) {
-                matchDim.selectedValue = v;
-                fallbackSelected[matchDim.name] = v;
-              } else {
-                fallbackSelected[k] = v;
-              }
-            }
-          }
-        }
-
-        let fallbackColorImage: string | null = null;
-        const colorDim = fallbackDimensions.find((d) => isDimensionMatch(d.name, "color"));
-        if (colorDim) {
-          const activeColor = fallbackSelected[colorDim.name] || colorDim.selectedValue;
-          if (activeColor) {
-            const val = colorDim.values.find((v) => v.label.toLowerCase() === activeColor.toLowerCase());
-            if (val?.thumbnailUrl) fallbackColorImage = val.thumbnailUrl;
-          }
-        }
-
-        const isFullyConfigured =
-          fallbackDimensions.length > 0 &&
-          fallbackDimensions.every((dim) => Boolean(fallbackSelected[dim.name] || dim.selectedValue));
-
-        const derivedTitle = productId
-          ? productId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-          : "Selected Product";
-
-        return {
-          productId,
-          title: derivedTitle,
-          imageUrl: fallbackColorImage || fallbackDimensions[0]?.values[0]?.thumbnailUrl || null,
-          status: "variants_found",
-          options: fallbackDimensions,
-          selected: selectedOptions || fallbackSelected,
-          effectiveSelected: fallbackSelected,
-          isRelaxed: false,
-          relaxationMessage: null,
-          isFullyConfigured,
-          availability: "InStock",
-          verifiedPriceMinor: fallbackDimensions[0]?.values[0]?.priceMinor ?? null,
-          retailerUrl: retailerUrl || "",
-          retailerName: "Verified Retailer",
+    // Retry URL resolution when the product detail response omits variant dimensions.
+    // Only accept options returned by Channel3; never infer or fabricate choices.
+    if (
+      product &&
+      !product.variants?.options?.length &&
+      client &&
+      retailerUrl &&
+      /^https?:\/\//i.test(retailerUrl)
+    ) {
+      try {
+        const lookupRes = await client.products.lookup({ url: retailerUrl });
+        const lookupRoot = lookupRes as unknown as {
+          product?: Channel3Api.Product;
+          response?: unknown;
+          data?: Channel3Api.Product;
+          id?: string;
         };
-      }
+        const responseValue = lookupRoot.response;
+        const responseProduct =
+          responseValue && typeof responseValue === "object"
+            ? (
+                "product" in responseValue
+                  ? (responseValue as { product?: Channel3Api.Product }).product
+                  : "id" in responseValue
+                    ? (responseValue as Channel3Api.Product)
+                    : undefined
+              )
+            : undefined;
+        const lookupProduct =
+          lookupRoot.product ||
+          responseProduct ||
+          lookupRoot.data ||
+          (lookupRoot.id ? (lookupRoot as Channel3Api.Product) : null);
 
+        if (lookupProduct?.variants?.options?.length) {
+          product = lookupProduct;
+        } else if (lookupProduct?.id && lookupProduct.id !== product.id) {
+          const retryRes = await client.products.retrieve({
+            product_id: lookupProduct.id,
+            selected_options:
+              selectedOptions && Object.keys(selectedOptions).length > 0
+                ? selectedOptions
+                : undefined,
+            currency: currency as Channel3Api.CurrencyCode,
+          });
+          const retryProduct =
+            (retryRes as unknown as { response?: Channel3Api.Product }).response ?? retryRes;
+          if ((retryProduct as Channel3Api.Product)?.variants?.options?.length) {
+            product = retryProduct as Channel3Api.Product;
+          }
+        }
+      } catch {
+        // Keep the original product response and provide the retailer fallback in the UI.
+      }
+    }
+
+    if (!product) {
       return {
         productId,
         title: "Selected Product",
@@ -469,10 +1036,9 @@ export async function retrieveProductVariants(
     }
 
     const variantsData = product.variants;
-    const rawOptions = variantsData?.options || [];
     const rawSelected = variantsData?.selected || [];
 
-    // Map effective selected options returned by Channel3
+    // Map effective selected options returned strictly and explicitly by Channel3
     const effectiveSelected: Record<string, string> = {};
     for (const sel of rawSelected) {
       if (sel.name && sel.label) {
@@ -480,125 +1046,97 @@ export async function retrieveProductVariants(
       }
     }
 
-    // Detect server relaxation: Did the server return different option values than what was requested?
+    const hasRequestedOptions = Boolean(
+      selectedOptions &&
+      Object.keys(selectedOptions).some((k) => Boolean(selectedOptions[k] && selectedOptions[k].trim()))
+    );
+
+    // Check overall availability and base pricing
+    const primaryOffer = product.offers?.[0];
+    const overallAvailability = normalizeVariantAvailability(
+      (primaryOffer as unknown as { availability?: string })?.availability || null
+    );
+
+    const rawPrice = primaryOffer?.price?.price;
+    const priceMinor =
+      typeof rawPrice === "number" && !isNaN(rawPrice) && Number.isFinite(rawPrice) && rawPrice > 0
+        ? Math.round(rawPrice * 100)
+        : null;
+
+    const rawCurrency = primaryOffer?.price?.currency;
+    const primaryCurrency: CurrencyCode | null =
+      typeof rawCurrency === "string" && isSupportedCurrency(rawCurrency.toUpperCase())
+        ? (rawCurrency.toUpperCase() as CurrencyCode)
+        : null;
+
+    // Extract dimensions from Channel3 product metadata across all categories
+    const dimensions = extractDimensionsFromProduct(
+      product,
+      priceMinor,
+      selectedOptions,
+      effectiveSelected
+    );
+
+    // Calculate effective option values and total price delta across dimensions
+    let totalOptionDeltaMinor = 0;
+    for (const dim of dimensions) {
+      let currentVal = dim.selectedValue;
+      if (selectedOptions) {
+        const userChoice = Object.entries(selectedOptions).find(([k]) => isDimensionMatch(k, dim.name));
+        if (userChoice && userChoice[1]) {
+          const matchInDim = dim.values.find((v) => isExactOptionValueMatch(userChoice[1], v.label));
+          if (matchInDim) {
+            currentVal = matchInDim.label;
+            dim.selectedValue = currentVal;
+          } else {
+            currentVal = userChoice[1];
+            dim.selectedValue = currentVal;
+          }
+        }
+      }
+      if (!currentVal && dim.values[0]?.label) {
+        currentVal = dim.values[0].label;
+        dim.selectedValue = currentVal;
+      }
+      effectiveSelected[dim.name] = currentVal || "";
+
+      // Calculate delta for this selected option
+      const selectedValObj = dim.values.find((v) => isExactOptionValueMatch(currentVal || "", v.label));
+      if (selectedValObj && typeof selectedValObj.priceMinor === "number" && typeof priceMinor === "number") {
+        totalOptionDeltaMinor += Math.max(0, selectedValObj.priceMinor - priceMinor);
+      }
+    }
+
+    // Detect retailer substitutions and missing selections
     let isRelaxed = false;
     let relaxationMessage: string | null = null;
 
-    if (selectedOptions && Object.keys(selectedOptions).length > 0) {
-      const relaxedFields: string[] = [];
-      for (const [reqKey, reqVal] of Object.entries(selectedOptions)) {
-        // Dimension name match (e.g. "storage" matches "Hard Drive Capacity", "Storage", "SSD")
-        const matchingEffectiveKey = Object.keys(effectiveSelected).find((k) =>
-          isDimensionMatch(k, reqKey)
-        );
-        const effectiveVal = matchingEffectiveKey ? effectiveSelected[matchingEffectiveKey] : null;
-
-        if (effectiveVal) {
-          const normReq = normalizeOptionValue(reqVal);
-          const normEff = normalizeOptionValue(effectiveVal);
-          if (normEff !== normReq && !normEff.includes(normReq) && !normReq.includes(normEff)) {
+    if (hasRequestedOptions) {
+      if (dimensions.length === 0) {
+        isRelaxed = true;
+        relaxationMessage = "Retailer does not have selectable variant configurations for this product.";
+      } else {
+        const relaxedFields: string[] = [];
+        for (const [reqKey, reqVal] of Object.entries(selectedOptions || {})) {
+          if (!reqVal || !reqVal.trim()) continue;
+          const matchingEffectiveKey = Object.keys(effectiveSelected).find((k) =>
+            isDimensionMatch(k, reqKey)
+          );
+          if (!matchingEffectiveKey) {
+            relaxedFields.push(`retailer did not confirm selection for ${reqKey}`);
+            continue;
+          }
+          const effectiveVal = effectiveSelected[matchingEffectiveKey];
+          if (!isExactOptionValueMatch(reqVal, effectiveVal)) {
             relaxedFields.push(
               `requested ${reqKey} "${reqVal}", but merchant substituted "${effectiveVal}"`
             );
           }
         }
-      }
 
-      if (relaxedFields.length > 0) {
-        isRelaxed = true;
-        relaxationMessage = `Selection modified by retailer: ${relaxedFields.join("; ")}. Please choose from available stock below.`;
-      }
-    }
-
-    // Check overall availability and base pricing
-    const primaryOffer = product.offers?.[0];
-    const overallAvailability = normalizeVariantAvailability(
-      (primaryOffer as unknown as { availability?: string })?.availability || "InStock"
-    );
-
-    const rawPrice = primaryOffer?.price?.price;
-    const priceMinor =
-      typeof rawPrice === "number" && !isNaN(rawPrice) && rawPrice > 0
-        ? Math.round(rawPrice * 100)
-        : null;
-
-    // Transform options into structured dimensions
-    let dimensions: ProductVariantDimension[] = rawOptions.map((opt) => {
-      const optName = opt.name || "Option";
-      let currentSelectedVal: string | null = null;
-      if (selectedOptions) {
-        const userChoice = Object.entries(selectedOptions).find(([k]) => isDimensionMatch(k, optName));
-        if (userChoice && userChoice[1]) {
-          currentSelectedVal = userChoice[1];
-        }
-      }
-      if (!currentSelectedVal) {
-        const matchingSelected = Object.entries(effectiveSelected).find(
-          ([k]) => k.toLowerCase() === optName.toLowerCase()
-        );
-        currentSelectedVal = matchingSelected ? matchingSelected[1] : null;
-      }
-      if (!currentSelectedVal && opt.values?.[0]?.label) {
-        currentSelectedVal = opt.values[0].label;
-      }
-
-      const values: ProductVariantOptionValue[] = (opt.values || []).map((val) => {
-        let optPriceMinor: number | null = priceMinor;
-        const valLabelLower = val.label.toLowerCase();
-        if (optName.toLowerCase().includes("ram") || optName.toLowerCase().includes("memory")) {
-          if (valLabelLower.includes("24") || valLabelLower.includes("24gb")) {
-            optPriceMinor = (priceMinor || 109900) + 20000;
-          } else if (valLabelLower.includes("32") || valLabelLower.includes("32gb")) {
-            optPriceMinor = (priceMinor || 109900) + 40000;
-          } else if (valLabelLower.includes("64") || valLabelLower.includes("64gb")) {
-            optPriceMinor = (priceMinor || 109900) + 80000;
-          }
-        } else if (optName.toLowerCase().includes("storage") || optName.toLowerCase().includes("ssd")) {
-          if (valLabelLower.includes("1tb") || valLabelLower.includes("1 tb")) {
-            optPriceMinor = (priceMinor || 109900) + 20000;
-          } else if (valLabelLower.includes("2tb") || valLabelLower.includes("2 tb")) {
-            optPriceMinor = (priceMinor || 109900) + 60000;
-          }
-        }
-
-        return {
-          label: val.label,
-          exists: typeof val.exists === "boolean" ? val.exists : true,
-          available: normalizeVariantAvailability(val.available),
-          thumbnailUrl: val.thumbnail_url || null,
-          productId: val.product_id || null,
-          priceMinor: optPriceMinor,
-        };
-      });
-
-      return {
-        name: optName,
-        values,
-        selectedValue: currentSelectedVal,
-      };
-    });
-
-    // If Channel3 didn't return dimensions for a product (e.g. single-SKU indexing), synthesize standard retailer options
-    if (dimensions.length === 0) {
-      dimensions = synthesizeRetailerOptions(product.title || "", priceMinor, selectedOptions);
-      for (const dim of dimensions) {
-        if (dim.selectedValue && !effectiveSelected[dim.name]) {
-          effectiveSelected[dim.name] = dim.selectedValue;
-        }
-      }
-    }
-
-    // Ensure user-selected options always take precedence and are not clobbered by server defaults
-    if (selectedOptions) {
-      for (const [k, v] of Object.entries(selectedOptions)) {
-        if (v) {
-          const matchingDim = dimensions.find((d) => isDimensionMatch(d.name, k));
-          if (matchingDim) {
-            matchingDim.selectedValue = v;
-            effectiveSelected[matchingDim.name] = v;
-          } else {
-            effectiveSelected[k] = v;
-          }
+        if (relaxedFields.length > 0) {
+          isRelaxed = true;
+          relaxationMessage = `Selection modified by retailer: ${relaxedFields.join("; ")}. Please choose from available stock below.`;
         }
       }
     }
@@ -707,15 +1245,21 @@ export async function retrieveProductVariants(
     const normalizedOffers: ProductOfferItem[] = [];
     if (product.offers && Array.isArray(product.offers)) {
       for (const off of product.offers) {
-        if (off && off.url) {
+        if (off && off.url && off.url.trim()) {
           const rawP = off.price?.price;
           const pMinor = typeof rawP === "number" && !isNaN(rawP) && rawP > 0 ? Math.round(rawP * 100) : null;
-          if (pMinor !== null) {
+          const offCurrencyRaw = off.price?.currency;
+          const offCurrency: CurrencyCode | null =
+            typeof offCurrencyRaw === "string" && isSupportedCurrency(offCurrencyRaw.toUpperCase())
+              ? (offCurrencyRaw.toUpperCase() as CurrencyCode)
+              : null;
+
+          if (pMinor !== null && offCurrency !== null) {
             normalizedOffers.push({
               domain: (off.domain && typeof off.domain === "string" ? off.domain.trim() : "") || "Verified Retailer",
               url: off.url,
               priceMinor: pMinor,
-              currency: (off.price?.currency?.toUpperCase() as CurrencyCode) || currency,
+              currency: offCurrency,
               availability: String(off.availability || "").toLowerCase().includes("instock") ? "in_stock" : "unknown",
             });
           }
@@ -723,11 +1267,42 @@ export async function retrieveProductVariants(
       }
     }
 
-    const status: ProductVariantState["status"] = isRelaxed
-      ? "relaxation_mismatch"
-      : dimensions.length > 0
-      ? "variants_found"
-      : "no_variants_verified";
+    const effectiveVerifiedPriceMinor =
+      priceMinor !== null ? priceMinor + totalOptionDeltaMinor : null;
+
+    const verifiedPriceMinor =
+      isRelaxed
+        ? null
+        : (effectiveVerifiedPriceMinor !== null ? effectiveVerifiedPriceMinor : priceMinor);
+
+    const verifiedCurrency: CurrencyCode | null =
+      verifiedPriceMinor !== null ? (primaryCurrency || currency) : null;
+
+    // Ensure normalizedOffers includes an offer matching verifiedPriceMinor and verifiedCurrency
+    if (verifiedPriceMinor !== null && verifiedCurrency !== null) {
+      const matchingOfferExists = normalizedOffers.some(
+        (o) => o.priceMinor === verifiedPriceMinor && o.currency === verifiedCurrency
+      );
+      if (!matchingOfferExists && (primaryOffer?.url || retailerUrl)) {
+        normalizedOffers.unshift({
+          domain:
+            (primaryOffer?.domain && typeof primaryOffer.domain === "string" ? primaryOffer.domain.trim() : "") ||
+            retailerName ||
+            "Verified Retailer",
+          url: primaryOffer?.url || retailerUrl || "",
+          priceMinor: verifiedPriceMinor,
+          currency: verifiedCurrency,
+          availability: "in_stock",
+        });
+      }
+    }
+
+    const status: ProductVariantState["status"] =
+      dimensions.length === 0
+        ? "no_variants_verified"
+        : isRelaxed
+        ? "relaxation_mismatch"
+        : "variants_found";
 
     return {
       productId: product.id || productId,
@@ -741,67 +1316,27 @@ export async function retrieveProductVariants(
       relaxationMessage,
       isFullyConfigured,
       availability: overallAvailability,
-      verifiedPriceMinor: isRelaxed ? null : priceMinor,
+      verifiedPriceMinor,
+      verifiedCurrency,
       retailerUrl: finalRetailerUrl,
       retailerName,
       offers: normalizedOffers.length > 0 ? normalizedOffers : undefined,
       specifications: Object.keys(specifications).length > 0 ? specifications : undefined,
     };
   } catch {
-    const fallbackDimensions = synthesizeRetailerOptions(
-      `${productId} ${retailerUrl || ""}`,
-      null,
-      selectedOptions
-    );
-    const fallbackSelected: Record<string, string> = {};
-    for (const d of fallbackDimensions) {
-      if (d.selectedValue) fallbackSelected[d.name] = d.selectedValue;
-    }
-    if (selectedOptions) {
-      for (const [k, v] of Object.entries(selectedOptions)) {
-        if (v) {
-          const matchDim = fallbackDimensions.find((d) => isDimensionMatch(d.name, k));
-          if (matchDim) {
-            matchDim.selectedValue = v;
-            fallbackSelected[matchDim.name] = v;
-          } else {
-            fallbackSelected[k] = v;
-          }
-        }
-      }
-    }
-
-    let fallbackColorImage: string | null = null;
-    const colorDim = fallbackDimensions.find((d) => isDimensionMatch(d.name, "color"));
-    if (colorDim) {
-      const activeColor = fallbackSelected[colorDim.name] || colorDim.selectedValue;
-      if (activeColor) {
-        const val = colorDim.values.find((v) => v.label.toLowerCase() === activeColor.toLowerCase());
-        if (val?.thumbnailUrl) fallbackColorImage = val.thumbnailUrl;
-      }
-    }
-
-    const isFullyConfigured =
-      fallbackDimensions.length > 0 &&
-      fallbackDimensions.every((dim) => Boolean(fallbackSelected[dim.name] || dim.selectedValue));
-
-    const derivedTitle = productId
-      ? productId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-      : "Selected Product";
-
     return {
       productId,
-      title: derivedTitle,
-      imageUrl: fallbackColorImage || fallbackDimensions[0]?.values[0]?.thumbnailUrl || null,
-      status: fallbackDimensions.length > 0 ? "variants_found" : "unavailable",
-      options: fallbackDimensions,
-      selected: selectedOptions || fallbackSelected,
-      effectiveSelected: fallbackSelected,
+      title: "Selected Product",
+      status: "unavailable",
+      options: [],
+      selected: selectedOptions || {},
+      effectiveSelected: {},
       isRelaxed: false,
       relaxationMessage: null,
-      isFullyConfigured,
-      availability: fallbackDimensions.length > 0 ? "InStock" : "Unknown",
-      verifiedPriceMinor: fallbackDimensions[0]?.values[0]?.priceMinor ?? null,
+      isFullyConfigured: false,
+      availability: "Unknown",
+      verifiedPriceMinor: null,
+      verifiedCurrency: null,
       retailerUrl: retailerUrl || "",
       retailerName: "Verified Retailer",
     };

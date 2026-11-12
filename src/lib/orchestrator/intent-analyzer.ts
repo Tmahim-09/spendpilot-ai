@@ -107,6 +107,40 @@ export function detectDomainFromText(text: string): string | null {
 }
 
 /**
+ * Checks if a user message is a pure conversational acknowledgement or expression of gratitude/agreement.
+ */
+export function isConversationalAcknowledgement(text: string): boolean {
+  if (!text) return false;
+  const trimmed = text.trim().toLowerCase().replace(/[!.?,]/g, "");
+  const acknowledgements = new Set([
+    "ok",
+    "okay",
+    "k",
+    "thanks",
+    "thank you",
+    "thx",
+    "great",
+    "cool",
+    "sounds good",
+    "nice",
+    "got it",
+    "understood",
+    "awesome",
+    "perfect",
+    "good",
+    "sure",
+    "alright",
+    "yep",
+    "yes",
+    "fine",
+    "no problem",
+    "super",
+    "looks good",
+  ]);
+  return acknowledgements.has(trimmed);
+}
+
+/**
  * Pure deterministic intent analyzer for user turns.
  * Identifies whether a turn starts a new task, refines existing requirements, answers questions, or asks product details.
  */
@@ -221,6 +255,15 @@ export function analyzeUserShoppingIntent(
       type: "ask_product_question",
       confidence: 0.85,
       explanation: "User asked a clarifying question regarding a product or specification.",
+    };
+  }
+
+  // 6b. Conversational acknowledgement ("ok", "thanks", "great", "cool")
+  if (isConversationalAcknowledgement(message)) {
+    return {
+      type: "unrelated_query",
+      confidence: 0.95,
+      explanation: "Conversational acknowledgement or appreciation.",
     };
   }
 

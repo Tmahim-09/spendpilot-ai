@@ -4,7 +4,7 @@ import type {
   ShoppingItem,
   ShoppingItemPriority,
 } from "./types.ts";
-import type { ShoppingBrief } from "../orchestrator/types.ts";
+import type { ShoppingBrief, ProductRequirement } from "../orchestrator/types.ts";
 import type { CurrencyCode } from "../../types/index.ts";
 import {
   createInitialWorkspace,
@@ -241,6 +241,7 @@ export function syncWorkspaceFromBrief(
             productRequest: req.displayName || req.category,
             category: req.category,
             displayName: req.displayName,
+            requirementId: req.id,
             hardConstraints: req.constraints.reduce((acc, c) => {
               acc[c.key] = c.value;
               return acc;
@@ -274,31 +275,53 @@ export function syncWorkspaceFromBrief(
     } else {
       // Independent items (single or multiple)
       let independentGroup = ws.groups.find((g) => g.type === "independent");
+      const defaultBudgetMinor = brief.budget?.maximum?.amountMinor;
+      const defaultBudgetCurrency =
+        (brief.budget?.maximum?.currency as CurrencyCode) || currency;
 
       if (!independentGroup) {
-        const newItems: ShoppingItem[] = brief.productRequirements.map((req) => ({
-          id: req.id,
-          productRequest: req.displayName || req.category,
-          category: req.category,
-          displayName: req.displayName,
-          hardConstraints: req.constraints.reduce((acc, c) => {
-            acc[c.key] = c.value;
-            return acc;
-          }, {} as Record<string, string | number | boolean>),
-          preferences: {},
-          priority: "essential",
-          status: "ready_to_search",
-          candidates: [],
-          dependencies: [],
-          answeredQuestionIds: [],
-          searchQuery: req.searchQuery || req.displayName,
-        }));
+        const newItems: ShoppingItem[] = brief.productRequirements.map((req) => {
+          const itemBudgetMinor = req.suggestedBudgetMinor ?? defaultBudgetMinor;
+          return {
+            id: req.id,
+            productRequest: req.displayName || req.category,
+            category: req.category,
+            displayName: req.displayName,
+            requirementId: req.id,
+            hardConstraints: req.constraints.reduce((acc, c) => {
+              acc[c.key] = c.value;
+              return acc;
+            }, {} as Record<string, string | number | boolean>),
+            preferences: {},
+            individualBudget: itemBudgetMinor
+              ? {
+                  amountMinor: itemBudgetMinor,
+                  currency: defaultBudgetCurrency,
+                  strict: true,
+                }
+              : undefined,
+            priority: "essential",
+            status: "ready_to_search",
+            candidates: [],
+            dependencies: [],
+            answeredQuestionIds: [],
+            searchQuery: req.searchQuery || req.displayName,
+          };
+        });
 
         independentGroup = {
           id: `grp_indep_${now}`,
           type: "independent",
           title: "My Shopping List",
           sharedRequirements: {},
+          budget: defaultBudgetMinor
+            ? {
+                amountMinor: defaultBudgetMinor,
+                currency: defaultBudgetCurrency,
+                scope: "group",
+                strict: true,
+              }
+            : undefined,
           items: newItems,
           status: "searching",
           createdAt: now,
@@ -326,12 +349,25 @@ export function syncWorkspaceFromBrief(
             return acc;
           }, { ...item.hardConstraints });
 
+          const itemBudgetMinor =
+            matchingReq.suggestedBudgetMinor ??
+            item.individualBudget?.amountMinor ??
+            defaultBudgetMinor;
+
           return {
             ...item,
             productRequest: matchingReq.displayName || matchingReq.category,
             category: matchingReq.category,
             displayName: matchingReq.displayName,
+            requirementId: matchingReq.id,
             hardConstraints: updatedConstraints,
+            individualBudget: itemBudgetMinor
+              ? {
+                  amountMinor: itemBudgetMinor,
+                  currency: item.individualBudget?.currency || defaultBudgetCurrency,
+                  strict: true,
+                }
+              : item.individualBudget,
             searchQuery: matchingReq.searchQuery || item.searchQuery,
           };
         });
@@ -340,28 +376,49 @@ export function syncWorkspaceFromBrief(
         const existingItemIds = new Set(independentGroup.items.map((i) => i.id));
         const newReqs = brief.productRequirements.filter((r) => !existingItemIds.has(r.id));
 
-        const appendedItems: ShoppingItem[] = newReqs.map((req) => ({
-          id: req.id,
-          productRequest: req.displayName || req.category,
-          category: req.category,
-          displayName: req.displayName,
-          hardConstraints: req.constraints.reduce((acc, c) => {
-            acc[c.key] = c.value;
-            return acc;
-          }, {} as Record<string, string | number | boolean>),
-          preferences: {},
-          priority: "essential",
-          status: "ready_to_search",
-          candidates: [],
-          dependencies: [],
-          answeredQuestionIds: [],
-          searchQuery: req.searchQuery || req.displayName,
-        }));
+        const appendedItems: ShoppingItem[] = newReqs.map((req) => {
+          const itemBudgetMinor = req.suggestedBudgetMinor ?? defaultBudgetMinor;
+          return {
+            id: req.id,
+            productRequest: req.displayName || req.category,
+            category: req.category,
+            displayName: req.displayName,
+            requirementId: req.id,
+            hardConstraints: req.constraints.reduce((acc, c) => {
+              acc[c.key] = c.value;
+              return acc;
+            }, {} as Record<string, string | number | boolean>),
+            preferences: {},
+            individualBudget: itemBudgetMinor
+              ? {
+                  amountMinor: itemBudgetMinor,
+                  currency: defaultBudgetCurrency,
+                  strict: true,
+                }
+              : undefined,
+            priority: "essential",
+            status: "ready_to_search",
+            candidates: [],
+            dependencies: [],
+            answeredQuestionIds: [],
+            searchQuery: req.searchQuery || req.displayName,
+          };
+        });
 
         const finalItems = [...updatedExistingItems, ...appendedItems];
 
         const updatedGroup: ShoppingGroup = {
           ...independentGroup,
+          budget:
+            independentGroup.budget ??
+            (defaultBudgetMinor
+              ? {
+                  amountMinor: defaultBudgetMinor,
+                  currency: defaultBudgetCurrency,
+                  scope: "group",
+                  strict: true,
+                }
+              : undefined),
           items: finalItems,
           updatedAt: now,
         };
@@ -393,4 +450,49 @@ export function syncWorkspaceFromBrief(
   }
 
   return ws;
+}
+
+/**
+ * Resolves the corresponding ProductRequirement for a ShoppingItem using explicit IDs,
+ * never by array position or first search query.
+ */
+export function resolveRequirementForItem(
+  brief: ShoppingBrief | undefined | null,
+  item: ShoppingItem | undefined | null
+): ProductRequirement | null {
+  if (!brief || !brief.productRequirements || brief.productRequirements.length === 0 || !item) {
+    return null;
+  }
+
+  // 1. Explicit requirementId on the item
+  if (item.requirementId) {
+    const found = brief.productRequirements.find((r) => r.id === item.requirementId);
+    if (found) return found;
+  }
+
+  // 2. Exact item.id matching req.id
+  const foundById = brief.productRequirements.find((r) => r.id === item.id);
+  if (foundById) return foundById;
+
+  // 3. Reconcile using explicit name/request matching
+  const itemRequest = (item.productRequest || item.displayName || "").trim().toLowerCase();
+  if (itemRequest) {
+    const foundByReq = brief.productRequirements.find((r) => {
+      const reqName = (r.displayName || r.searchQuery || "").trim().toLowerCase();
+      return (
+        reqName === itemRequest ||
+        (reqName.length >= 3 && itemRequest.includes(reqName)) ||
+        (itemRequest.length >= 3 && reqName.includes(itemRequest))
+      );
+    });
+    if (foundByReq) return foundByReq;
+  }
+
+  // 4. Safe single requirement fallback (only if brief has exactly 1 requirement)
+  if (brief.productRequirements.length === 1) {
+    return brief.productRequirements[0];
+  }
+
+  // Multi-requirement brief where no explicit match exists: do NOT silently guess first requirement!
+  return null;
 }

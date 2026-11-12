@@ -4,6 +4,11 @@ import { orchestrateShoppingTurn } from "../src/lib/orchestrator/index.ts";
 import { streamConciergeTurn } from "../src/lib/concierge/streaming-engine.ts";
 import { isDelegatedOrNoPreference } from "../src/lib/orchestrator/intent-analyzer.ts";
 import { processUserMessage, createInitialSession } from "../src/lib/ai/conversation-engine.ts";
+import {
+  getActiveWorkspaceItem,
+  updateItemSearchResults,
+  findItemInWorkspace,
+} from "../src/lib/workspace/workspace-manager.ts";
 import type { AuthoritativeShoppingSession } from "../src/types/index.ts";
 import type { ConciergeStreamEvent } from "../src/lib/concierge/types.ts";
 
@@ -167,5 +172,106 @@ test("Laptop Flow: 'u suggest' triggers warm thinking & delegation response with
     });
 
     assert.equal(result.shouldExecuteSearch, false, "shouldExecuteSearch must be strictly false when asking a question");
+  });
+
+  await t.test("Unit 6: MacBook under 1200 USD request streams search action and synchronizes workspace item for direct search", async () => {
+    const initialSession: AuthoritativeShoppingSession = createInitialSession({
+      sessionId: "session_macbook_test",
+      initialQuery: "macbook under 1200 usd for programming",
+    });
+
+    const events: ConciergeStreamEvent[] = [];
+    let streamedText = "";
+    for await (const evt of streamConciergeTurn({
+      userMessage: "macbook under 1200 usd for programming",
+      session: initialSession,
+    })) {
+      events.push(evt);
+      if (evt.type === "delta" && evt.text) {
+        streamedText += evt.text;
+      }
+    }
+
+    const doneEvt = events.find((e) => e.type === "done");
+    assert.ok(doneEvt && doneEvt.session, "Stream must complete with a session");
+    assert.equal(doneEvt.shouldExecuteSearch, true, "MacBook query with budget and use-case must execute search");
+    assert.ok(!/\?\s*$/.test(streamedText.trim()), "Assistant message must not end in a question mark");
+
+    const ws = doneEvt.session.workspace;
+    assert.ok(ws, "Workspace must exist");
+    assert.ok(ws.groups.length > 0, "Workspace must contain at least one group");
+
+    const activeItem = getActiveWorkspaceItem(ws);
+    assert.ok(activeItem, "Active workspace item must be retrievable");
+    assert.ok(
+      activeItem.productRequest.toLowerCase().includes("macbook") ||
+      (activeItem.displayName && activeItem.displayName.toLowerCase().includes("macbook")),
+      "Active workspace item must be for MacBook"
+    );
+
+    // Verify search lifecycle transition on this item
+    const searchId = `search_${activeItem.id}_1_${Date.now()}`;
+    const searchingWs = updateItemSearchResults(ws, activeItem.id, {
+      searchId,
+      searchStatus: "searching",
+    });
+    assert.notEqual(searchingWs, ws, "Workspace must accept searching transition");
+    const searchingItem = findItemInWorkspace(searchingWs, activeItem.id);
+    assert.equal(searchingItem?.item.searchStatus, "searching");
+
+    const completedWs = updateItemSearchResults(searchingWs, activeItem.id, {
+      searchId,
+      searchStatus: "completed",
+      candidates: [],
+    });
+    assert.notEqual(completedWs, searchingWs, "Workspace must accept completed transition");
+    const completedItem = findItemInWorkspace(completedWs, activeItem.id);
+    assert.equal(completedItem?.item.searchStatus, "completed");
+  });
+
+  await t.test("Unit 7: 'asking for a macbook under 1200 usd for programming' streams search action with budget $1200 and MacBook item", async () => {
+    const initialSession: AuthoritativeShoppingSession = createInitialSession({
+      sessionId: "session_macbook_phrase_test",
+      initialQuery: "asking for a macbook under 1200 usd for programming",
+    });
+
+    const events: ConciergeStreamEvent[] = [];
+    for await (const evt of streamConciergeTurn({
+      userMessage: "asking for a macbook under 1200 usd for programming",
+      session: initialSession,
+    })) {
+      events.push(evt);
+    }
+
+    const doneEvt = events.find((e) => e.type === "done");
+    assert.ok(doneEvt && doneEvt.session, "Stream must complete with a session");
+    assert.equal(doneEvt.shouldExecuteSearch, true, "Search must be triggered");
+
+    const activeItem = getActiveWorkspaceItem(doneEvt.session.workspace);
+    assert.ok(activeItem, "Active workspace item must exist");
+    assert.ok(Boolean(activeItem.displayName && activeItem.displayName.includes("MacBook")), "Display name must be MacBook");
+    assert.equal(activeItem.individualBudget?.amountMinor, 120000);
+    assert.equal(activeItem.individualBudget?.currency, "USD");
+  });
+
+  await t.test("Unit 8: Bare 'asking for a macbook under 1200 usd' without use-case asks primary use question", async () => {
+    const initialSession: AuthoritativeShoppingSession = createInitialSession({
+      sessionId: "session_macbook_bare_test",
+      initialQuery: "asking for a macbook under 1200 usd",
+    });
+
+    const events: ConciergeStreamEvent[] = [];
+    for await (const evt of streamConciergeTurn({
+      userMessage: "asking for a macbook under 1200 usd",
+      session: initialSession,
+    })) {
+      events.push(evt);
+    }
+
+    const doneEvt = events.find((e) => e.type === "done");
+    assert.ok(doneEvt && doneEvt.session, "Stream must complete with a session");
+    assert.equal(doneEvt.shouldExecuteSearch, false, "Search must wait for use-case clarification");
+    assert.ok(doneEvt.session.activeQuestion, "Must ask primary use question");
+    assert.equal(doneEvt.session.activeQuestion.attributeKey, "primary_use");
   });
 });

@@ -24,11 +24,12 @@ import {
   Layers,
   ArrowRight,
 } from "lucide-react";
-import { formatSafeBudget } from "@/lib/utils";
+import { formatBudgetMinor, formatBudgetMajor } from "@/lib/money";
 
 interface LiveProductResultsProps {
   query: string | null;
   budget: number | null;
+  budgetMinor?: number | null;
   currency: CurrencyCode;
   products: NormalizedProduct[];
   comparison?: AiComparisonResult | null;
@@ -65,6 +66,7 @@ interface LiveProductResultsProps {
 export function LiveProductResults({
   query,
   budget,
+  budgetMinor,
   currency,
   products,
   comparison = null,
@@ -94,6 +96,12 @@ export function LiveProductResults({
   configuredProductIds = new Set(),
   selectedProductIds = new Set(),
 }: LiveProductResultsProps) {
+  const formattedBudget =
+    budgetMinor != null
+      ? formatBudgetMinor(budgetMinor, currency)
+      : budget != null
+      ? formatBudgetMajor(budget, currency)
+      : null;
   // State 1: Clearly Unrelated Prompt (Zero API calls made, instant witty response)
   if (playfulNotice) {
     return (
@@ -290,7 +298,7 @@ export function LiveProductResults({
             </h3>
             <p className="text-xs sm:text-sm text-zinc-600 dark:text-[#A3A3A3] max-w-md mx-auto mb-6">
               We couldn&apos;t find verified products matching &ldquo;{query}&rdquo;
-              {budget ? ` under ${formatSafeBudget(budget, currency)}` : ""}. Try using broader search terms or increasing your budget limit.
+              {formattedBudget ? ` under ${formattedBudget}` : ""}. Try using broader search terms or increasing your budget limit.
             </p>
             {onRetry && (
               <button
@@ -367,9 +375,9 @@ export function LiveProductResults({
                 </span>
               )}
 
-              {isRangeExpanded && (
+              {isRangeExpanded && formattedBudget && (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF6A00]/40 bg-[#FF6A00]/10 px-2.5 py-0.5 text-xs font-semibold text-[#FF8126]">
-                  <span>Expanded Price Range (All items &le; {formatSafeBudget(budget, currency)})</span>
+                  <span>Expanded Price Range (All items &le; {formattedBudget})</span>
                 </span>
               )}
             </div>
@@ -379,12 +387,12 @@ export function LiveProductResults({
             </h2>
 
             <p className="text-xs text-zinc-600 dark:text-[#A3A3A3]">
-              Found {products.length} verified products
-              {budget ? (
+              Found {displayProducts.length} matching products
+              {formattedBudget ? (
                 <>
                   {" "}with starting prices under{" "}
                   <strong className="text-[#35C979] tabular-nums">
-                    {formatSafeBudget(budget, currency)}
+                    {formattedBudget}
                   </strong>
                 </>
               ) : ""}
@@ -450,6 +458,7 @@ export function LiveProductResults({
           <AiComparisonWorkspace
             query={query}
             budget={budget}
+            budgetMinor={budgetMinor}
             currency={currency}
             comparison={comparison}
             evidenceFacts={evidenceFacts}
@@ -468,12 +477,12 @@ export function LiveProductResults({
           <div className="flex items-center justify-between pb-2">
             <div className="space-y-0.5">
               <div className="flex items-center gap-2">
-                <Layers className="h-4 w-4 text-[#FF6A00] dark:text-[#888888]" />
+                <Layers className="h-4 w-4 text-[#FF6A00] dark:text-[#FF8126]" />
                 <h3 className="text-base sm:text-lg font-bold text-zinc-900 dark:text-[#F5F5F5]">
                   {comparison && aiStatus === "complete" ? "Product Details & Retailer Offers" : "Verified Retailer Offers"}
                 </h3>
               </div>
-              <p className="text-xs text-zinc-500 dark:text-[#737373]">
+              <p className="text-xs text-zinc-500 dark:text-[#A1A1AA]">
                 Direct links to verified merchant stores &bull; Prices and stock confirmed at merchant checkout
               </p>
             </div>
@@ -500,14 +509,14 @@ export function LiveProductResults({
         </section>
 
         {/* Transparent Policy & Merchant Notice */}
-        <div className="rounded-xl border border-orange-200 dark:border-[#222222] bg-[#FFF9F3] dark:bg-[#0e0e0e] p-4 text-xs text-zinc-600 dark:text-[#888888] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="rounded-xl border border-orange-200 dark:border-[#222222] bg-[#FFF9F3] dark:bg-[#0e0e0e] p-4 text-xs text-zinc-600 dark:text-[#D4D4D8] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <ShieldAlert className="h-4 w-4 text-[#F5B942] shrink-0" />
             <span>
               Prices and merchant stock availability are retrieved via Channel3 and confirmed directly on each retailer&apos;s site.
             </span>
           </div>
-          <span className="shrink-0 text-[11px] text-zinc-500 dark:text-[#737373]">
+          <span className="shrink-0 text-[11px] text-zinc-500 dark:text-[#A1A1AA]">
             Direct merchant referral links &bull; No markups or hidden fees
           </span>
         </div>

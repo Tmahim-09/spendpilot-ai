@@ -46,7 +46,7 @@ export async function getPayPalAccessToken(
 
   if (!clientId || !clientSecret) {
     throw new Error(
-      "Missing PayPal Sandbox credentials. Set NEXT_PUBLIC_PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET in .env.local."
+      "Missing PayPal Sandbox credentials. Set PAYPAL_CLIENT_ID (or NEXT_PUBLIC_PAYPAL_CLIENT_ID) and PAYPAL_CLIENT_SECRET in your environment variables."
     );
   }
 

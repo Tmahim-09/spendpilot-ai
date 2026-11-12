@@ -5,6 +5,8 @@ import type {
   SetupDecomposeResponsePayload,
 } from "@/types";
 
+export const maxDuration = 30;
+
 export async function POST(request: NextRequest) {
   const t0 = performance.now();
   const requestId = `dec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;

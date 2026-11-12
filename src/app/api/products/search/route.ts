@@ -15,6 +15,8 @@ import {
 import { verifyAndSelectOffer } from "@/lib/shopping/offer-verification";
 import type { SearchProductsResponsePayload } from "@/types";
 
+export const maxDuration = 25;
+
 export async function POST(request: NextRequest) {
   const t0 = performance.now();
   const requestId = `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -74,7 +76,7 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           error:
-            "CHANNEL3_API_KEY is not configured on the server. Please add your Channel3 API key to .env.local to enable live product searches.",
+            "CHANNEL3_API_KEY is not configured on the server. Please configure CHANNEL3_API_KEY in your environment variables to enable live product searches.",
         },
         { status: 503 }
       );

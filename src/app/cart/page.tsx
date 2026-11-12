@@ -29,8 +29,9 @@ import {
   saveWorkspaceToStorage,
   parseStoredWorkspace,
 } from "@/lib/workspace/workspace-storage";
-import { formatCurrency } from "@/lib/utils";
+import { formatMinorUnits, isSupportedCurrency } from "@/lib/money";
 import type { CurrencyCode } from "@/types";
+import type { WorkspaceBudgetSummary } from "@/lib/workspace/types";
 
 export default function CartPage() {
   const storedJson = useSyncExternalStore(
@@ -48,17 +49,28 @@ export default function CartPage() {
     saveWorkspaceToStorage(updated);
   };
 
-  const summary = workspace
+  const summary: WorkspaceBudgetSummary = workspace
     ? calculateWorkspaceBudgetSummary(workspace, currency)
     : {
         totalSelectedMinor: 0,
-        totalItemsCount: 0,
-        selectedItemsCount: 0,
+        totalsByCurrency: {},
+        selectedTotalInBudgetCurrencyMinor: null,
+        budgetCurrency: null,
+        status: "no_budget",
+        foreignCurrencyTotals: {},
+        unpricedCount: 0,
+        unsupportedCurrencyCount: 0,
         overallBudgetMinor: null,
         remainingMinor: null,
         isOverBudget: false,
         currency,
+        groups: [],
       };
+
+  const currencyEntries = Object.entries(summary.totalsByCurrency || {}).filter(
+    (e): e is [string, number] => typeof e[1] === "number" && e[1] > 0
+  );
+  const hasMultipleCurrencies = currencyEntries.length > 1;
 
   const selectedItemCount = workspace
     ? workspace.groups.reduce(
@@ -72,15 +84,26 @@ export default function CartPage() {
       .filter((i) => i.status === "selected" && i.selectedProduct)
       .map((i) => {
         const offer = i.selectedOffer || i.selectedProduct?.selectedOffer || i.selectedProduct?.offers?.[0];
+        const rawPrice = offer?.priceMinor ?? i.selectedProduct?.priceMinor ?? null;
+        const rawCurrency = offer?.currency || i.selectedProduct?.currency || null;
+        const isValidPrice =
+          typeof rawPrice === "number" &&
+          Number.isFinite(rawPrice) &&
+          Number.isSafeInteger(rawPrice) &&
+          rawPrice > 0;
+        const isSupported = isSupportedCurrency(rawCurrency);
+
         return {
           id: i.id,
           groupId: g.id,
           groupTitle: g.title,
           title: i.displayName || i.selectedProduct?.title || i.productRequest,
           product: i.selectedProduct,
-          priceMinor: offer?.priceMinor ?? i.selectedProduct?.priceMinor ?? 0,
-          currency: offer?.currency || currency,
-          offerUrl: offer?.url || i.selectedProduct?.offers?.[0]?.url || "#",
+          priceMinor: isValidPrice ? rawPrice : null,
+          currency: isSupported ? rawCurrency : null,
+          isValidPrice,
+          isSupportedCurrency: isSupported,
+          offerUrl: offer?.url || i.selectedProduct?.offers?.[0]?.url || i.selectedProduct?.retailerUrl || "#",
           domain: offer?.domain || i.selectedProduct?.retailerName || "Retailer",
           compatibility: i.compatibility,
           selectedVariant: i.selectedVariant,
@@ -102,6 +125,7 @@ export default function CartPage() {
         selectedItemCount={selectedItemCount}
         totalSelectedMinor={summary.totalSelectedMinor}
         currency={currency}
+        totalsByCurrency={summary.totalsByCurrency}
       />
 
       <main className="flex-1 py-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
@@ -207,9 +231,15 @@ export default function CartPage() {
                               {item.title}
                             </h3>
                           </div>
-                          <span className="font-mono text-base font-black text-zinc-900 dark:text-white">
-                            {formatCurrency(item.priceMinor, item.currency)}
-                          </span>
+                          {item.isValidPrice && item.isSupportedCurrency && item.priceMinor != null && item.currency ? (
+                            <span className="font-mono text-base font-black text-zinc-900 dark:text-white">
+                              {formatMinorUnits(item.priceMinor, item.currency)}
+                            </span>
+                          ) : (
+                            <span className="rounded-md bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-xs font-bold text-amber-600 dark:text-amber-400">
+                              Price unavailable
+                            </span>
+                          )}
                         </div>
 
                         {/* Selected Variant Information */}
@@ -304,44 +334,121 @@ export default function CartPage() {
                 </h2>
 
                 <div className="space-y-2 text-xs">
-                  <div className="flex items-center justify-between text-zinc-600 dark:text-zinc-400">
-                    <span>Selected Items ({selectedItemCount}):</span>
-                    <span className="font-mono font-bold text-zinc-900 dark:text-white">
-                      {formatCurrency(summary.totalSelectedMinor, summary.currency)}
-                    </span>
-                  </div>
+                  {currencyEntries.length === 0 ? (
+                    <div className="flex items-center justify-between text-zinc-600 dark:text-zinc-400">
+                      <span>Selected Items ({selectedItemCount}):</span>
+                      <span className="rounded-md bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-xs font-bold text-amber-600 dark:text-amber-400">
+                        Price unavailable
+                      </span>
+                    </div>
+                  ) : !hasMultipleCurrencies ? (
+                    <div className="flex items-center justify-between text-zinc-600 dark:text-zinc-400">
+                      <span>Selected Items ({selectedItemCount}):</span>
+                      <span className="font-mono font-bold text-zinc-900 dark:text-white">
+                        {formatMinorUnits(currencyEntries[0][1], currencyEntries[0][0] as CurrencyCode)}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 py-1">
+                      <div className="flex items-center justify-between text-zinc-600 dark:text-zinc-400">
+                        <span>Selected Items:</span>
+                        <span className="font-bold">{selectedItemCount} items</span>
+                      </div>
+                      <div className="rounded-xl border border-zinc-200 dark:border-[#222222] bg-zinc-50 dark:bg-[#161616] p-3 space-y-1.5">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Subtotals by Currency:</span>
+                        {currencyEntries.map(([c, minor]) => (
+                          <div key={c} className="flex items-center justify-between text-xs font-mono">
+                            <span className="font-bold text-zinc-700 dark:text-zinc-300">{c}:</span>
+                            <span className="font-bold text-zinc-900 dark:text-white">{formatMinorUnits(minor, c as CurrencyCode)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-                  {summary.overallBudgetMinor != null && (
+                  {summary.overallBudgetMinor != null && summary.budgetCurrency && (
                     <div className="flex items-center justify-between pt-2 border-t border-zinc-100 dark:border-[#1e1e1e]">
-                      <span className="text-zinc-500">Target Budget:</span>
+                      <span className="text-zinc-500">Target Budget ({summary.budgetCurrency}):</span>
                       <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                        {formatCurrency(summary.overallBudgetMinor, summary.currency)}
+                        {formatMinorUnits(summary.overallBudgetMinor, summary.budgetCurrency)}
                       </span>
                     </div>
                   )}
 
-                  {summary.remainingMinor != null && (
+                  {summary.remainingMinor != null && summary.budgetCurrency && (
                     <div className="flex items-center justify-between">
-                      <span className="text-zinc-500">Remaining Budget:</span>
+                      <span className="text-zinc-500">Remaining Budget ({summary.budgetCurrency}):</span>
                       <span
                         className={`font-mono font-bold ${
                           summary.isOverBudget ? "text-[#FF4A4A]" : "text-[#35C979]"
                         }`}
                       >
                         {summary.remainingMinor >= 0
-                          ? formatCurrency(summary.remainingMinor, summary.currency)
-                          : `-${formatCurrency(Math.abs(summary.remainingMinor), summary.currency)}`}
+                          ? formatMinorUnits(summary.remainingMinor, summary.budgetCurrency)
+                          : `-${formatMinorUnits(Math.abs(summary.remainingMinor), summary.budgetCurrency)}`}
                       </span>
                     </div>
                   )}
 
                   <div className="flex items-center justify-between pt-3 border-t border-zinc-200 dark:border-[#262626] text-sm">
                     <span className="font-bold text-zinc-900 dark:text-white">Total Amount:</span>
-                    <span className="font-mono font-black text-xl text-[#FF6A00]">
-                      {formatCurrency(summary.totalSelectedMinor, summary.currency)}
-                    </span>
+                    {currencyEntries.length === 0 ? (
+                      <span className="rounded-md bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 text-xs font-bold text-amber-600 dark:text-amber-400">
+                        Price unavailable
+                      </span>
+                    ) : !hasMultipleCurrencies ? (
+                      <span className="font-mono font-black text-xl text-[#FF6A00]">
+                        {formatMinorUnits(currencyEntries[0][1], currencyEntries[0][0] as CurrencyCode)}
+                      </span>
+                    ) : (
+                      <div className="flex flex-col items-end gap-1">
+                        {currencyEntries.map(([c, minor]) => (
+                          <span key={c} className="font-mono font-black text-base text-[#FF6A00]">
+                            {c}: {formatMinorUnits(minor, c as CurrencyCode)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
+
+                {summary.unpricedCount > 0 && (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>
+                      {summary.unpricedCount} selected item{summary.unpricedCount > 1 ? "s have" : " has"} unavailable or unverified pricing and {summary.unpricedCount > 1 ? "are" : "is"} excluded from budget totals.
+                    </span>
+                  </div>
+                )}
+
+                {summary.unsupportedCurrencyCount > 0 && (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>
+                      {summary.unsupportedCurrencyCount} selected item{summary.unsupportedCurrencyCount > 1 ? "s use" : " uses"} an unsupported currency and cannot participate in budget verification.
+                    </span>
+                  </div>
+                )}
+
+                {summary.status === "partially_comparable" && Object.keys(summary.foreignCurrencyTotals || {}).length > 0 && (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>
+                      Foreign-currency selections ({Object.entries(summary.foreignCurrencyTotals || {}).map(([c, m]) => `${c}: ${formatMinorUnits(m, c as CurrencyCode)}`).join(", ")}) are excluded from the {summary.budgetCurrency} target budget comparison.
+                    </span>
+                  </div>
+                )}
+
+                {summary.status === "not_comparable" && (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>
+                      {Object.keys(summary.foreignCurrencyTotals || {}).length > 0
+                        ? `Selected items are in currencies that differ from your stated target budget (${summary.budgetCurrency}). Monetary comparison requires an explicit conversion.`
+                        : `Selected items have unverified or missing prices preventing a complete monetary comparison against your target budget (${summary.budgetCurrency}).`}
+                    </span>
+                  </div>
+                )}
 
                 {summary.isOverBudget && (
                   <div className="rounded-xl border border-[#FF4A4A]/30 bg-[#241212] p-2.5 text-xs text-[#FF7A7A] flex items-center gap-2">
@@ -385,13 +492,13 @@ export default function CartPage() {
                   Multi-Seller Sandbox Checkout
                 </h3>
                 <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
-                  Looking to evaluate our server-authoritative multi-seller split capture integration with the PayPal Orders v2 API? Visit our dedicated PayPal Sandbox demonstration to test multi-seller split checkout across distinct merchants using mock funds.
+                  This is a separate Sandbox test with four fixed sample products and two test seller accounts. It does not charge the products in this cart or send money to the retailers listed above. Real retailer purchases still happen on each retailer&apos;s own checkout page. To take one PayPal payment and split it to real retailers, each retailer must join SpendPilot through PayPal&apos;s marketplace seller onboarding and authorize your platform. A Channel3 product link by itself cannot receive a PayPal payment.
                 </p>
                 <Link
                   href="/paypal-demo"
                   className="btn-3d-primary w-full py-2.5 text-xs font-bold rounded-xl flex items-center justify-center gap-2 text-white"
                 >
-                  <span>Launch PayPal Multi-Seller Demo</span>
+                  <span>Open PayPal Sandbox Demo</span>
                   <ArrowRight className="h-4 w-4" />
                 </Link>
               </div>

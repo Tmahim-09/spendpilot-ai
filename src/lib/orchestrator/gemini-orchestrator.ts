@@ -157,7 +157,7 @@ Your responsibility is turning natural language user requests into a clean, stru
 
 CRITICAL ARCHITECTURAL RULES:
 1. DECISION LOGIC FOR ACTION:
-   - "ask_question": Choose this whenever essential missing information materially affects product discovery or compatibility (e.g. appliance model number, specific dimensions, skin type for winter skincare, crampon boot binding type, keyboard switch type, etc.).
+   - "ask_question": Choose this whenever essential missing information materially affects product discovery or compatibility (e.g. appliance model number, specific dimensions, skin type for winter skincare, crampon boot binding type, keyboard switch type, etc.). For replacement parts, adapters, or components where model compatibility is required (e.g. washer agitator dogs, replacement filters, lens adapters), always ask for the exact appliance/device model number with options: [].
      * When action="ask_question", "clarification" MUST NOT BE NULL!
      * You MUST populate "clarification" with attributeKey, question, and options.
      * Your "assistantMessage" must state the question naturally.
@@ -350,6 +350,75 @@ export function extractDeterministicPatches(
         action: "start_product_search",
         assistantMessage: "Added durable build quality to your requirements. Finding matching options.",
         patches,
+        suggestedReplies: ["Show results"],
+      };
+    }
+
+    // MacBook primary-use answer (e.g. "Programming & university").
+    // Store this as a use-case preference instead of a generic free-form attribute.
+    if (
+      activeReq.category === "laptop" &&
+      /\b(?:programming|coding|software development|developer|university|college|student|study|creative work|video editing|photo editing|design|everyday productivity|business|professional work|gaming|travel)\b/i.test(lower)
+    ) {
+      const isProgramming = /\b(?:programming|coding|software development|developer)\b/i.test(lower);
+      const isUniversity = /\b(?:university|college|student|study)\b/i.test(lower);
+      const isCreative = /\b(?:creative work|video editing|photo editing|design)\b/i.test(lower);
+      const isGaming = /\bgaming\b/i.test(lower);
+      const isBusiness = /\b(?:business|professional work)\b/i.test(lower);
+      const primaryUse = isProgramming && isUniversity
+        ? "Programming & university"
+        : isProgramming
+          ? "Programming & development"
+          : isUniversity
+            ? "University & productivity"
+            : isCreative
+              ? "Creative work & editing"
+              : isGaming
+                ? "Gaming"
+                : isBusiness
+                  ? "Business & professional work"
+                  : /\btravel\b/i.test(lower)
+                    ? "Travel & portability"
+                    : "Everyday productivity";
+
+      const updatedPurpose = Array.from(new Set([...(activeReq.purpose || []), primaryUse]));
+      const existingQuery = activeReq.searchQuery || activeReq.displayName || "laptop";
+      const nextSearchQuery = existingQuery.toLowerCase().includes(primaryUse.toLowerCase())
+        ? existingQuery
+        : existingQuery + " " + primaryUse;
+
+      patches.push({
+        type: "add_constraint",
+        requirementId: activeReq.id,
+        constraint: {
+          id: "c_primary_use_" + Date.now(),
+          key: "primary_use",
+          value: primaryUse,
+          source: "user_explicit",
+          strength: "soft",
+        },
+      });
+      patches.push({
+        type: "update_requirement",
+        requirementId: activeReq.id,
+        updates: {
+          purpose: updatedPurpose,
+          searchQuery: nextSearchQuery,
+        },
+      });
+      patches.push({ type: "set_status", status: "ready_to_search" });
+
+      return {
+        action: "start_product_search",
+        assistantMessage:
+          "Got it. I'll prioritize " +
+          (activeReq.displayName || "MacBook") +
+          " for " +
+          primaryUse.toLowerCase() +
+          " and compare matching Apple models by performance, portability, memory, and price using the available retailer details.",
+        patches,
+        clarification: null,
+        question: null,
         suggestedReplies: ["Show results"],
       };
     }
@@ -894,7 +963,7 @@ export function extractDeterministicPatches(
 
   // 5. Dynamic open-world item name & category extraction
   let inferredItem = msg
-    .replace(/^.*?\b(?:i need to shop for upcoming winter season\.\s*we can start with|we can start with|i need|looking for|find me|can you find|search for|i want|i'm looking for)\s+/i, "")
+    .replace(/^.*?\b(?:i need to shop for upcoming winter season\.\s*we can start with|we can start with|i need|looking for|find me|can you find|search for|i want|i'm looking for|asking for a|asking for|get me)\s+/i, "")
     .replace(/\b(?:within|under|below|less than|budget of|my budget is)\s+\$?[0-9,.]+\s*(?:usd|eur|gbp)?\b/i, "")
     .replace(/\b(?:for my apartment|for my home|for university|for work|for college)\b/i, "")
     .trim();
@@ -943,7 +1012,9 @@ export function extractDeterministicPatches(
     extractedPurposes.push("photography");
   }
 
-  const displayName = inferredItem.charAt(0).toUpperCase() + inferredItem.slice(1);
+  const displayName = lower.includes("macbook")
+    ? "MacBook"
+    : inferredItem.charAt(0).toUpperCase() + inferredItem.slice(1);
   const reqId = `req_${Date.now()}_${inferredItem.slice(0, 10).replace(/[^a-z0-9]/gi, "_")}`;
 
   patches.push({ type: "set_mode", mode: "single_product" });
@@ -957,9 +1028,10 @@ export function extractDeterministicPatches(
     const isCamera = /\b(?:camera|lens|cap|sony|canon|nikon|fuji)\b/i.test(lower);
     const isAppliance = /\b(?:washer|washing machine|whirlpool|dryer|fridge|refrigerator|dishwasher)\b/i.test(lower);
     const isMicroscope = /\b(?:microscope|olympus|nikon|leica)\b/i.test(lower);
+    const isWaterFilter = /\b(?:water filter|water purifier|filter housing|filter cartridge|sediment filter)\b/i.test(lower);
 
     const attrKey = isCamera ? "camera_model" : isAppliance ? "model_number" : isMicroscope ? "microscope_model" : "brand_or_model";
-    const targetDevice = isCamera ? "camera" : isAppliance ? "appliance" : isMicroscope ? "microscope" : "brand or model";
+    const targetDevice = isCamera ? "camera" : isAppliance ? "appliance" : isMicroscope ? "microscope" : isWaterFilter ? "water filter system or housing" : "brand or model";
     const qText = `What is the exact brand or model number of your ${targetDevice}?`;
 
     patches.push({
@@ -1140,7 +1212,8 @@ export function extractDeterministicPatches(
       };
     }
 
-    const isSpecific = /\b(?:m1|m2|m3|thinkpad|dell xps|16gb|macbook air)\b/i.test(lower);
+    const isMacBook = /\bmacbook\b/i.test(lower);
+    const isSpecific = isMacBook || hasOs || /\b(?:m1|m2|m3|thinkpad|dell xps|16gb|macbook air)\b/i.test(lower);
     if (!isSpecific) {
       patches.push({
         type: "create_requirement",
@@ -1434,6 +1507,8 @@ export function extractDeterministicPatches(
     specificConstraints.push({ id: `c_os_${Date.now()}`, key: "os", value: "Windows", source: "user_explicit", strength: "hard" });
   } else if (/macos|macbook/i.test(lower)) {
     specificConstraints.push({ id: `c_os_${Date.now()}`, key: "os", value: "macOS", source: "user_explicit", strength: "hard" });
+    specificConstraints.push({ id: `c_brand_${Date.now()}`, key: "brand", value: "Apple", source: "user_explicit", strength: "hard" });
+    specificConstraints.push({ id: `c_family_${Date.now()}`, key: "product_family", value: "MacBook", source: "user_explicit", strength: "hard" });
   }
   if (/16gb/i.test(lower)) {
     specificConstraints.push({ id: `c_ram_${Date.now()}`, key: "ram", value: "16GB", source: "user_explicit", strength: "hard" });
@@ -1578,10 +1653,12 @@ Detected Intent: "${intent?.type || "unknown"}"`;
       const response = await aiClient.models.generateContent({
         model,
         contents: contentsPayload,
-        config: buildModelGenerationConfig(systemInstruction, {
+        config: buildModelGenerationConfig(model, {
+          systemInstruction,
           responseMimeType: "application/json",
           responseSchema: geminiResponseSchema,
           temperature: 0.1,
+          abortSignal: AbortSignal.timeout(12000),
         }),
       });
 

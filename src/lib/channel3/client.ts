@@ -11,16 +11,30 @@ interface CacheEntry {
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
 const searchCache = new Map<string, CacheEntry>();
 
+let channel3ClientOverride: Channel3 | null = null;
+
+/**
+ * Injects a mock Channel3 client for automated tests.
+ * Pass null to restore normal production behavior.
+ */
+export function setChannel3ClientForTesting(client: Channel3 | null): void {
+  channel3ClientOverride = client;
+}
+
 /**
  * Returns an authenticated Channel3 client instance.
  * Throws a descriptive configuration error if CHANNEL3_API_KEY is not defined.
  */
 export function getChannel3Client(): Channel3 {
+  if (channel3ClientOverride) {
+    return channel3ClientOverride;
+  }
+
   const apiKey = process.env.CHANNEL3_API_KEY?.trim();
 
   if (!apiKey) {
     throw new Error(
-      "Missing CHANNEL3_API_KEY environment variable. Please set CHANNEL3_API_KEY in .env.local to enable live product searches."
+      "Missing CHANNEL3_API_KEY environment variable. Please configure CHANNEL3_API_KEY in your environment variables to enable live product searches."
     );
   }
 

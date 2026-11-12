@@ -456,7 +456,7 @@ Respond with appropriate conversational message and next proposed shopping actio
       if (classified.isFatal || !classified.isRetryableForNextModel) {
         break;
       }
-      // Else loop continues to next model in priority order (gemini-3.5-flash-lite, gemini-2.5-flash-lite)
+      // Else loop continues to next model in priority order (gemini-3.5-flash-lite, gemini-3.8-flash)
     }
   }
 

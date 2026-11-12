@@ -5,7 +5,7 @@ import type { GeminiErrorCategory, ModelAttemptDiagnostic } from "../../types/in
 export const DEFAULT_PRIMARY_MODEL = "gemini-3.1-flash-lite";
 export const DEFAULT_FALLBACK_MODELS = [
   "gemini-3.5-flash-lite",
-  "gemini-2.5-flash",
+  "gemini-3.8-flash",
 ];
 
 const SAFE_MODEL_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{1,63}$/;

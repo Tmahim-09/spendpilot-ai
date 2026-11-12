@@ -24,11 +24,13 @@ import type {
   CurrencyCode,
   AssessmentRating,
 } from "@/types";
-import { formatCurrency, formatSafeBudget } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
+import { formatBudgetMinor, formatBudgetMajor } from "@/lib/money";
 
 interface AiComparisonWorkspaceProps {
   query: string;
   budget: number | null;
+  budgetMinor?: number | null;
   currency: CurrencyCode;
   comparison: AiComparisonResult;
   evidenceFacts?: Record<string, EvidenceFact>;
@@ -43,6 +45,7 @@ interface AiComparisonWorkspaceProps {
 export function AiComparisonWorkspace({
   query,
   budget,
+  budgetMinor,
   currency,
   comparison,
   evidenceFacts = {},
@@ -52,6 +55,12 @@ export function AiComparisonWorkspace({
   onConfigureProduct,
   configuredProductIds = new Set(),
 }: AiComparisonWorkspaceProps) {
+  const formattedBudget =
+    budgetMinor != null
+      ? formatBudgetMinor(budgetMinor, currency)
+      : budget != null
+      ? formatBudgetMajor(budget, currency)
+      : null;
   const [customPriority, setCustomPriority] = useState("");
   const [activePriority, setActivePriority] = useState<string | null>(null);
 
@@ -157,9 +166,9 @@ export function AiComparisonWorkspace({
                 <Sparkles className="h-3.5 w-3.5 text-[#FF6A00]" />
                 AI Comparison Workspace
               </span>
-              {budget && (
+              {formattedBudget && (
                 <span className="text-xs text-[#35C979] bg-[#35C979]/10 border border-[#35C979]/30 px-2.5 py-0.5 rounded-full font-mono font-bold">
-                  Budget: {formatSafeBudget(budget, currency)}
+                  Budget: {formattedBudget}
                 </span>
               )}
             </div>
@@ -230,9 +239,9 @@ export function AiComparisonWorkspace({
       {bestMatch && (
         <section
           aria-label="Top recommendation verdict"
-          className="rounded-2xl border border-orange-300 dark:border-[#FF6A00]/50 bg-gradient-to-b from-orange-50/70 via-white to-orange-50/30 dark:from-[#14110e] dark:to-[#0d0d0d] p-6 sm:p-8 shadow-2xl shadow-orange-500/10 dark:shadow-[#FF6A00]/10 ring-1 ring-orange-400/40 dark:ring-[#FF6A00]/20"
+          className="rounded-2xl border border-orange-300 dark:border-[#FF6A00]/60 bg-gradient-to-b from-orange-50/70 via-white to-orange-50/30 dark:from-[#161618] dark:to-[#0e0e10] p-6 sm:p-8 shadow-2xl shadow-orange-500/10 dark:shadow-[0_8px_32px_rgba(255,106,0,0.15)] ring-1 ring-orange-400/40 dark:ring-[#FF6A00]/30"
         >
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-orange-200/60 dark:border-[#29221b]">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-orange-200/60 dark:border-[#262626]">
             <div className="flex items-center gap-2">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FF6A00] text-black">
                 <Award className="h-4 w-4" />
@@ -241,7 +250,7 @@ export function AiComparisonWorkspace({
                 <span className="text-[11px] font-bold uppercase tracking-wider text-[#FF8126] block">
                   Top Recommendation
                 </span>
-                <span className="text-xs text-zinc-600 dark:text-[#A3A3A3]">
+                <span className="text-xs text-zinc-600 dark:text-[#D4D4D8]">
                   Selected as the strongest overall fit based on verified merchant specifications and price
                 </span>
               </div>
@@ -277,9 +286,9 @@ export function AiComparisonWorkspace({
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
             {/* Left Column: Product hero */}
-            <div className="lg:col-span-5 flex flex-col justify-between rounded-xl border border-orange-200/80 dark:border-[#2b251f] bg-white dark:bg-[#100e0c] p-5 shadow-lg">
+            <div className="lg:col-span-5 flex flex-col justify-between rounded-xl border border-orange-200/80 dark:border-[#282828] bg-white dark:bg-[#141414] p-5 shadow-lg">
               <div>
-                <div className="relative mb-4 flex h-52 w-full items-center justify-center overflow-hidden rounded-lg bg-zinc-50 dark:bg-[#080808] p-3 border border-orange-100 dark:border-[#201c18]">
+                <div className="relative mb-4 flex h-52 w-full items-center justify-center overflow-hidden rounded-lg bg-zinc-50 dark:bg-[#0a0a0a] p-3 border border-orange-100 dark:border-[#222222]">
                   {bestMatch.imageUrl ? (
                     <Image
                       src={bestMatch.imageUrl}
@@ -295,7 +304,7 @@ export function AiComparisonWorkspace({
                   )}
                 </div>
 
-                <div className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-[#A3A3A3] mb-1 font-bold">
+                <div className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-[#D4D4D8] mb-1 font-bold">
                   <Tag className="h-3 w-3 text-[#FF6A00]" />
                   <span>{bestMatch.brand || bestMatch.retailerName || "Verified Brand"}</span>
                 </div>
@@ -310,7 +319,7 @@ export function AiComparisonWorkspace({
                       ? formatCurrency(bestMatch.priceMinor, bestMatch.currency || currency)
                       : "Price at merchant"}
                   </span>
-                  <span className="text-xs text-zinc-500 dark:text-[#737373]">
+                  <span className="text-xs text-zinc-500 dark:text-[#A1A1AA]">
                     sold by {bestMatch.retailerName || "Verified Retailer"}
                   </span>
                 </div>
@@ -355,7 +364,7 @@ export function AiComparisonWorkspace({
                   <CheckCircle2 className="h-4 w-4 text-[#35C979]" />
                   Why SpendPilot recommends this option
                 </h4>
-                <p className="text-sm text-zinc-700 dark:text-[#D4D4D4] leading-relaxed bg-orange-50/60 dark:bg-[#161310] p-4 rounded-xl border border-orange-200/80 dark:border-[#2b241c]">
+                <p className="text-sm text-zinc-700 dark:text-[#F5F5F5] leading-relaxed bg-orange-50/60 dark:bg-[#161616] p-4 rounded-xl border border-orange-200/80 dark:border-[#282828]">
                   {comparison.bestMatchReason}
                 </p>
               </div>
@@ -363,19 +372,19 @@ export function AiComparisonWorkspace({
               {/* Verified Evidence Claims Cited */}
               {bestMatchEvidence.length > 0 && (
                 <div className="space-y-2.5">
-                  <span className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-[#888888] block">
+                  <span className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-[#D4D4D8] block">
                     Verified features &amp; specs:
                   </span>
                   <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                     {bestMatchEvidence.slice(0, 6).map((fact) => (
                       <li
                         key={fact.id}
-                        className="flex items-start gap-2 rounded-lg border border-orange-200/70 dark:border-[#242424] bg-white dark:bg-[#121212] p-2.5"
+                        className="flex items-start gap-2 rounded-lg border border-orange-200/70 dark:border-[#262626] bg-white dark:bg-[#141414] p-2.5"
                       >
                         <Check className="h-3.5 w-3.5 text-[#35C979] shrink-0 mt-0.5" />
                         <div>
                           <strong className="text-zinc-900 dark:text-[#F5F5F5] block font-bold">{fact.label}</strong>
-                          <span className="text-zinc-600 dark:text-[#A3A3A3] line-clamp-2">{fact.value}</span>
+                          <span className="text-zinc-600 dark:text-[#D4D4D8] line-clamp-2">{fact.value}</span>
                         </div>
                       </li>
                     ))}
@@ -385,14 +394,14 @@ export function AiComparisonWorkspace({
 
               {/* Trade-off Warning / Considerations */}
               {bestMatchTradeoff && (
-                <div className="rounded-xl border border-amber-300 dark:border-[#F5B942]/30 bg-amber-50/70 dark:bg-[#161410] p-4 text-xs text-amber-950 dark:text-[#D4D4D4]">
+                <div className="rounded-xl border border-amber-300 dark:border-[#F5B942]/40 bg-amber-50/70 dark:bg-[#181510] p-4 text-xs text-amber-950 dark:text-[#F5F5F5]">
                   <div className="flex items-start gap-2.5">
                     <AlertTriangle className="h-4 w-4 text-[#F5B942] shrink-0 mt-0.5" />
                     <div>
                       <strong className="text-[#FF8126] dark:text-[#F5B942] font-bold block mb-0.5">
                         Trade-off to consider:
                       </strong>
-                      <p className="leading-relaxed">{bestMatchTradeoff.summary}</p>
+                      <p className="leading-relaxed text-zinc-700 dark:text-[#E4E4E7]">{bestMatchTradeoff.summary}</p>
                     </div>
                   </div>
                 </div>
@@ -461,7 +470,7 @@ export function AiComparisonWorkspace({
                       <th
                         key={id}
                         scope="col"
-                        className={`p-3 sm:p-4 min-w-[180px] sm:min-w-[200px] w-1/5 align-top ${isWinner ? "bg-orange-50/80 dark:bg-[#181410] border-t-2 border-t-[#FF6A00]" : ""
+                        className={`p-3 sm:p-4 min-w-[180px] sm:min-w-[200px] w-1/5 align-top ${isWinner ? "bg-orange-50/80 dark:bg-[#181818] border-t-2 border-t-[#FF6A00]" : ""
                           }`}
                       >
                         <div className="space-y-1.5">
@@ -495,14 +504,15 @@ export function AiComparisonWorkspace({
                   </th>
                   {comparedProducts.map((p) => {
                     const id = p.sourceProductId || p.title;
+                    const isWinner = id === comparison.bestMatchProductId;
                     return (
-                      <td key={id} className="p-4 align-top">
+                      <td key={id} className={`p-4 align-top ${isWinner ? "bg-orange-50/40 dark:bg-[#151515]" : ""}`}>
                         <span className="font-bold text-zinc-900 dark:text-[#F5F5F5] block">
                           {p.priceMinor !== null
                             ? formatCurrency(p.priceMinor, p.currency || currency)
                             : "At retailer"}
                         </span>
-                        <span className="text-zinc-500 dark:text-[#737373] text-[11px]">
+                        <span className="text-zinc-500 dark:text-[#A1A1AA] text-[11px]">
                           via {p.retailerName || "Merchant"} ({p.offersCount || 1} offer{p.offersCount === 1 ? "" : "s"})
                         </span>
                       </td>
@@ -519,20 +529,21 @@ export function AiComparisonWorkspace({
                     >
                       <div className="space-y-1">
                         <span className="block font-bold text-zinc-900 dark:text-[#F5F5F5]">{criterion.name}</span>
-                        <span className="text-[10px] uppercase font-bold text-zinc-600 dark:text-[#737373] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-[#161616] inline-block">
+                        <span className="text-[10px] uppercase font-bold text-zinc-600 dark:text-[#A1A1AA] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-[#161616] inline-block">
                           {criterion.importance} Priority
                         </span>
                       </div>
                     </th>
                     {comparedProducts.map((p) => {
                       const id = p.sourceProductId || p.title;
+                      const isWinner = id === comparison.bestMatchProductId;
                       const assessmentObj = criterion.assessments.find((a) => a.productId === id);
                       return (
-                        <td key={id} className="p-4 align-top">
+                        <td key={id} className={`p-4 align-top ${isWinner ? "bg-orange-50/40 dark:bg-[#151515]" : ""}`}>
                           {assessmentObj ? (
                             <div className="space-y-1.5">
                               <AssessmentBadge rating={assessmentObj.assessment} />
-                              <p className="text-zinc-600 dark:text-[#A3A3A3] text-xs leading-relaxed">
+                              <p className="text-zinc-600 dark:text-[#D4D4D8] text-xs leading-relaxed">
                                 {assessmentObj.reason}
                               </p>
                               {assessmentObj.evidenceFactIds.length > 0 && (
@@ -543,7 +554,7 @@ export function AiComparisonWorkspace({
                                     return (
                                       <span
                                         key={fId}
-                                        className="inline-block text-[10px] text-zinc-600 dark:text-[#888888] bg-orange-50/60 dark:bg-[#141414] border border-orange-200/60 dark:border-[#242424] px-1.5 py-0.5 rounded"
+                                        className="inline-block text-[10px] text-zinc-600 dark:text-[#D4D4D8] bg-orange-50/60 dark:bg-[#1c1c1c] border border-orange-200/60 dark:border-[#2e2e2e] px-1.5 py-0.5 rounded"
                                       >
                                         Fact: {fact.label}: {fact.value}
                                       </span>
@@ -553,7 +564,7 @@ export function AiComparisonWorkspace({
                               )}
                             </div>
                           ) : (
-                            <span className="text-zinc-400 dark:text-[#555555]">Not evaluated</span>
+                            <span className="text-zinc-400 dark:text-[#737373]">Not evaluated</span>
                           )}
                         </td>
                       );
@@ -571,16 +582,17 @@ export function AiComparisonWorkspace({
                   </th>
                   {comparedProducts.map((p) => {
                     const id = p.sourceProductId || p.title;
+                    const isWinner = id === comparison.bestMatchProductId;
                     const tradeoff = comparison.tradeoffs.find((t) => t.productId === id);
                     return (
-                      <td key={id} className="p-4 align-top text-xs text-zinc-700 dark:text-[#D4D4D4]">
+                      <td key={id} className={`p-4 align-top text-xs text-zinc-700 dark:text-[#E4E4E7] ${isWinner ? "bg-orange-50/40 dark:bg-[#151515]" : ""}`}>
                         {tradeoff ? (
                           <div className="flex items-start gap-1.5">
                             <AlertTriangle className="h-3.5 w-3.5 text-[#F5B942] shrink-0 mt-0.5" />
                             <span>{tradeoff.summary}</span>
                           </div>
                         ) : (
-                          <span className="text-zinc-400 dark:text-[#737373]">No notable trade-offs logged</span>
+                          <span className="text-zinc-400 dark:text-[#A1A1AA]">No notable trade-offs logged</span>
                         )}
                       </td>
                     );
@@ -591,15 +603,16 @@ export function AiComparisonWorkspace({
                 <tr className="hover:bg-orange-50/40 dark:hover:bg-[#111111] transition-colors">
                   <th
                     scope="row"
-                    className="p-4 font-bold text-zinc-500 dark:text-[#737373] sticky left-0 bg-white dark:bg-[#0a0a0a] z-10 border-r border-orange-200 dark:border-[#222222]"
+                    className="p-4 font-bold text-zinc-500 dark:text-[#A1A1AA] sticky left-0 bg-white dark:bg-[#0a0a0a] z-10 border-r border-orange-200 dark:border-[#222222]"
                   >
                     Not specified in listing
                   </th>
                   {comparedProducts.map((p) => {
                     const id = p.sourceProductId || p.title;
+                    const isWinner = id === comparison.bestMatchProductId;
                     const missingItems = comparison.missingInformation.filter((m) => m.productId === id);
                     return (
-                      <td key={id} className="p-4 align-top text-xs text-zinc-500 dark:text-[#737373]">
+                      <td key={id} className={`p-4 align-top text-xs text-zinc-500 dark:text-[#D4D4D8] ${isWinner ? "bg-orange-50/40 dark:bg-[#151515]" : ""}`}>
                         {missingItems.length > 0 ? (
                           <ul className="space-y-1">
                             {missingItems.map((m, mIdx) => (
@@ -653,7 +666,7 @@ export function AiComparisonWorkspace({
                     <h4 className="font-bold text-zinc-900 dark:text-[#F5F5F5] text-sm line-clamp-2">
                       {product?.title || alt.productId}
                     </h4>
-                    <p className="text-xs text-zinc-600 dark:text-[#A3A3A3] leading-relaxed">{alt.reason}</p>
+                    <p className="text-xs text-zinc-600 dark:text-[#D4D4D8] leading-relaxed">{alt.reason}</p>
                   </div>
 
                   {product && (
