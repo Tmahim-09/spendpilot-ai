@@ -423,42 +423,6 @@ export function extractDeterministicPatches(
       };
     }
 
-    // Laptop Turn 2 (e.g. "macOS, Apple MacBook", "macOS")"), "ig"),
-        " "
-      ).replace(/\\s+/g, " ").trim();
-      const nextSearchQuery = [queryWithoutDuplicateUse, primaryUse].filter(Boolean).join(" ");
-
-      patches.push({
-        type: "add_constraint",
-        requirementId: activeReq.id,
-        constraint: {
-          id: `c_primary_use_${Date.now()}`,
-          key: "primary_use",
-          value: primaryUse,
-          source: "user_explicit",
-          strength: "soft",
-        },
-      });
-      patches.push({
-        type: "update_requirement",
-        requirementId: activeReq.id,
-        updates: {
-          purpose: updatedPurpose,
-          searchQuery: nextSearchQuery,
-        },
-      });
-      patches.push({ type: "set_status", status: "ready_to_search" });
-
-      return {
-        action: "start_product_search",
-        assistantMessage: `Got it. I'll prioritize ${activeReq.displayName || "MacBook"} for ${primaryUse.toLowerCase()} and compare matching Apple models by performance, portability, memory, and price using the available retailer details.`,
-        patches,
-        clarification: null,
-        question: null,
-        suggestedReplies: ["Show results"],
-      };
-    }
-
     // Laptop Turn 2 (e.g. "macOS, Apple MacBook", "macOS")
     if (/\b(?:macos|macbook|apple|windows|chromeos)\b/i.test(lower) && activeReq.category === "laptop") {
       const isMac = /\b(?:macos|macbook|apple)\b/i.test(lower);
