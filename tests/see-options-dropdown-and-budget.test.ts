@@ -111,6 +111,74 @@ const mockChannel3TestClient = {
           ],
         };
       }
+      if (product_id === "live-channel3-macbook-no-variants") {
+        return {
+          id: "live-channel3-macbook-no-variants",
+          title: "MacBook Air 13.6-inch M3 Laptop",
+          variants: null,
+          structured_attributes: {
+            ram: ["16 GB"],
+            "storage-capacity": ["512 GB"],
+            "processor-family": ["Apple M3"],
+            "operating-system": ["macOS"],
+          },
+          colors: [
+            { hex: "#060f14", percentage: 0.5 },
+            { hex: "#4b4c4e", percentage: 0.3 },
+          ],
+          offers: [
+            {
+              domain: "bestbuy.com",
+              url: "https://bestbuy.com/macbook-air-m3",
+              price: { price: 1099, currency: "USD" },
+              availability: "InStock",
+            },
+          ],
+        };
+      }
+      if (product_id === "live-channel3-gaming-chair") {
+        return {
+          id: "live-channel3-gaming-chair",
+          title: "Ergonomic Gaming Chair with Footrest",
+          variants: null,
+          structured_attributes: {
+            "upholstery-material": ["Breathable Mesh / Fabric", "Premium PU Leather"],
+          },
+          colors: [
+            { hex: "#111111", percentage: 0.6 },
+            { hex: "#7d262b", percentage: 0.4 },
+          ],
+          offers: [
+            {
+              domain: "bestbuy.com",
+              url: "https://bestbuy.com/gaming-chair",
+              price: { price: 149.99, currency: "USD" },
+              availability: "InStock",
+            },
+          ],
+        };
+      }
+      if (product_id === "live-channel3-coffee-maker") {
+        return {
+          id: "live-channel3-coffee-maker",
+          title: "Programmable Coffee Maker 12-Cup",
+          variants: null,
+          structured_attributes: {
+            "brew-strength-options": ["Regular", "Bold"],
+          },
+          colors: [
+            { hex: "#3f3f3f", percentage: 0.7 },
+          ],
+          offers: [
+            {
+              domain: "target.com",
+              url: "https://target.com/coffee-maker",
+              price: { price: 59.99, currency: "USD" },
+              availability: "InStock",
+            },
+          ],
+        };
+      }
       return null;
     },
     lookup: async () => null,
@@ -312,6 +380,129 @@ describe("SpendPilot AI: See Options Dropdown UI, Retailer Options & Budget Remi
     assert.ok(cssContent.includes(".dark .btn-3d-secondary"), "globals.css must style dark mode secondary 3D buttons");
     assert.ok(!cssContent.includes(".dark .btn-3d-secondary,\n[data-theme=\"dark\"] .btn-3d-secondary {\n  background: linear-gradient(180deg, #1A130E 0%, #0E0906 100%);\n  color: #FFA564;\n  font-weight: 800;\n  border: 1px solid rgba(255, 106, 0, 0.35);\n  border-top: none;\n  border-bottom: 4px solid #000000;"), "Dark mode secondary button must not have black #000000 bottom border");
     assert.ok(cssContent.includes("border-bottom: 4px solid #993800"), "Dark mode secondary button must have visible amber/orange 3D border");
+  });
+
+  test("8. Live Channel3 MacBook with null variants generates RAM, Storage, and Color options with pricing deltas", async () => {
+    const variantState = await retrieveProductVariants(
+      "live-channel3-macbook-no-variants",
+      undefined,
+      "USD",
+      "https://bestbuy.com/macbook-air-m3"
+    );
+
+    assert.equal(variantState.status, "variants_found", "Status must be variants_found instead of no_variants_verified");
+    assert.ok(variantState.options.length >= 3, "Must have at least RAM, Storage, and Color dimensions");
+
+    const ramDim = variantState.options.find((o) => o.name.toLowerCase() === "ram");
+    assert.ok(ramDim, "RAM dimension must exist");
+    assert.ok(ramDim.values.some((v) => v.label.includes("16GB")), "16GB RAM must exist");
+    assert.ok(ramDim.values.some((v) => v.label.includes("24GB")), "24GB RAM must exist");
+    assert.ok(ramDim.values.some((v) => v.label.includes("36GB")), "36GB RAM must exist");
+
+    const storageDim = variantState.options.find((o) => o.name.toLowerCase() === "storage");
+    assert.ok(storageDim, "Storage dimension must exist");
+    assert.ok(storageDim.values.some((v) => v.label.includes("512 GB")), "512 GB SSD must exist");
+    assert.ok(storageDim.values.some((v) => v.label.includes("1 TB")), "1 TB SSD must exist");
+    assert.ok(storageDim.values.some((v) => v.label.includes("2 TB")), "2 TB SSD must exist");
+
+    const colorDim = variantState.options.find((o) => o.name.toLowerCase() === "color");
+    assert.ok(colorDim, "Color dimension must exist");
+    assert.ok(colorDim.values.some((v) => v.label === "Midnight"), "Midnight color must exist");
+    assert.ok(colorDim.values.some((v) => v.label === "Space Gray"), "Space Gray color must exist");
+    assert.ok(colorDim.values.some((v) => v.label === "Silver"), "Silver color must exist");
+    assert.ok(colorDim.values.some((v) => v.label === "Starlight"), "Starlight color must exist");
+
+    // Pricing checks: 24GB RAM > 16GB RAM, 1TB SSD > 512GB SSD
+    const ram16 = ramDim.values.find((v) => v.label.includes("16GB"));
+    const ram24 = ramDim.values.find((v) => v.label.includes("24GB"));
+    assert.ok(ram16?.priceMinor && ram24?.priceMinor, "RAM options must have priceMinor");
+    assert.equal(ram24.priceMinor - ram16.priceMinor, 20000, "24GB RAM must be exactly +$200 (20000 minor) over 16GB");
+
+    const ssd512 = storageDim.values.find((v) => v.label.includes("512 GB"));
+    const ssd1tb = storageDim.values.find((v) => v.label.includes("1 TB"));
+    assert.ok(ssd512?.priceMinor && ssd1tb?.priceMinor, "Storage options must have priceMinor");
+    assert.equal(ssd1tb.priceMinor - ssd512.priceMinor, 20000, "1TB SSD must be exactly +$200 (20000 minor) over 512GB");
+  });
+
+  test("9. Selecting higher configuration on MacBook calculates total price and budget exceed amount", async () => {
+    const variantState = await retrieveProductVariants(
+      "live-channel3-macbook-no-variants",
+      {
+        RAM: "24GB Unified Memory",
+        Storage: "1 TB SSD",
+        Color: "Midnight",
+      },
+      "USD",
+      "https://bestbuy.com/macbook-air-m3"
+    );
+
+    assert.equal(variantState.status, "variants_found");
+    // Base $1099 (109900) + RAM $200 (20000) + SSD $200 (20000) = $1499 (149900)
+    assert.equal(variantState.verifiedPriceMinor, 149900, "Total price must be $1,499.00");
+    assert.equal(variantState.effectiveSelected["RAM"], "24GB Unified Memory");
+    assert.equal(variantState.effectiveSelected["Storage"], "1 TB SSD");
+    assert.equal(variantState.effectiveSelected["Color"], "Midnight");
+
+    // Over budget calculation against $1,200 (120000) ceiling
+    const budgetMinor = 120000;
+    const overBudgetAmount = variantState.verifiedPriceMinor - budgetMinor;
+    assert.equal(overBudgetAmount, 29900, "Must calculate exact over budget amount (+$299.00)");
+
+    // Matching retailer offer must be present in offers
+    assert.ok(
+      variantState.offers?.some(
+        (o) => o.priceMinor === 149900 && o.currency === "USD" && Boolean(o.url)
+      ),
+      "Matching retailer offer at $1499 must exist in offers array"
+    );
+  });
+
+  test("10. Multi-category support: Gaming chairs and coffee makers extract configuration options", async () => {
+    // Gaming Chair
+    const chairState = await retrieveProductVariants(
+      "live-channel3-gaming-chair",
+      undefined,
+      "USD",
+      "https://bestbuy.com/gaming-chair"
+    );
+    assert.equal(chairState.status, "variants_found");
+    const matDim = chairState.options.find((o) => o.name.toLowerCase() === "material");
+    const cfgDim = chairState.options.find((o) => o.name.toLowerCase() === "configuration");
+    assert.ok(matDim, "Material dimension must exist for chair");
+    assert.ok(cfgDim, "Configuration dimension must exist for chair");
+    assert.ok(cfgDim.values.some((v) => v.label.includes("Footrest")), "Footrest option must exist");
+
+    // Coffee Maker
+    const coffeeState = await retrieveProductVariants(
+      "live-channel3-coffee-maker",
+      undefined,
+      "USD",
+      "https://target.com/coffee-maker"
+    );
+    assert.equal(coffeeState.status, "variants_found");
+    const brewDim = coffeeState.options.find((o) => o.name.toLowerCase().includes("brew"));
+    assert.ok(brewDim, "Brew Strength dimension must exist for coffee maker");
+    assert.ok(brewDim.values.some((v) => v.label.includes("Bold")), "Bold brew must exist");
+  });
+
+  test("11. Component contract: ProductVariantConfigurator renders budget exceed amount in dropdown and header badge", () => {
+    const componentPath = path.join(
+      process.cwd(),
+      "src/components/guided-shopping/ProductVariantConfigurator.tsx"
+    );
+    const content = fs.readFileSync(componentPath, "utf-8");
+
+    // Dropdown over-budget amount display
+    assert.ok(
+      content.includes("Exceeds budget (+"),
+      "Dropdown options must show exact over budget amount: Exceeds budget (+{formatCurrency(overBudgetAmount, currency)})"
+    );
+
+    // Header badge over-budget amount display
+    assert.ok(
+      content.includes("⚠️ Over Budget (+"),
+      "Header badge must show exact over budget amount: ⚠️ Over Budget (+{formatCurrency(budgetDeltaMinor, currency)})"
+    );
   });
 });
 

@@ -79,16 +79,27 @@ const COLOR_SWATCH_MAP: Record<string, string> = {
   navy: "#0f172a",
   "obsidian blue": "#1a2a44",
   red: "#dc2626",
+  burgundy: "#7d262b",
+  teal: "#14b8a6",
   green: "#166534",
+  olive: "#65a30d",
   anthracite: "#374151",
   yellow: "#eab308",
   purple: "#7e22ce",
   grey: "#6b7280",
   gray: "#6b7280",
   beige: "#d4c5b9",
+  tan: "#d2b48c",
+  charcoal: "#333333",
+  orange: "#f97316",
+  pink: "#ec4899",
+  brown: "#78350f",
 };
 
 function getColorSwatch(colorLabel: string): string {
+  if (colorLabel.startsWith("#")) {
+    return colorLabel;
+  }
   const lower = colorLabel.toLowerCase();
   for (const [key, hex] of Object.entries(COLOR_SWATCH_MAP)) {
     if (lower.includes(key)) {
@@ -222,12 +233,20 @@ function OptionDropdown({
               typeof activeValue?.priceMinor === "number" && typeof basePrice === "number"
                 ? Math.max(0, activeValue.priceMinor - basePrice)
                 : 0;
+            const priceRef =
+              typeof currentTotalPrice === "number" && currentTotalPrice > 0
+                ? currentTotalPrice
+                : (typeof basePrice === "number" ? basePrice : null);
             const simulatedTotal =
-              typeof currentTotalPrice === "number"
-                ? currentTotalPrice - activeDelta + optDelta
+              typeof priceRef === "number"
+                ? priceRef - activeDelta + optDelta
                 : null;
             const exceedsBudget =
               budgetMinor && typeof simulatedTotal === "number" ? simulatedTotal > budgetMinor : false;
+            const overBudgetAmount =
+              exceedsBudget && budgetMinor && typeof simulatedTotal === "number"
+                ? simulatedTotal - budgetMinor
+                : 0;
 
             return (
               <button
@@ -282,7 +301,7 @@ function OptionDropdown({
                   {budgetMinor && !isOutOfStock && simulatedTotal !== null && (
                     exceedsBudget ? (
                       <span className="rounded bg-[#F5B942]/15 border border-[#F5B942]/30 px-1.5 py-0.5 text-[10px] font-semibold text-[#F5B942]">
-                        Exceeds budget
+                        Exceeds budget (+{formatCurrency(overBudgetAmount, currency)})
                       </span>
                     ) : (
                       <span className="rounded bg-[#35C979]/15 border border-[#35C979]/30 px-1.5 py-0.5 text-[10px] font-semibold text-[#35C979]">
@@ -758,7 +777,7 @@ export function ProductVariantConfigurator({
               </div>
               {budgetMinor && (
                 <span className={`text-[11px] font-semibold ${isOverBudget ? "text-[#F5B942]" : "text-[#35C979]"}`}>
-                  {isOverBudget ? "⚠️ Over Budget" : "✓ In Budget"}
+                  {isOverBudget ? `⚠️ Over Budget (+${formatCurrency(budgetDeltaMinor, currency)})` : "✓ In Budget"}
                 </span>
               )}
             </div>
